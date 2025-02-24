@@ -1,0 +1,47 @@
+﻿<ArcGIS defaultAssembly="DuckDBGeoparquet.dll" defaultNamespace="DuckDBGeoparquet" xmlns="http://schemas.esri.com/DADF/Registry" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
+  <AddInInfo id="{9e44d8fc-6e1a-4513-9992-85c2de3e2d61}" version="1.0" desktopVersion="3.4.55405">
+    <Name>DuckDBGeoparquet</Name>
+    <Description>DuckDBGeoparquet description</Description>
+    <Image>Images\AddinDesktop32.png</Image>
+    <Author>rylopez</Author>
+    <Company>County of Fresno</Company>
+    <Date>2/22/2025 12:25:36 PM</Date>
+    <Subject>Framework</Subject>
+  </AddInInfo>
+  <modules>
+    <insertModule id="DuckDBGeoparquet_Module" className="DuckDBGeoparquet.DuckDBGeoparquetModule" autoLoad="false" caption="DuckDBGeoparquet Module">
+      <groups>
+        <group id="DuckDBGeoparquet_Group2" caption="Overture Maps" appearsOnAddInTab="true" keytip="A">
+          <button refID="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" size="large" />
+          <button refID="DuckDBGeoparquet_Views_Streaming_ShowButton" size="large" />
+        </group>
+      </groups>
+      <controls>
+		  <button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" caption="Launch Overture" className="DuckDBGeoparquet.Views.WizardDockpaneShowButton" loadOnClick="true" smallImage="Overture16" largeImage="Overture32" keytip="L">
+			  <tooltip heading="Show Dockpane">
+				  Show Dockpane<disabledText />
+			  </tooltip>
+		  </button>
+        <button id="DuckDBGeoparquet_Views_Streaming_ShowButton" caption="Show Streaming" className="DuckDBGeoparquet.Views.Streaming_ShowButton" loadOnClick="true" smallImage="GenericButtonPurple16" largeImage="GenericButtonPurple32" keytip="Streaming">
+          <tooltip heading="Show Dockpane">Show Dockpane<disabledText /></tooltip>
+        </button>
+        <button id="DuckDBGeoparquet_Views_Streaming_MenuButton" caption="Burger Menu Button" className="DuckDBGeoparquet.Views.Streaming_MenuButton" loadOnClick="true" smallImage="GenericButtonPurple16" largeImage="GenericButtonPurple32" keytip="Streaming">
+          <tooltip heading="Burger Menu Button">ToolTip<disabledText /></tooltip>
+        </button>
+      </controls>
+      <dockPanes>
+        <dockPane id="DuckDBGeoparquet_Views_WizardDockpane" caption="Overture Maps Data Loader" className="DuckDBGeoparquet.Views.WizardDockpaneViewModel" dock="group" dockWith="esri_core_contentsDockPane">
+          <content className="DuckDBGeoparquet.Views.WizardDockpaneView" />
+        </dockPane>
+        <dockPane id="DuckDBGeoparquet_Views_Streaming" caption="Streaming" className="DuckDBGeoparquet.Views.StreamingViewModel" dock="group" dockWith="esri_core_projectDockPane">
+          <content className="DuckDBGeoparquet.Views.StreamingView" />
+        </dockPane>
+      </dockPanes>
+      <menus>
+        <menu id="DuckDBGeoparquet_Views_Streaming_Menu" caption="Options" contextMenu="true">
+          <button refID="DuckDBGeoparquet_Views_Streaming_MenuButton" />
+        </menu>
+      </menus>
+    </insertModule>
+  </modules>
+</ArcGIS>
