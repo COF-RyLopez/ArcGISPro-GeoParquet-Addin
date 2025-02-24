@@ -220,7 +220,7 @@ namespace DuckDBGeoparquet.Views
                     await _dataProcessor.IngestFileAsync(s3Path, extent);
 
                     // Create a feature layer for the loaded data
-                    string layerName = $"Overture {SelectedTheme} - {type.Trim()}";
+                    string layerName = $"{SelectedTheme} - {type.Trim()}";
                     var progress = new Progress<string>(status =>
                     {
                         StatusText = status;

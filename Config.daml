@@ -19,7 +19,7 @@
 				</group>
 			</groups>
 			<controls>
-				<button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" caption="Launch Overture" className="DuckDBGeoparquet.Views.WizardDockpaneShowButton" loadOnClick="true" smallImage="Overture16" largeImage="Overture32" keytip="load Overture Maps Data">
+				<button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" caption="Launch Overture" className="DuckDBGeoparquet.Views.WizardDockpaneShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="load Overture Maps Data">
 					<tooltip heading="Show Dockpane">
 						Show Dockpane<disabledText />
 					</tooltip>

@@ -8,7 +8,8 @@ using System.IO;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
 using ArcGIS.Desktop.Mapping;
 using ArcGIS.Desktop.Core;
-using ArcGIS.Desktop.Core.Geoprocessing;
+using ArcGIS.Desktop.Framework.Dialogs;
+using System.Windows;
 
 namespace DuckDBGeoparquet.Services
 {
@@ -16,16 +17,36 @@ namespace DuckDBGeoparquet.Services
     {
         private const string S3_REGION = "us-west-2";
         private DuckDBConnection _connection;
+        // Property to hold the output folder for the session.
+        private string _outputFolder;
+
+        /// <summary>
+        /// Gets (or creates) a single output folder per session.
+        /// The folder will be named "OvertureMapsData_<release>".
+        /// </summary>
+        /// <param name="releaseVersion">The release version string.</param>
+        /// <returns>The folder path.</returns>
+        private string GetOutputFolder(string releaseVersion)
+        {
+            if (string.IsNullOrEmpty(_outputFolder))
+            {
+                // For example, create the folder under the project's HomeFolderPath.
+                _outputFolder = Path.Combine(Project.Current.HomeFolderPath, $"OvertureMapsData_{releaseVersion}");
+                if (!Directory.Exists(_outputFolder))
+                {
+                    Directory.CreateDirectory(_outputFolder);
+                }
+            }
+            return _outputFolder;
+        }
 
         public async Task InitializeDuckDBAsync()
         {
             try
             {
-                // Create a new in-memory DuckDB instance.
                 _connection = new DuckDBConnection("DataSource=:memory:");
                 await _connection.OpenAsync();
 
-                // Install and load required extensions.
                 using (var command = _connection.CreateCommand())
                 {
                     command.CommandText = @"
@@ -53,14 +74,12 @@ namespace DuckDBGeoparquet.Services
             {
                 using (var command = _connection.CreateCommand())
                 {
-                    // Check if the path exists by attempting to read a zero-row sample.
                     command.CommandText = $@"
                         CREATE OR REPLACE TABLE temp AS 
                         SELECT * FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1) LIMIT 0;
                     ";
                     await command.ExecuteNonQueryAsync(CancellationToken.None);
 
-                    // Log schema from the sample table.
                     command.CommandText = "DESCRIBE temp";
                     using (var reader = await command.ExecuteReaderAsync(CancellationToken.None))
                     {
@@ -71,7 +90,6 @@ namespace DuckDBGeoparquet.Services
                         }
                     }
 
-                    // Apply spatial filter if extent is provided.
                     string spatialFilter = "";
                     if (extent != null)
                     {
@@ -80,26 +98,21 @@ namespace DuckDBGeoparquet.Services
                               AND bbox.ymin >= {extent.YMin}
                               AND bbox.xmax <= {extent.XMax}
                               AND bbox.ymax <= {extent.YMax}";
-                        System.Diagnostics.Debug.WriteLine($"Applying spatial filter: {spatialFilter}");
                     }
 
-                    // Create the actual table with the spatial filter applied.
                     string query = $@"
                         CREATE OR REPLACE TABLE current_table AS 
                         SELECT *
                         FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
                         {spatialFilter}
                     ";
-                    System.Diagnostics.Debug.WriteLine($"Executing query: {query}");
                     command.CommandText = query;
                     await command.ExecuteNonQueryAsync(CancellationToken.None);
 
-                    // Log row count.
                     command.CommandText = "SELECT COUNT(*) FROM current_table";
                     var count = await command.ExecuteScalarAsync(CancellationToken.None);
                     System.Diagnostics.Debug.WriteLine($"Loaded {count} rows");
 
-                    // Log final table structure.
                     command.CommandText = "DESCRIBE current_table";
                     using (var reader = await command.ExecuteReaderAsync(CancellationToken.None))
                     {
@@ -140,16 +153,41 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
+
+        private void DeleteShapefile(string shpPath)
+        {
+            // Get the base file path without extension.
+            string basePath = Path.Combine(Path.GetDirectoryName(shpPath), Path.GetFileNameWithoutExtension(shpPath));
+            // Shapefile typically has these extensions.
+            string[] extensions = { ".shp", ".shx", ".dbf", ".prj", ".cpg", ".sbn", ".sbx" };
+            foreach (var ext in extensions)
+            {
+                string file = basePath + ext;
+                if (File.Exists(file))
+                {
+                    try
+                    {
+                        File.Delete(file);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Handle any deletion errors (e.g., file is locked).
+                        ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show($"Failed to delete {file}: {ex.Message}");
+                    }
+                }
+            }
+        }
+
         /// <summary>
         /// Exports the current_table to shapefile(s) using DuckDB's GDAL export.
-        /// If the theme (e.g., "infrastructure") has mixed geometries, the method queries for distinct geometry types
-        /// and loops through them to write each type to a separate shapefile.
-        /// For other themes, it exports directly.
-        /// Field selection is built dynamically—unsupported types (STRUCT, MAP, or any type containing '[') are omitted.
+        /// All exported files are placed in a single output folder per session.
         /// </summary>
+        /// <param name="layerNameBase">Base name for the layer.</param>
+        /// <param name="releaseVersion">The release version (used to name the output folder).</param>
+        /// <param name="progress">Progress reporter.</param>
         public async Task CreateFeatureLayerAsync(string layerNameBase, string releaseVersion, IProgress<string> progress = null)
         {
-            string tempDir = "";
+            string outputFolder = GetOutputFolder(releaseVersion);
             try
             {
                 await QueuedTask.Run(async () =>
@@ -158,10 +196,6 @@ namespace DuckDBGeoparquet.Services
                     var map = MapView.Active?.Map;
                     if (map == null)
                         throw new Exception("No active map found");
-
-                    // Set up a temporary directory.
-                    tempDir = Path.Combine(Project.Current.HomeFolderPath, $"temp_shp_{Guid.NewGuid()}");
-                    Directory.CreateDirectory(tempDir);
 
                     // Build the dynamic SELECT clause from the current_table.
                     List<string> selectColumns = new List<string>();
@@ -174,7 +208,6 @@ namespace DuckDBGeoparquet.Services
                             {
                                 string colName = reader["column_name"].ToString();
                                 string colType = reader["column_type"].ToString();
-                                // Skip the geometry column and unsupported types.
                                 if (colName.Equals("geometry", StringComparison.OrdinalIgnoreCase) ||
                                     colType.StartsWith("STRUCT", StringComparison.OrdinalIgnoreCase) ||
                                     colType.IndexOf("MAP(", StringComparison.OrdinalIgnoreCase) >= 0 ||
@@ -182,14 +215,12 @@ namespace DuckDBGeoparquet.Services
                                 {
                                     continue;
                                 }
-                                // Shapefiles have field name limitations (usually 10 characters).
                                 string safeName = colName.Length > 10 ? colName.Substring(0, 10) : colName;
                                 selectColumns.Add($"{colName} AS {safeName}");
                             }
                         }
                     }
 
-                    // Always include the geometry column (transformed).
                     string geometryClause = "ST_Transform(geometry, 'EPSG:4326', 'EPSG:4326') AS geometry";
                     string selectClause = string.Join(",\n    ", selectColumns);
                     string fullSelect = $@"
@@ -199,10 +230,8 @@ namespace DuckDBGeoparquet.Services
                         FROM current_table
                     ";
 
-                    // Check if the layerNameBase indicates a theme with mixed geometries.
                     if (layerNameBase.IndexOf("infrastructure", StringComparison.OrdinalIgnoreCase) >= 0)
                     {
-                        // Query distinct geometry types.
                         List<string> geomTypes = new List<string>();
                         using (var command = _connection.CreateCommand())
                         {
@@ -216,10 +245,8 @@ namespace DuckDBGeoparquet.Services
                             }
                         }
 
-                        // Loop through each geometry type and export separately.
                         foreach (var geomType in geomTypes)
                         {
-                            // Build a query that filters for this geometry type.
                             string filteredQuery = $@"
                                 SELECT 
                                     {selectClause},
@@ -228,12 +255,41 @@ namespace DuckDBGeoparquet.Services
                                 WHERE ST_GeometryType(geometry) = '{geomType}'
                             ";
 
-                            // Build a layer name that includes the theme, release version, and geometry type.
                             string layerName = $"Overture {layerNameBase} - {releaseVersion} - {geomType}";
-                            // For shapefile export, output path must end with .shp.
-                            string shpPath = Path.Combine(tempDir, $"{layerName.Replace(" ", "_")}.shp");
+                            string shpPath = Path.Combine(outputFolder, $"{layerName.Replace(" ", "_")}.shp");
 
                             progress?.Report($"Exporting {layerName} to shapefile...");
+
+
+                            // Before running your COPY command, check if the shapefile exists.
+                            if (File.Exists(shpPath))
+                            {
+                                // Prompt the user using the native Pro MessageBox.
+                                var result = ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                                    "A shapefile with the same name already exists. " +
+                                    "Would you like to overwrite it (Yes), append new data (No), or cancel the export (Cancel)?",
+                                    "File Exists",
+                                    MessageBoxButton.YesNoCancel,
+                                    MessageBoxImage.Question);
+
+                                if (result == MessageBoxResult.Yes)
+                                {
+                                    // Overwrite: Delete the existing shapefile and its associated files.
+                                    DeleteShapefile(shpPath);
+                                }
+                                else if (result == MessageBoxResult.No)
+                                {
+                                    // Append: Here you would adapt your logic to open the existing shapefile
+                                    // and add new rows to it. For simplicity, you can continue using the same shpPath.
+                                    // (Note: appending to a shapefile may require using an InsertCursor on the existing table.)
+                                }
+                                else
+                                {
+                                    // Cancel export.
+                                    progress?.Report("Export canceled by user.");
+                                    return;
+                                }
+                            }
 
                             using (var command = _connection.CreateCommand())
                             {
@@ -251,7 +307,6 @@ namespace DuckDBGeoparquet.Services
                                 await command.ExecuteNonQueryAsync();
                             }
 
-                            // Verify the shapefile was created.
                             if (!File.Exists(shpPath))
                                 throw new Exception($"Failed to create shapefile at {shpPath}");
                             var fileInfo = new FileInfo(shpPath);
@@ -259,7 +314,6 @@ namespace DuckDBGeoparquet.Services
                                 throw new Exception("Generated shapefile is empty: " + shpPath);
                             progress?.Report($"{layerName} exported successfully.");
 
-                            // Add the shapefile to the active map.
                             await QueuedTask.Run(() =>
                             {
                                 LayerFactory.Instance.CreateLayer(new Uri(shpPath), map);
@@ -269,9 +323,8 @@ namespace DuckDBGeoparquet.Services
                     }
                     else
                     {
-                        // For themes with a single geometry type, export directly.
                         string layerName = $"Overture {layerNameBase} - {releaseVersion}";
-                        string shpPath = Path.Combine(tempDir, $"{layerName.Replace(" ", "_")}.shp");
+                        string shpPath = Path.Combine(outputFolder, $"{layerName.Replace(" ", "_")}.shp");
 
                         progress?.Report($"Exporting {layerName} to shapefile...");
 
@@ -309,23 +362,7 @@ namespace DuckDBGeoparquet.Services
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Detailed error: {ex}");
-                progress?.Report($"Error: {ex.Message}");
                 throw new Exception($"Failed to create feature layer: {ex.Message}", ex);
-            }
-            finally
-            {
-                try
-                {
-                    if (!string.IsNullOrEmpty(tempDir) && Directory.Exists(tempDir))
-                    {
-                        // Optionally, delete temporary files after verification.
-                        // Directory.Delete(tempDir, true);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Warning - Failed to clean up temp files: {ex.Message}");
-                }
             }
         }
 
