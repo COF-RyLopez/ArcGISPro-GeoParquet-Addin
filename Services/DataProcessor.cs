@@ -208,15 +208,56 @@ namespace DuckDBGeoparquet.Services
                             {
                                 string colName = reader["column_name"].ToString();
                                 string colType = reader["column_type"].ToString();
-                                if (colName.Equals("geometry", StringComparison.OrdinalIgnoreCase) ||
-                                    colType.StartsWith("STRUCT", StringComparison.OrdinalIgnoreCase) ||
-                                    colType.IndexOf("MAP(", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                    colType.Contains("["))
+                                if (colName.Equals("geometry", StringComparison.OrdinalIgnoreCase))
                                 {
                                     continue;
                                 }
                                 string safeName = colName.Length > 10 ? colName.Substring(0, 10) : colName;
-                                selectColumns.Add($"{colName} AS {safeName}");
+
+                                // Flatten STRUCT columns
+                                if (colType.StartsWith("STRUCT", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    if (colName == "bbox")
+                                    {
+                                        selectColumns.Add($"bbox.xmin AS bbox_xmin");
+                                        selectColumns.Add($"bbox.xmax AS bbox_xmax");
+                                        selectColumns.Add($"bbox.ymin AS bbox_ymin");
+                                        selectColumns.Add($"bbox.ymax AS bbox_ymax");
+                                    }
+                                    else if (colName == "sources")
+                                    {
+                                        selectColumns.Add($"to_json(sources) AS sources");
+                                    }
+                                    else if (colName == "names")
+                                    {
+                                        selectColumns.Add($"names.primary AS names_primary");
+                                        selectColumns.Add($"to_json(names.common) AS names_common");
+                                        selectColumns.Add($"to_json(names.rules) AS names_rules");
+                                    }
+                                    else if (colName == "categories")
+                                    {
+                                        selectColumns.Add($"categories.primary AS categories_primary");
+                                        selectColumns.Add($"to_json(categories.alternate) AS categories_alternate");
+                                    }
+                                    else if (colName == "brand")
+                                    {
+                                        selectColumns.Add($"brand.wikidata AS brand_wikidata");
+                                        selectColumns.Add($"to_json(brand.names) AS brand_names");
+                                    }
+                                    else if (colName == "addresses")
+                                    {
+                                        selectColumns.Add($"to_json(addresses) AS addresses");
+                                    }
+                                }
+                                else if (colType.StartsWith("MAP", StringComparison.OrdinalIgnoreCase) ||
+                                         colType.Contains("["))
+                                {
+                                    selectColumns.Add($"to_json({colName}) AS {safeName}");
+                                }
+                                else
+                                {
+                                    selectColumns.Add($"{colName} AS {safeName}");
+                                }
                             }
                         }
                     }
@@ -259,7 +300,6 @@ namespace DuckDBGeoparquet.Services
                             string shpPath = Path.Combine(outputFolder, $"{layerName.Replace(" ", "_")}.shp");
 
                             progress?.Report($"Exporting {layerName} to shapefile...");
-
 
                             // Before running your COPY command, check if the shapefile exists.
                             if (File.Exists(shpPath))
