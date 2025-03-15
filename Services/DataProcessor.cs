@@ -15,10 +15,21 @@ namespace DuckDBGeoparquet.Services
 {
     public class DataProcessor : IDisposable
     {
-        private const string S3_REGION = "us-west-2";
-        private DuckDBConnection _connection;
+        private readonly DuckDBConnection _connection;
+        
+        // Constants
+        private const string DEFAULT_SRS = "EPSG:4326";
+        private const string STRUCT_TYPE = "STRUCT";
+        private const string BBOX_COLUMN = "bbox";
+        private const string GEOMETRY_COLUMN = "geometry";
+        
         // Property to hold the output folder for the session.
         private string _outputFolder;
+
+        public DataProcessor()
+        {
+            _connection = new DuckDBConnection("DataSource=:memory:");
+        }
 
         /// <summary>
         /// Gets (or creates) a single output folder per session.
@@ -44,7 +55,6 @@ namespace DuckDBGeoparquet.Services
         {
             try
             {
-                _connection = new DuckDBConnection("DataSource=:memory:");
                 await _connection.OpenAsync();
 
                 using (var command = _connection.CreateCommand())
@@ -273,93 +283,7 @@ namespace DuckDBGeoparquet.Services
 
                     if (layerNameBase.IndexOf("infrastructure", StringComparison.OrdinalIgnoreCase) >= 0)
                     {
-                        List<string> geomTypes = new List<string>();
-                        using (var command = _connection.CreateCommand())
-                        {
-                            command.CommandText = "SELECT DISTINCT ST_GeometryType(geometry) AS geom_type FROM current_table";
-                            using (var reader = await command.ExecuteReaderAsync(CancellationToken.None))
-                            {
-                                while (await reader.ReadAsync())
-                                {
-                                    geomTypes.Add(reader["geom_type"].ToString());
-                                }
-                            }
-                        }
-
-                        foreach (var geomType in geomTypes)
-                        {
-                            string filteredQuery = $@"
-                        SELECT 
-                            {selectClause},
-                            {geometryClause}
-                        FROM current_table
-                        WHERE ST_GeometryType(geometry) = '{geomType}'
-                    ";
-
-                            string layerName = $"Overture {layerNameBase} - {releaseVersion} - {geomType}";
-                            string shpPath = Path.Combine(outputFolder, $"{layerName.Replace(" ", "_")}.shp");
-
-                            progress?.Report($"Exporting {layerName} to shapefile...");
-
-                            // Before running your COPY command, check if the shapefile exists.
-                            if (File.Exists(shpPath))
-                            {
-                                // Prompt the user using the native Pro MessageBox.
-                                var result = ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
-                                    "A shapefile with the same name already exists. " +
-                                    "Would you like to overwrite it (Yes), append new data (No), or cancel the export (Cancel)?",
-                                    "File Exists",
-                                    MessageBoxButton.YesNoCancel,
-                                    MessageBoxImage.Question);
-
-                                if (result == MessageBoxResult.Yes)
-                                {
-                                    // Overwrite: Delete the existing shapefile and its associated files.
-                                    DeleteShapefile(shpPath);
-                                }
-                                else if (result == MessageBoxResult.No)
-                                {
-                                    // Append: Here you would adapt your logic to open the existing shapefile
-                                    // and add new rows to it. For simplicity, you can continue using the same shpPath.
-                                    // (Note: appending to a shapefile may require using an InsertCursor on the existing table.)
-                                }
-                                else
-                                {
-                                    // Cancel export.
-                                    progress?.Report("Export canceled by user.");
-                                    return;
-                                }
-                            }
-
-                            using (var command = _connection.CreateCommand())
-                            {
-                                command.CommandText = $@"
-                            COPY (
-                                {filteredQuery}
-                            ) TO '{shpPath.Replace('\\', '/')}' 
-                            WITH (
-                                FORMAT GDAL,
-                                DRIVER 'ESRI Shapefile',
-                                SRS 'EPSG:4326'
-                            );
-                        ";
-                                System.Diagnostics.Debug.WriteLine($"Export command for {layerName}: {command.CommandText}");
-                                await command.ExecuteNonQueryAsync();
-                            }
-
-                            if (!File.Exists(shpPath))
-                                throw new Exception($"Failed to create shapefile at {shpPath}");
-                            var fileInfo = new FileInfo(shpPath);
-                            if (fileInfo.Length == 0)
-                                throw new Exception("Generated shapefile is empty: " + shpPath);
-                            progress?.Report($"{layerName} exported successfully.");
-
-                            await QueuedTask.Run(() =>
-                            {
-                                LayerFactory.Instance.CreateLayer(new Uri(shpPath), map);
-                            });
-                            progress?.Report($"{layerName} added to map.");
-                        }
+                        await ExportByGeometryType(selectClause, layerNameBase, releaseVersion, outputFolder);
                     }
                     else
                     {
@@ -368,21 +292,7 @@ namespace DuckDBGeoparquet.Services
 
                         progress?.Report($"Exporting {layerName} to shapefile...");
 
-                        using (var command = _connection.CreateCommand())
-                        {
-                            command.CommandText = $@"
-                        COPY (
-                            {fullSelect}
-                        ) TO '{shpPath.Replace('\\', '/')}' 
-                        WITH (
-                            FORMAT GDAL,
-                            DRIVER 'ESRI Shapefile',
-                            SRS 'EPSG:4326'
-                        );
-                    ";
-                            System.Diagnostics.Debug.WriteLine($"Export command: {command.CommandText}");
-                            await command.ExecuteNonQueryAsync();
-                        }
+                        await ExportToShapefile(fullSelect, shpPath, layerName);
 
                         if (!File.Exists(shpPath))
                             throw new Exception($"Failed to create shapefile at {shpPath}");
@@ -406,7 +316,111 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
+        private async Task HandleStructColumn(string colName, string colType, List<string> selectColumns)
+        {
+            if (!colType.StartsWith(STRUCT_TYPE, StringComparison.OrdinalIgnoreCase))
+                return;
 
+            if (colName == BBOX_COLUMN)
+            {
+                selectColumns.Add($"{colName}.minx as bbox_minx");
+                selectColumns.Add($"{colName}.miny as bbox_miny");
+                selectColumns.Add($"{colName}.maxx as bbox_maxx");
+                selectColumns.Add($"{colName}.maxy as bbox_maxy");
+                return;
+            }
+
+            string safeName = colName.Length > 10 ? colName.Substring(0, 10) : colName;
+            using var command = _connection.CreateCommand();
+            command.CommandText = $"DESCRIBE {colName}";
+            using var reader = await command.ExecuteReaderAsync();
+            
+            while (await reader.ReadAsync())
+            {
+                string fieldName = reader.GetString(0);
+                string fieldType = reader.GetString(1);
+                string safeFieldName = fieldName.Length > 10 ? fieldName.Substring(0, 10) : fieldName;
+                selectColumns.Add($"{colName}.{fieldName} as {safeName}_{safeFieldName}");
+            }
+        }
+
+        private async Task ExportToShapefile(string query, string outputPath, string layerName)
+        {
+            try
+            {
+                using var command = _connection.CreateCommand();
+                command.CommandText = BuildCopyCommand(query, outputPath);
+                System.Diagnostics.Debug.WriteLine($"Export command for {layerName}: {command.CommandText}");
+                await command.ExecuteNonQueryAsync();
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Failed to export shapefile for layer {layerName}", ex);
+            }
+        }
+
+        private async Task ExportByGeometryType(string selectClause, string layerNameBase, string releaseVersion, string outputFolder)
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = "SELECT DISTINCT ST_GeometryType(geometry) FROM current_table";
+            var geomTypes = new List<string>();
+            
+            using (var reader = await command.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    geomTypes.Add(reader.GetString(0));
+                }
+            }
+
+            foreach (var geomType in geomTypes)
+            {
+                string filteredQuery = BuildSelectQuery(
+                    selectClause, 
+                    BuildGeometryClause(), 
+                    $"ST_GeometryType(geometry) = '{geomType}'");
+
+                string layerName = $"Overture {layerNameBase} - {releaseVersion} - {geomType}";
+                string shpPath = Path.Combine(outputFolder, $"{layerName.Replace(" ", "_")}.shp");
+                
+                await ExportToShapefile(filteredQuery, shpPath, layerName);
+            }
+        }
+
+        private string BuildSelectQuery(string selectClause, string geometryClause, string? whereClause = null)
+        {
+            var query = $@"
+                SELECT 
+                    {selectClause},
+                    {geometryClause}
+                FROM current_table";
+            
+            if (!string.IsNullOrEmpty(whereClause))
+            {
+                query += $@"
+                WHERE {whereClause}";
+            }
+            
+            return query;
+        }
+
+        private string BuildCopyCommand(string selectQuery, string outputPath)
+        {
+            return $@"
+                COPY (
+                    {selectQuery}
+                ) TO '{outputPath.Replace('\\', '/')}' 
+                WITH (
+                    FORMAT GDAL,
+                    DRIVER 'ESRI Shapefile',
+                    SRS '{DEFAULT_SRS}'
+                );";
+        }
+
+        private string BuildGeometryClause()
+        {
+            return $"ST_Transform({GEOMETRY_COLUMN}, '{DEFAULT_SRS}', '{DEFAULT_SRS}') AS {GEOMETRY_COLUMN}";
+        }
 
         public void Dispose()
         {
