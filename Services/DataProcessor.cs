@@ -214,7 +214,7 @@ namespace DuckDBGeoparquet.Services
                                 }
                                 string safeName = colName.Length > 10 ? colName.Substring(0, 10) : colName;
 
-                                // Flatten STRUCT columns
+                                // Flatten STRUCT columns based on the schema reference
                                 if (colType.StartsWith("STRUCT", StringComparison.OrdinalIgnoreCase))
                                 {
                                     if (colName == "bbox")
@@ -265,11 +265,11 @@ namespace DuckDBGeoparquet.Services
                     string geometryClause = "ST_Transform(geometry, 'EPSG:4326', 'EPSG:4326') AS geometry";
                     string selectClause = string.Join(",\n    ", selectColumns);
                     string fullSelect = $@"
-                        SELECT 
-                            {selectClause},
-                            {geometryClause}
-                        FROM current_table
-                    ";
+                SELECT 
+                    {selectClause},
+                    {geometryClause}
+                FROM current_table
+            ";
 
                     if (layerNameBase.IndexOf("infrastructure", StringComparison.OrdinalIgnoreCase) >= 0)
                     {
@@ -289,12 +289,12 @@ namespace DuckDBGeoparquet.Services
                         foreach (var geomType in geomTypes)
                         {
                             string filteredQuery = $@"
-                                SELECT 
-                                    {selectClause},
-                                    {geometryClause}
-                                FROM current_table
-                                WHERE ST_GeometryType(geometry) = '{geomType}'
-                            ";
+                        SELECT 
+                            {selectClause},
+                            {geometryClause}
+                        FROM current_table
+                        WHERE ST_GeometryType(geometry) = '{geomType}'
+                    ";
 
                             string layerName = $"Overture {layerNameBase} - {releaseVersion} - {geomType}";
                             string shpPath = Path.Combine(outputFolder, $"{layerName.Replace(" ", "_")}.shp");
@@ -334,15 +334,15 @@ namespace DuckDBGeoparquet.Services
                             using (var command = _connection.CreateCommand())
                             {
                                 command.CommandText = $@"
-                                    COPY (
-                                        {filteredQuery}
-                                    ) TO '{shpPath.Replace('\\', '/')}' 
-                                    WITH (
-                                        FORMAT GDAL,
-                                        DRIVER 'ESRI Shapefile',
-                                        SRS 'EPSG:4326'
-                                    );
-                                ";
+                            COPY (
+                                {filteredQuery}
+                            ) TO '{shpPath.Replace('\\', '/')}' 
+                            WITH (
+                                FORMAT GDAL,
+                                DRIVER 'ESRI Shapefile',
+                                SRS 'EPSG:4326'
+                            );
+                        ";
                                 System.Diagnostics.Debug.WriteLine($"Export command for {layerName}: {command.CommandText}");
                                 await command.ExecuteNonQueryAsync();
                             }
@@ -371,15 +371,15 @@ namespace DuckDBGeoparquet.Services
                         using (var command = _connection.CreateCommand())
                         {
                             command.CommandText = $@"
-                                COPY (
-                                    {fullSelect}
-                                ) TO '{shpPath.Replace('\\', '/')}' 
-                                WITH (
-                                    FORMAT GDAL,
-                                    DRIVER 'ESRI Shapefile',
-                                    SRS 'EPSG:4326'
-                                );
-                            ";
+                        COPY (
+                            {fullSelect}
+                        ) TO '{shpPath.Replace('\\', '/')}' 
+                        WITH (
+                            FORMAT GDAL,
+                            DRIVER 'ESRI Shapefile',
+                            SRS 'EPSG:4326'
+                        );
+                    ";
                             System.Diagnostics.Debug.WriteLine($"Export command: {command.CommandText}");
                             await command.ExecuteNonQueryAsync();
                         }
@@ -405,6 +405,8 @@ namespace DuckDBGeoparquet.Services
                 throw new Exception($"Failed to create feature layer: {ex.Message}", ex);
             }
         }
+
+
 
         public void Dispose()
         {
