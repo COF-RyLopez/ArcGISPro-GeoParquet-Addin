@@ -13,6 +13,8 @@
 		<Content Include="Config.daml" />
 		<Content Include="Images\AddInDesktop16.png" />
 		<Content Include="Images\AddInDesktop32.png" />
+		<Content Include="Images\Overture16.png" />
+		<Content Include="Images\Overture32.png" />
 		<Content Include="DarkImages\AddInDesktop16.png" />
 		<Content Include="DarkImages\AddInDesktop32.png" />
 	</ItemGroup>
