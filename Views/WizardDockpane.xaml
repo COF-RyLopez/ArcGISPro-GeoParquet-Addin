@@ -2,37 +2,92 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:extensions="clr-namespace:ArcGIS.Desktop.Extensions;assembly=ArcGIS.Desktop.Extensions"
              mc:Ignorable="d" 
              d:DesignHeight="450" d:DesignWidth="800">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <extensions:DesignOnlyResourceDictionary Source="pack://application:,,,/ArcGIS.Desktop.Framework;component/Themes/Default.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            
+            <!-- Custom style for ComboBox items to respect dark mode -->
+            <Style x:Key="ComboBoxItemStyle" TargetType="ComboBoxItem">
+                <Setter Property="Background" Value="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"/>
+                <Setter Property="Foreground" Value="White"/>
+                <Setter Property="Padding" Value="6,2"/>
+                <Style.Triggers>
+                    <Trigger Property="IsSelected" Value="True">
+                        <Setter Property="Background" Value="{DynamicResource Esri_BlueBrush}"/>
+                        <Setter Property="Foreground" Value="White"/>
+                    </Trigger>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter Property="Background" Value="{DynamicResource Esri_BlueLightBrush}"/>
+                        <Setter Property="Foreground" Value="White"/>
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+        </ResourceDictionary>
+    </UserControl.Resources>
+    
     <Grid>
         <StackPanel Margin="10">
             <TextBlock Text="Overture Maps Data Loader" 
                      FontSize="16" 
                      FontWeight="Bold" 
-                     Margin="0,0,0,20"/>
+                     Margin="0,0,0,20"
+                     Style="{DynamicResource Esri_TextBlockH2}"/>
 
             <TextBlock Text="{Binding LatestRelease, StringFormat='Latest Release: {0}'}"
-                     Margin="0,0,0,10"/>
+                     Margin="0,0,0,10"
+                     Style="{DynamicResource Esri_TextBlockRegular}"/>
 
             <ComboBox ItemsSource="{Binding Themes}"
                      SelectedItem="{Binding SelectedTheme}"
                      Margin="0,0,0,20"
                      Width="200"
-                     HorizontalAlignment="Left"/>
+                     HorizontalAlignment="Left"
+                     Style="{DynamicResource Esri_ComboBox}"
+                     Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                     Foreground="{DynamicResource Esri_TextStrongBrush}"
+                     ItemContainerStyle="{StaticResource ComboBoxItemStyle}">
+                <ComboBox.Resources>
+                    <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}" 
+                                     Color="{DynamicResource Esri_DialogClientAreaBackgroundColor}"/>
+                    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" 
+                                     Color="{DynamicResource Esri_BlueColor}"/>
+                    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" 
+                                     Color="White"/>
+                    <SolidColorBrush x:Key="{x:Static SystemColors.WindowTextBrushKey}" 
+                                     Color="White"/>
+                    <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}"
+                                     Color="{DynamicResource Esri_DialogClientAreaBackgroundColor}"/>
+                </ComboBox.Resources>
+                
+                <!-- Override the dropdown popup style -->
+                <ComboBox.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"/>
+                    </ItemsPanelTemplate>
+                </ComboBox.ItemsPanel>
+            </ComboBox>
 
             <Button Content="Load Data" 
                     Command="{Binding LoadDataCommand}"
                     Width="100" 
                     HorizontalAlignment="Left"
-                    Margin="0,0,0,20"/>
+                    Margin="0,0,0,20"
+                    Style="{DynamicResource Esri_Button}"/>
 
             <ProgressBar Value="{Binding ProgressValue}"
                         Height="20"
-                        Margin="0,0,0,10"/>
+                        Margin="0,0,0,10"
+                        Style="{DynamicResource Esri_ProgressBar}"/>
 
             <TextBlock Text="{Binding StatusText}"
-                     Margin="0,0,0,10"/>
+                     Margin="0,0,0,10"
+                     Style="{DynamicResource Esri_TextBlockRegular}"/>
         </StackPanel>
     </Grid>
 </UserControl>
