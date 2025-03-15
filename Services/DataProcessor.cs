@@ -346,8 +346,10 @@ namespace DuckDBGeoparquet.Services
                     BuildGeometryClause(), 
                     $"ST_GeometryType(geometry) = '{geomType}'");
 
-                string layerName = $"Overture {layerNameBase} - {releaseVersion} - {geomType}";
-                string shpPath = Path.Combine(outputFolder, $"{layerName.Replace(" ", "_")}.shp");
+                // Simplify the layer naming but keep geometry type suffix to avoid file collisions
+                string shortGeomType = GetShortGeometryType(geomType);
+                string layerName = $"{layerNameBase}_{shortGeomType}";
+                string shpPath = Path.Combine(outputFolder, $"{layerName}.shp");
                 
                 // Pass the shapefile type to BuildCopyCommand for proper format
                 await ExportToShapefile(filteredQuery, shpPath, layerName, shapefileType);
@@ -473,6 +475,28 @@ namespace DuckDBGeoparquet.Services
         private string BuildGeometryClause()
         {
             return $"ST_Transform({GEOMETRY_COLUMN}, '{DEFAULT_SRS}', '{DEFAULT_SRS}') AS {GEOMETRY_COLUMN}";
+        }
+
+        // Helper method to get a shorter geometry type name
+        private string GetShortGeometryType(string geomType)
+        {
+            switch (geomType)
+            {
+                case "POINT":
+                    return "PT";
+                case "LINESTRING":
+                    return "LN";
+                case "POLYGON":
+                    return "PG";
+                case "MULTIPOINT":
+                    return "MPT";
+                case "MULTILINESTRING":
+                    return "MLN";
+                case "MULTIPOLYGON":
+                    return "MPG";
+                default:
+                    return geomType;
+            }
         }
 
         public void Dispose()
