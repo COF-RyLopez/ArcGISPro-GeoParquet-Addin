@@ -1,6 +1,6 @@
 ﻿# ArcGIS Pro GeoParquet Add‑in
 
-Hey there! Welcome to the **ArcGIS Pro GeoParquet Add‑in** repository. This project is designed to make it super simple for users—especially those new to GIS—to ingest cloud‑native data formats (like GeoParquet, CSV, and JSON) directly into ArcGIS Pro. Under the hood, we use [DuckDB](https://duckdb.org/) (via the DuckDB.NET API) to run in‑memory SQL queries and perform spatial data transformations. Currently, the add‑in exports Overture Maps data to a shapefile, with plans to support additional export formats (such as File Geodatabases, GeoPackages, and Esri JSON) in future releases.
+Hey there! Welcome to the **ArcGIS Pro GeoParquet Add‑in** repository. This project is designed to make it super simple for users—especially those new to GIS—to ingest cloud‑native data formats (like GeoParquet, CSV, and JSON) directly into ArcGIS Pro. Under the hood, we use [DuckDB](https://duckdb.org/) (via the DuckDB.NET API) to run in‑memory SQL queries and perform spatial data transformations. The add‑in now exports Overture Maps data directly to GeoParquet format, taking advantage of ArcGIS Pro 3.5's native GeoParquet support.
 
 ## Installation
 
@@ -13,7 +13,7 @@ Hey there! Welcome to the **ArcGIS Pro GeoParquet Add‑in** repository. This pr
 ### Install From Source
 
 ### Prerequisites
-- **ArcGIS Pro 3.4** or later  
+- **ArcGIS Pro 3.5** or later  
 - **.NET 8 SDK** (ensure your Visual Studio setup targets .NET 8)  
 - **ArcGIS Pro SDK for .NET** installed in Visual Studio
 
@@ -39,7 +39,7 @@ Hey there! Welcome to the **ArcGIS Pro GeoParquet Add‑in** repository. This pr
   ```bash
    C:\Users\<YourUserName>\Documents\ArcGIS\AddIns\ArcGISPro
   ```
-- Restart ArcGIS Pro if it’s already open.
+- Restart ArcGIS Pro if it's already open.
 
 5. **Use the Add‑in in ArcGIS Pro**
 
@@ -52,7 +52,7 @@ Hey there! Welcome to the **ArcGIS Pro GeoParquet Add‑in** repository. This pr
 - **Missing ArcGIS Pro SDK Templates?**
 - Ensure you have installed the [ArcGIS Pro SDK for .NET](https://pro.arcgis.com/en/pro-app/latest/sdk/) extension in Visual Studio.
 - **Access Denied or Security Warnings?**
-- If Windows or your organization’s policy blocks add‑ins from unknown publishers, you may need to unblock the .esriAddInX file or add its path to your trusted locations in ArcGIS Pro’s Add-In Manager.
+- If Windows or your organization's policy blocks add‑ins from unknown publishers, you may need to unblock the .esriAddInX file or add its path to your trusted locations in ArcGIS Pro's Add-In Manager.
 
 ## Why This Add‑in?
 
@@ -64,25 +64,26 @@ Hey there! Welcome to the **ArcGIS Pro GeoParquet Add‑in** repository. This pr
 
 1. **File Ingestion:**  
    - Enter a file URL or browse for a local file.
-   - Ingest data directly via DuckDB’s HTTP FS/S3 integration.
+   - Ingest data directly via DuckDB's HTTP FS/S3 integration.
 
 2. **Data Preview & Validation:**  
    - Quick attribute preview using a DataGrid.
    - Validate that your data is correctly loaded.
 
 3. **Data Transformation:**  
-   - Apply custom SQL queries using DuckDB’s in‑memory engine.
+   - Apply custom SQL queries using DuckDB's in‑memory engine.
    - Preview transformed data before export.
 
-4. **Export to Shapefile (Overture Maps Data):**  
-   - **Current Release:** Exports Overture Maps data to a shapefile.
-   - **Coming Soon:** Additional export formats such as File Geodatabases, GeoPackages, and Esri JSON will be supported.
+4. **Export to GeoParquet:**  
+   - **Current Release:** Exports Overture Maps data directly to GeoParquet format.
+   - Takes advantage of ArcGIS Pro 3.5's native GeoParquet support.
+   - **Coming Soon:** Additional export formats such as File Geodatabases and GeoPackages.
 
 ## Project Structure
 
 - **Views/**  
   - `WizardDockpane.xaml` / `WizardDockpane.xaml.cs`: The WPF UI for the wizard steps.
-  - `WizardDockpaneViewModel.cs`: The dockpane’s view model (inherits from `DockPane`).
+  - `WizardDockpaneViewModel.cs`: The dockpane's view model (inherits from `DockPane`).
 - **Services/**  
   - `DataProcessor.cs`: Contains logic for ingesting data via DuckDB, applying transformations, and exporting data.
 - **DuckDBGeoparquetModule.cs**  

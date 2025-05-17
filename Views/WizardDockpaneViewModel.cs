@@ -234,7 +234,7 @@ namespace DuckDBGeoparquet.Views
                         }
                     });
 
-                    await _dataProcessor.CreateFeatureLayerAsync(layerName, LatestRelease,progress);
+                    await _dataProcessor.CreateFeatureLayerAsync(layerName, LatestRelease, progress);
 
                     StatusText = $"Successfully loaded {SelectedTheme}/{type} data from release {LatestRelease}";
                     ProgressValue += (100.0 / types.Length);

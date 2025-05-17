@@ -16,13 +16,13 @@ namespace DuckDBGeoparquet.Services
     public class DataProcessor : IDisposable
     {
         private readonly DuckDBConnection _connection;
-        
+
         // Constants
         private const string DEFAULT_SRS = "EPSG:4326";
         private const string STRUCT_TYPE = "STRUCT";
         private const string BBOX_COLUMN = "bbox";
         private const string GEOMETRY_COLUMN = "geometry";
-        
+
         // Property to hold the output folder for the session.
         private string _outputFolder;
 
@@ -163,33 +163,24 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-
-        private void DeleteShapefile(string shpPath)
+        private void DeleteParquetFile(string parquetPath)
         {
-            // Get the base file path without extension.
-            string basePath = Path.Combine(Path.GetDirectoryName(shpPath), Path.GetFileNameWithoutExtension(shpPath));
-            // Shapefile typically has these extensions.
-            string[] extensions = { ".shp", ".shx", ".dbf", ".prj", ".cpg", ".sbn", ".sbx" };
-            foreach (var ext in extensions)
+            if (File.Exists(parquetPath))
             {
-                string file = basePath + ext;
-                if (File.Exists(file))
+                try
                 {
-                    try
-                    {
-                        File.Delete(file);
-                    }
-                    catch (Exception ex)
-                    {
-                        // Handle any deletion errors (e.g., file is locked).
-                        ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show($"Failed to delete {file}: {ex.Message}");
-                    }
+                    File.Delete(parquetPath);
+                }
+                catch (Exception ex)
+                {
+                    // Handle any deletion errors (e.g., file is locked).
+                    ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show($"Failed to delete {parquetPath}: {ex.Message}");
                 }
             }
         }
 
         /// <summary>
-        /// Exports the current_table to shapefile(s) using DuckDB's GDAL export.
+        /// Exports the current_table to GeoParquet file(s) using DuckDB's Parquet export.
         /// All exported files are placed in a single output folder per session.
         /// </summary>
         /// <param name="layerNameBase">Base name for the layer.</param>
@@ -222,7 +213,7 @@ namespace DuckDBGeoparquet.Services
                                 {
                                     continue;
                                 }
-                                string safeName = colName.Length > 10 ? colName.Substring(0, 10) : colName;
+                                string safeName = colName;
 
                                 // Flatten STRUCT columns based on the schema reference
                                 if (colType.StartsWith("STRUCT", StringComparison.OrdinalIgnoreCase))
@@ -298,16 +289,16 @@ namespace DuckDBGeoparquet.Services
                 return;
             }
 
-            string safeName = colName.Length > 10 ? colName.Substring(0, 10) : colName;
+            string safeName = colName;
             using var command = _connection.CreateCommand();
             command.CommandText = $"DESCRIBE {colName}";
             using var reader = await command.ExecuteReaderAsync();
-            
+
             while (await reader.ReadAsync())
             {
                 string fieldName = reader.GetString(0);
                 string fieldType = reader.GetString(1);
-                string safeFieldName = fieldName.Length > 10 ? fieldName.Substring(0, 10) : fieldName;
+                string safeFieldName = fieldName;
                 selectColumns.Add($"{colName}.{fieldName} as {safeName}_{safeFieldName}");
             }
         }
@@ -317,7 +308,7 @@ namespace DuckDBGeoparquet.Services
             using var command = _connection.CreateCommand();
             command.CommandText = "SELECT DISTINCT ST_GeometryType(geometry) FROM current_table";
             var geomTypes = new List<string>();
-            
+
             using (var reader = await command.ExecuteReaderAsync())
             {
                 while (await reader.ReadAsync())
@@ -328,35 +319,21 @@ namespace DuckDBGeoparquet.Services
 
             foreach (var geomType in geomTypes)
             {
-                // Determine the appropriate shapefile type based on the geometry type
-                string shapefileType = "POINT"; // Default
-                if (geomType.Contains("POLYGON"))
-                {
-                    shapefileType = "POLYGON";
-                }
-                else if (geomType.Contains("LINESTRING") || geomType.Contains("LINE"))
-                {
-                    shapefileType = "ARC";
-                }
-
-                System.Diagnostics.Debug.WriteLine($"Using shapefile type {shapefileType} for geometry type {geomType}");
-                
                 string filteredQuery = BuildSelectQuery(
-                    string.Join(",\n    ", selectColumns), 
-                    BuildGeometryClause(), 
+                    string.Join(",\n    ", selectColumns),
+                    BuildGeometryClause(),
                     $"ST_GeometryType(geometry) = '{geomType}'");
 
                 // Simplify the layer naming but keep geometry type suffix to avoid file collisions
                 string shortGeomType = GetShortGeometryType(geomType);
                 string layerName = $"{layerNameBase}_{shortGeomType}";
-                string shpPath = Path.Combine(outputFolder, $"{layerName}.shp");
-                
-                // Pass the shapefile type to BuildCopyCommand for proper format
-                await ExportToShapefile(filteredQuery, shpPath, layerName, shapefileType);
-                
-                if (File.Exists(shpPath))
+                string parquetPath = Path.Combine(outputFolder, $"{layerName}.parquet");
+
+                await ExportToGeoParquet(filteredQuery, parquetPath, layerName);
+
+                if (File.Exists(parquetPath))
                 {
-                    var fileInfo = new FileInfo(shpPath);
+                    var fileInfo = new FileInfo(parquetPath);
                     if (fileInfo.Length > 0)
                     {
                         await QueuedTask.Run(() =>
@@ -364,7 +341,7 @@ namespace DuckDBGeoparquet.Services
                             var map = MapView.Active?.Map;
                             if (map != null)
                             {
-                                LayerFactory.Instance.CreateLayer(new Uri(shpPath), map);
+                                LayerFactory.Instance.CreateLayer(new Uri(parquetPath), map);
                             }
                         });
                     }
@@ -372,86 +349,31 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        private async Task ExportToShapefile(string query, string outputPath, string layerName, string shapefileType = null)
+        private async Task ExportToGeoParquet(string query, string outputPath, string layerName)
         {
             try
             {
                 using var command = _connection.CreateCommand();
-                command.CommandText = BuildCopyCommand(query, outputPath, shapefileType);
+                command.CommandText = BuildGeoParquetCopyCommand(query, outputPath);
                 System.Diagnostics.Debug.WriteLine($"Export command for {layerName}: {command.CommandText}");
                 await command.ExecuteNonQueryAsync();
             }
             catch (Exception ex)
             {
-                throw new Exception($"Failed to export shapefile for layer {layerName}", ex);
+                throw new Exception($"Failed to export GeoParquet for layer {layerName}", ex);
             }
         }
-        
-        private string BuildCopyCommand(string selectQuery, string outputPath, string shapefileType = null)
-        {
-            // If shapefile type is not specified, try to detect it automatically
-            if (string.IsNullOrEmpty(shapefileType))
-            {
-                // First determine the geometry type
-                shapefileType = "POINT"; // Default to POINT
-                
-                try 
-                {
-                    using var cmd = _connection.CreateCommand();
-                    
-                    // Get a better view of the actual geometry types
-                    cmd.CommandText = "SELECT DISTINCT ST_GeometryType(geometry) FROM current_table LIMIT 10";
-                    using var reader = cmd.ExecuteReader();
-                    
-                    // Check if there are polygon or linestring types
-                    bool hasPolygon = false;
-                    bool hasLine = false;
-                    
-                    while (reader.Read())
-                    {
-                        string currentType = reader.GetString(0).ToUpperInvariant();
-                        System.Diagnostics.Debug.WriteLine($"Detected geometry type: {currentType}");
-                        
-                        if (currentType.Contains("POLYGON"))
-                        {
-                            hasPolygon = true;
-                        }
-                        else if (currentType.Contains("LINESTRING") || currentType.Contains("LINE"))
-                        {
-                            hasLine = true;
-                        }
-                    }
-                    
-                    // Prioritize polygon over line over point
-                    if (hasPolygon)
-                    {
-                        shapefileType = "POLYGON";
-                    }
-                    else if (hasLine)
-                    {
-                        shapefileType = "ARC";
-                    }
-                }
-                catch (Exception ex)
-                {
-                    // Log but don't throw
-                    System.Diagnostics.Debug.WriteLine($"Error detecting geometry type: {ex.Message}");
-                }
-            }
 
-            System.Diagnostics.Debug.WriteLine($"Using shapefile geometry type: {shapefileType}");
-            
-            // Add the appropriate Layer Creation Option
-            string shapefileOption = $", LAYER_CREATION_OPTIONS 'SHPT={shapefileType}'";
-            
+        private string BuildGeoParquetCopyCommand(string selectQuery, string outputPath)
+        {
             return $@"
                 COPY (
                     {selectQuery}
                 ) TO '{outputPath.Replace('\\', '/')}' 
                 WITH (
-                    FORMAT GDAL,
-                    DRIVER 'ESRI Shapefile',
-                    SRS '{DEFAULT_SRS}'{shapefileOption}
+                    FORMAT 'PARQUET',
+                    ROW_GROUP_SIZE 100000,
+                    COMPRESSION 'ZSTD'
                 );";
         }
 
@@ -462,13 +384,13 @@ namespace DuckDBGeoparquet.Services
                     {selectClause},
                     {geometryClause}
                 FROM current_table";
-            
+
             if (!string.IsNullOrEmpty(whereClause))
             {
                 query += $@"
                 WHERE {whereClause}";
             }
-            
+
             return query;
         }
 

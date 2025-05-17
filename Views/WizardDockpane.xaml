@@ -11,7 +11,7 @@
             <ResourceDictionary.MergedDictionaries>
                 <extensions:DesignOnlyResourceDictionary Source="pack://application:,,,/ArcGIS.Desktop.Framework;component/Themes/Default.xaml"/>
             </ResourceDictionary.MergedDictionaries>
-            
+
             <!-- Custom style for ComboBox items to respect dark mode -->
             <Style x:Key="ComboBoxItemStyle" TargetType="ComboBoxItem">
                 <Setter Property="Background" Value="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"/>
@@ -30,7 +30,7 @@
             </Style>
         </ResourceDictionary>
     </UserControl.Resources>
-    
+
     <Grid>
         <StackPanel Margin="10">
             <TextBlock Text="Overture Maps Data Loader" 
@@ -64,7 +64,7 @@
                     <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}"
                                      Color="{DynamicResource Esri_DialogClientAreaBackgroundColor}"/>
                 </ComboBox.Resources>
-                
+
                 <!-- Override the dropdown popup style -->
                 <ComboBox.ItemsPanel>
                     <ItemsPanelTemplate>

@@ -1,12 +1,12 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <ArcGIS defaultAssembly="DuckDBGeoparquet.dll" defaultNamespace="DuckDBGeoparquet" xmlns="http://schemas.esri.com/DADF/Registry" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
-	<AddInInfo id="{9e44d8fc-6e1a-4513-9992-85c2de3e2d61}" version="1.0" desktopVersion="3.4.55405">
-		<Name>DuckDBGeoparquet</Name>
-		<Description>DuckDBGeoparquet description</Description>
+	<AddInInfo id="{9e44d8fc-6e1a-4513-9992-85c2de3e2d61}" version="1.1" desktopVersion="3.5">
+		<n>DuckDBGeoparquet</n>
+		<Description>Export Overture Maps data to GeoParquet format for use in ArcGIS Pro 3.5</Description>
 		<Image>Images\AddinDesktop32.png</Image>
 		<Author>rylopez</Author>
 		<Company>County of Fresno</Company>
-		<Date>2/22/2025 12:25:36 PM</Date>
+		<Date>5/16/2025</Date>
 		<Subject>Framework</Subject>
 		<!-- Note subject can be one or more of these topics:
                     Content, Framework, Editing, Geodatabase, Geometry, Geoprocessing, Layouts, Map Authoring, Map Exploration -->
