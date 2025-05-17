@@ -198,73 +198,12 @@ namespace DuckDBGeoparquet.Services
                     if (map == null)
                         throw new Exception("No active map found");
 
-                    // Build the dynamic SELECT clause from the current_table.
-                    List<string> selectColumns = new List<string>();
-                    using (var command = _connection.CreateCommand())
-                    {
-                        command.CommandText = "DESCRIBE current_table";
-                        using (var reader = await command.ExecuteReaderAsync(CancellationToken.None))
-                        {
-                            while (await reader.ReadAsync())
-                            {
-                                string colName = reader["column_name"].ToString();
-                                string colType = reader["column_type"].ToString();
-                                if (colName.Equals("geometry", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    continue;
-                                }
-                                string safeName = colName;
+                    // With ArcGIS Pro 3.5's improved GeoParquet support, we can now use the original
+                    // complex structure without extensive flattening
+                    progress?.Report("Building query...");
 
-                                // Flatten STRUCT columns based on the schema reference
-                                if (colType.StartsWith("STRUCT", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    if (colName == "bbox")
-                                    {
-                                        selectColumns.Add($"bbox.xmin AS bbox_xmin");
-                                        selectColumns.Add($"bbox.xmax AS bbox_xmax");
-                                        selectColumns.Add($"bbox.ymin AS bbox_ymin");
-                                        selectColumns.Add($"bbox.ymax AS bbox_ymax");
-                                    }
-                                    else if (colName == "sources")
-                                    {
-                                        selectColumns.Add($"to_json(sources) AS sources");
-                                    }
-                                    else if (colName == "names")
-                                    {
-                                        selectColumns.Add($"names.primary AS names_primary");
-                                        selectColumns.Add($"to_json(names.common) AS names_common");
-                                        selectColumns.Add($"to_json(names.rules) AS names_rules");
-                                    }
-                                    else if (colName == "categories")
-                                    {
-                                        selectColumns.Add($"categories.primary AS categories_primary");
-                                        selectColumns.Add($"to_json(categories.alternate) AS categories_alternate");
-                                    }
-                                    else if (colName == "brand")
-                                    {
-                                        selectColumns.Add($"brand.wikidata AS brand_wikidata");
-                                        selectColumns.Add($"to_json(brand.names) AS brand_names");
-                                    }
-                                    else if (colName == "addresses")
-                                    {
-                                        selectColumns.Add($"to_json(addresses) AS addresses");
-                                    }
-                                }
-                                else if (colType.StartsWith("MAP", StringComparison.OrdinalIgnoreCase) ||
-                                         colType.Contains("["))
-                                {
-                                    selectColumns.Add($"to_json({colName}) AS {safeName}");
-                                }
-                                else
-                                {
-                                    selectColumns.Add($"{colName} AS {safeName}");
-                                }
-                            }
-                        }
-                    }
-
-                    // Always export by geometry type for all datasets
-                    await ExportByGeometryType(selectColumns, layerNameBase, releaseVersion, outputFolder);
+                    // Export by geometry type for all datasets
+                    await ExportByGeometryType(layerNameBase, releaseVersion, outputFolder, progress);
                     progress?.Report($"All {layerNameBase} features added to map.");
                 });
             }
@@ -275,35 +214,7 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        private async Task HandleStructColumn(string colName, string colType, List<string> selectColumns)
-        {
-            if (!colType.StartsWith(STRUCT_TYPE, StringComparison.OrdinalIgnoreCase))
-                return;
-
-            if (colName == BBOX_COLUMN)
-            {
-                selectColumns.Add($"{colName}.minx as bbox_minx");
-                selectColumns.Add($"{colName}.miny as bbox_miny");
-                selectColumns.Add($"{colName}.maxx as bbox_maxx");
-                selectColumns.Add($"{colName}.maxy as bbox_maxy");
-                return;
-            }
-
-            string safeName = colName;
-            using var command = _connection.CreateCommand();
-            command.CommandText = $"DESCRIBE {colName}";
-            using var reader = await command.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
-            {
-                string fieldName = reader.GetString(0);
-                string fieldType = reader.GetString(1);
-                string safeFieldName = fieldName;
-                selectColumns.Add($"{colName}.{fieldName} as {safeName}_{safeFieldName}");
-            }
-        }
-
-        private async Task ExportByGeometryType(List<string> selectColumns, string layerNameBase, string releaseVersion, string outputFolder)
+        private async Task ExportByGeometryType(string layerNameBase, string releaseVersion, string outputFolder, IProgress<string> progress = null)
         {
             using var command = _connection.CreateCommand();
             command.CommandText = "SELECT DISTINCT ST_GeometryType(geometry) FROM current_table";
@@ -319,16 +230,22 @@ namespace DuckDBGeoparquet.Services
 
             foreach (var geomType in geomTypes)
             {
-                string filteredQuery = BuildSelectQuery(
-                    string.Join(",\n    ", selectColumns),
-                    BuildGeometryClause(),
-                    $"ST_GeometryType(geometry) = '{geomType}'");
+                progress?.Report($"Processing {geomType} features...");
+
+                // Build query that preserves all original columns including complex types
+                string filteredQuery = $@"
+                    SELECT 
+                        *,
+                        ST_Transform({GEOMETRY_COLUMN}, '{DEFAULT_SRS}', '{DEFAULT_SRS}') AS {GEOMETRY_COLUMN}
+                    FROM current_table
+                    WHERE ST_GeometryType(geometry) = '{geomType}'";
 
                 // Simplify the layer naming but keep geometry type suffix to avoid file collisions
                 string shortGeomType = GetShortGeometryType(geomType);
                 string layerName = $"{layerNameBase}_{shortGeomType}";
                 string parquetPath = Path.Combine(outputFolder, $"{layerName}.parquet");
 
+                progress?.Report($"Exporting {layerName} to GeoParquet...");
                 await ExportToGeoParquet(filteredQuery, parquetPath, layerName);
 
                 if (File.Exists(parquetPath))
@@ -336,6 +253,7 @@ namespace DuckDBGeoparquet.Services
                     var fileInfo = new FileInfo(parquetPath);
                     if (fileInfo.Length > 0)
                     {
+                        progress?.Report($"Adding {layerName} to map...");
                         await QueuedTask.Run(() =>
                         {
                             var map = MapView.Active?.Map;
@@ -375,28 +293,6 @@ namespace DuckDBGeoparquet.Services
                     ROW_GROUP_SIZE 100000,
                     COMPRESSION 'ZSTD'
                 );";
-        }
-
-        private string BuildSelectQuery(string selectClause, string geometryClause, string? whereClause = null)
-        {
-            var query = $@"
-                SELECT 
-                    {selectClause},
-                    {geometryClause}
-                FROM current_table";
-
-            if (!string.IsNullOrEmpty(whereClause))
-            {
-                query += $@"
-                WHERE {whereClause}";
-            }
-
-            return query;
-        }
-
-        private string BuildGeometryClause()
-        {
-            return $"ST_Transform({GEOMETRY_COLUMN}, '{DEFAULT_SRS}', '{DEFAULT_SRS}') AS {GEOMETRY_COLUMN}";
         }
 
         // Helper method to get a shorter geometry type name

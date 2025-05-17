@@ -5,7 +5,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:extensions="clr-namespace:ArcGIS.Desktop.Extensions;assembly=ArcGIS.Desktop.Extensions"
              mc:Ignorable="d" 
-             d:DesignHeight="450" d:DesignWidth="800">
+             d:DesignHeight="600" d:DesignWidth="400">
     <UserControl.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
@@ -19,75 +19,244 @@
                 <Setter Property="Padding" Value="6,2"/>
                 <Style.Triggers>
                     <Trigger Property="IsSelected" Value="True">
-                        <Setter Property="Background" Value="{DynamicResource Esri_BlueBrush}"/>
+                        <Setter Property="Background" Value="#0079C1"/>
                         <Setter Property="Foreground" Value="White"/>
                     </Trigger>
                     <Trigger Property="IsMouseOver" Value="True">
-                        <Setter Property="Background" Value="{DynamicResource Esri_BlueLightBrush}"/>
+                        <Setter Property="Background" Value="#00A0FF"/>
                         <Setter Property="Foreground" Value="White"/>
                     </Trigger>
                 </Style.Triggers>
+            </Style>
+
+            <!-- TabControl style that fits with ArcGIS Pro theme -->
+            <Style x:Key="ProTabControl" TargetType="TabControl">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource Esri_BorderBrush}"/>
+                <Setter Property="Padding" Value="0"/>
+            </Style>
+
+            <!-- TabItem style that fits with ArcGIS Pro theme -->
+            <Style x:Key="ProTabItem" TargetType="TabItem">
+                <Setter Property="Background" Value="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource Esri_TextStrongBrush}"/>
+                <Setter Property="Padding" Value="12,5"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource Esri_BorderBrush}"/>
+                <Setter Property="BorderThickness" Value="1,1,1,0"/>
+                <Setter Property="Margin" Value="0,0,1,0"/>
+                <Style.Triggers>
+                    <Trigger Property="IsSelected" Value="True">
+                        <Setter Property="Background" Value="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"/>
+                        <Setter Property="BorderBrush" Value="#0079C1"/>
+                        <Setter Property="BorderThickness" Value="1,3,1,0"/>
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+
+            <!-- Card-like Panel style -->
+            <Style x:Key="CardPanel" TargetType="Border">
+                <Setter Property="Background" Value="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource Esri_BorderBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CornerRadius" Value="2"/>
+                <Setter Property="Padding" Value="10"/>
+                <Setter Property="Margin" Value="0,0,0,10"/>
+            </Style>
+
+            <!-- Section title style -->
+            <Style x:Key="SectionTitle" TargetType="TextBlock">
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="Margin" Value="0,0,0,5"/>
+                <Setter Property="Foreground" Value="{DynamicResource Esri_TextStrongBrush}"/>
             </Style>
         </ResourceDictionary>
     </UserControl.Resources>
 
     <Grid>
-        <StackPanel Margin="10">
-            <TextBlock Text="Overture Maps Data Loader" 
-                     FontSize="16" 
-                     FontWeight="Bold" 
-                     Margin="0,0,0,20"
-                     Style="{DynamicResource Esri_TextBlockH2}"/>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
 
-            <TextBlock Text="{Binding LatestRelease, StringFormat='Latest Release: {0}'}"
-                     Margin="0,0,0,10"
-                     Style="{DynamicResource Esri_TextBlockRegular}"/>
+        <!-- Header with title and version info -->
+        <Border Grid.Row="0" 
+                Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                BorderThickness="0,0,0,1"
+                Padding="15,10">
+            <StackPanel>
+                <TextBlock Text="Overture Maps Data Loader" 
+                           FontSize="16" 
+                           FontWeight="Bold" 
+                           Style="{DynamicResource Esri_TextBlockH2}"/>
+                <TextBlock Text="{Binding LatestRelease, StringFormat='Release: {0}'}"
+                           Margin="0,3,0,0"
+                           Opacity="0.8"
+                           Style="{DynamicResource Esri_TextBlockRegular}"/>
+            </StackPanel>
+        </Border>
 
-            <ComboBox ItemsSource="{Binding Themes}"
-                     SelectedItem="{Binding SelectedTheme}"
-                     Margin="0,0,0,20"
-                     Width="200"
-                     HorizontalAlignment="Left"
-                     Style="{DynamicResource Esri_ComboBox}"
-                     Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
-                     Foreground="{DynamicResource Esri_TextStrongBrush}"
-                     ItemContainerStyle="{StaticResource ComboBoxItemStyle}">
-                <ComboBox.Resources>
-                    <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}" 
-                                     Color="{DynamicResource Esri_DialogClientAreaBackgroundColor}"/>
-                    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" 
-                                     Color="{DynamicResource Esri_BlueColor}"/>
-                    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" 
-                                     Color="White"/>
-                    <SolidColorBrush x:Key="{x:Static SystemColors.WindowTextBrushKey}" 
-                                     Color="White"/>
-                    <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}"
-                                     Color="{DynamicResource Esri_DialogClientAreaBackgroundColor}"/>
-                </ComboBox.Resources>
+        <!-- Main content area with tabs -->
+        <TabControl Grid.Row="1" 
+                    Style="{StaticResource ProTabControl}"
+                    Margin="0">
+            <!-- Select Data Tab -->
+            <TabItem Header="Select Data" 
+                     Style="{StaticResource ProTabItem}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="15">
+                        <!-- Theme selection card -->
+                        <Border Style="{StaticResource CardPanel}">
+                            <StackPanel>
+                                <TextBlock Text="1. Choose Theme" 
+                                           Style="{StaticResource SectionTitle}"/>
+                                <Grid Margin="0,5,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox Grid.Column="0"
+                                              ItemsSource="{Binding Themes}"
+                                              SelectedItem="{Binding SelectedTheme}"
+                                              Style="{DynamicResource Esri_ComboBox}"
+                                              Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                                              Foreground="{DynamicResource Esri_TextStrongBrush}"
+                                              ItemContainerStyle="{StaticResource ComboBoxItemStyle}">
+                                        <ComboBox.Resources>
+                                            <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}" 
+                                                             Color="{DynamicResource Esri_DialogClientAreaBackgroundColor}"/>
+                                            <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" 
+                                                             Color="{DynamicResource Esri_BlueColor}"/>
+                                            <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" 
+                                                             Color="White"/>
+                                            <SolidColorBrush x:Key="{x:Static SystemColors.WindowTextBrushKey}" 
+                                                             Color="White"/>
+                                            <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}"
+                                                             Color="{DynamicResource Esri_DialogClientAreaBackgroundColor}"/>
+                                        </ComboBox.Resources>
+                                        <ComboBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"/>
+                                            </ItemsPanelTemplate>
+                                        </ComboBox.ItemsPanel>
+                                    </ComboBox>
+                                    <Button Grid.Column="1"
+                                            Content="Info"
+                                            Margin="5,0,0,0" 
+                                            Style="{DynamicResource Esri_Button}"
+                                            Command="{Binding ShowThemeInfoCommand}"
+                                            ToolTip="View information about this theme"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
 
-                <!-- Override the dropdown popup style -->
-                <ComboBox.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <StackPanel Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"/>
-                    </ItemsPanelTemplate>
-                </ComboBox.ItemsPanel>
-            </ComboBox>
+                        <!-- Area Selection card -->
+                        <Border Style="{StaticResource CardPanel}">
+                            <StackPanel>
+                                <TextBlock Text="2. Select Area" 
+                                           Style="{StaticResource SectionTitle}"/>
+                                <RadioButton Content="Current Map Extent"
+                                             IsChecked="{Binding UseCurrentMapExtent}"
+                                             Margin="0,5,0,0"/>
+                                <RadioButton Content="Custom Extent" 
+                                             IsChecked="{Binding UseCustomExtent}"
+                                             Margin="0,5,0,0"/>
+                                <Button Content="Set Custom Extent..."
+                                        HorizontalAlignment="Left"
+                                        Margin="20,5,0,0"
+                                        Command="{Binding SetCustomExtentCommand}"
+                                        Style="{DynamicResource Esri_Button}"
+                                        IsEnabled="{Binding UseCustomExtent}"/>
+                            </StackPanel>
+                        </Border>
 
-            <Button Content="Load Data" 
-                    Command="{Binding LoadDataCommand}"
-                    Width="100" 
-                    HorizontalAlignment="Left"
-                    Margin="0,0,0,20"
-                    Style="{DynamicResource Esri_Button}"/>
+                        <!-- Theme Preview -->
+                        <Border Style="{StaticResource CardPanel}">
+                            <StackPanel>
+                                <TextBlock Text="Theme Preview" 
+                                           Style="{StaticResource SectionTitle}"/>
 
-            <ProgressBar Value="{Binding ProgressValue}"
-                        Height="20"
-                        Margin="0,0,0,10"
-                        Style="{DynamicResource Esri_ProgressBar}"/>
+                                <!-- Theme preview content changes based on selection -->
+                                <Grid Height="100" 
+                                      Background="{DynamicResource Esri_BackgroundPressedBrush}" 
+                                      Margin="0,5,0,5">
+                                    <TextBlock Text="{Binding ThemeDescription}"
+                                               VerticalAlignment="Center"
+                                               HorizontalAlignment="Center"
+                                               TextWrapping="Wrap"
+                                               Padding="10,0"
+                                               TextAlignment="Center"
+                                               FontStyle="Italic"
+                                               Foreground="{DynamicResource Esri_TextStrongBrush}"/>
+                                </Grid>
 
-            <TextBlock Text="{Binding StatusText}"
-                     Margin="0,0,0,10"
-                     Style="{DynamicResource Esri_TextBlockRegular}"/>
-        </StackPanel>
+                                <!-- Data stats placeholder -->
+                                <TextBlock Text="{Binding EstimatedFeatures, StringFormat='Estimated features: {0}'}"
+                                           Margin="0,5,0,0"
+                                           Style="{DynamicResource Esri_TextBlockRegular}"/>
+                                <TextBlock Text="{Binding EstimatedSize, StringFormat='Estimated size: {0}'}"
+                                           Style="{DynamicResource Esri_TextBlockRegular}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Action Buttons -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" 
+                                    Content="Cancel" 
+                                    Margin="0,10,5,0"
+                                    Style="{DynamicResource Esri_Button}"/>
+                            <Button Grid.Column="1" 
+                                    Content="Load Data" 
+                                    Command="{Binding LoadDataCommand}"
+                                    Margin="5,10,0,0"
+                                    Style="{DynamicResource Esri_Button}"/>
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- Progress Tab -->
+            <TabItem Header="Status" 
+                     Style="{StaticResource ProTabItem}">
+                <StackPanel Margin="15">
+                    <!-- Progress card -->
+                    <Border Style="{StaticResource CardPanel}">
+                        <StackPanel>
+                            <TextBlock Text="Operation Progress" 
+                                       Style="{StaticResource SectionTitle}"/>
+                            <ProgressBar Value="{Binding ProgressValue}"
+                                        Height="20"
+                                        Margin="0,10,0,5"
+                                        Style="{DynamicResource Esri_ProgressBar}"/>
+                            <TextBlock Text="{Binding StatusText}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,5,0,0"
+                                       Style="{DynamicResource Esri_TextBlockRegular}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Log output card -->
+                    <Border Style="{StaticResource CardPanel}">
+                        <StackPanel>
+                            <TextBlock Text="Log Output" 
+                                       Style="{StaticResource SectionTitle}"/>
+                            <TextBox Height="200"
+                                     IsReadOnly="True"
+                                     Text="{Binding LogOutputText, Mode=OneWay}"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     Margin="0,5,0,0"
+                                     Background="{DynamicResource Esri_BackgroundPressedBrush}"
+                                     Foreground="{DynamicResource Esri_TextStrongBrush}"
+                                     BorderBrush="{DynamicResource Esri_BorderBrush}"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </TabItem>
+        </TabControl>
     </Grid>
 </UserControl>

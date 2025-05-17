@@ -1,99 +1,165 @@
 ﻿# ArcGIS Pro GeoParquet Add‑in
 
-Hey there! Welcome to the **ArcGIS Pro GeoParquet Add‑in** repository. This project is designed to make it super simple for users—especially those new to GIS—to ingest cloud‑native data formats (like GeoParquet, CSV, and JSON) directly into ArcGIS Pro. Under the hood, we use [DuckDB](https://duckdb.org/) (via the DuckDB.NET API) to run in‑memory SQL queries and perform spatial data transformations. The add‑in now exports Overture Maps data directly to GeoParquet format, taking advantage of ArcGIS Pro 3.5's native GeoParquet support.
+A powerful ArcGIS Pro add-in that simplifies working with cloud-native geospatial data formats, especially GeoParquet files. This tool uses [DuckDB](https://duckdb.org/) to deliver high-performance data processing directly within ArcGIS Pro, making it ideal for both GIS professionals and newcomers alike.
+
+![ArcGIS Pro GeoParquet Add-in](https://raw.githubusercontent.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin/main/Images/addin-icon.png)
+
+## Features
+
+- **Native GeoParquet Support**: Fully leverages ArcGIS Pro 3.5's GeoParquet capabilities
+- **Complex Data Preservation**: Maintains original data structure including nested types
+- **Cloud-Native Integration**: Direct access to data in S3, Azure, and other cloud storage
+- **Wizard-Driven Interface**: Simple step-by-step process for data handling
+- **Overture Maps Integration**: Specialized support for Overture Maps Foundation data
+- **In-Memory Processing**: Uses DuckDB for high-performance operations
+- **Spatial Filtering**: Filter data by map extent before loading
+
+## Requirements
+
+- **ArcGIS Pro**: Version 3.5 or later
+- **.NET SDK**: Version 8.0 or later
+- **Storage**: Minimum 4GB free disk space for temporary data
+- **Memory**: Minimum 8GB RAM (16GB recommended for large datasets)
+- **For Developers**:
+  - Visual Studio 2022 or newer
+  - ArcGIS Pro SDK for .NET
 
 ## Installation
 
-### Quick Install
-- Navigate to [ArcGIS](https://cofgisonline.maps.arcgis.com/home/item.html?id=8293d1220b7848848ce316b4fa3263b5)
-- Press **Download** to download add-in
-- Once finished downloading **double-click** the `ArcGISPro-GeoParquet-Addin.esriAddInX`
-- This will install the 'ArcGISPro-GeoParquet-Addin.esriAddInX' into your **ArcGIS Pro**
+### Option 1: Quick Installation
 
-### Install From Source
+1. Navigate to [ArcGIS Marketplace](https://cofgisonline.maps.arcgis.com/home/item.html?id=8293d1220b7848848ce316b4fa3263b5)
+2. Click **Download** to get the add-in
+3. Once downloaded, double-click the `ArcGISPro-GeoParquet-Addin.esriAddInX` file
+4. Follow the installation prompts
+5. Restart ArcGIS Pro if it's already running
 
-### Prerequisites
-- **ArcGIS Pro 3.5** or later  
-- **.NET 8 SDK** (ensure your Visual Studio setup targets .NET 8)  
-- **ArcGIS Pro SDK for .NET** installed in Visual Studio
+### Option 2: Build from Source
 
-### Steps
-
-1. **Clone or Download the Repo**  
+1. **Clone the Repository**
    ```bash
    git clone https://github.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin.git
+   cd ArcGISPro-GeoParquet-Addin
    ```
-2. **Open the Solution in Visual Studio**
-- Launch **Visual Studio 2022** (or newer).
-- Go to **File → Open → Project/Solution** and select `ArcGISPro-GeoParquet-Addin.sln`.
 
-3. **Build the Add‑in**
-- Make sure your build configuration is set to **Debug** or **Release** (your preference).
-- Right‑click the project in **Solution Explorer** and select **Build**.
-- If everything compiles successfully, a `.esriAddInX` file will be generated (usually in the `bin/Debug` or `bin/Release` folder).
+2. **Open in Visual Studio**
+   - Launch Visual Studio 2022
+   - Go to **File → Open → Project/Solution**
+   - Select `DuckDBGeoparquet.sln`
 
-4. **Install the Add‑in**
-- Locate the generated `.esriAddInX` file (e.g., `ArcGISPro-GeoParquet-Addin.esriAddInX`) in your bin output folder.
-- Double‑click the file to launch the ArcGIS Pro **Add-In Manager**, which will prompt you to install.
-- Alternatively, copy the `.esriAddInX` file into your ArcGIS Pro add‑ins folder, typically found at:
-  ```bash
-   C:\Users\<YourUserName>\Documents\ArcGIS\AddIns\ArcGISPro
-  ```
-- Restart ArcGIS Pro if it's already open.
+3. **Build the Add-in**
+   - Set configuration to Debug or Release
+   - Right-click the project in Solution Explorer
+   - Select **Build**
+   - Find the generated `.esriAddInX` file in the bin folder
 
-5. **Use the Add‑in in ArcGIS Pro**
+4. **Install the Add-in**
+   - Double-click the `.esriAddInX` file
+   - Or copy it to: `C:\Users\<YourUserName>\Documents\ArcGIS\AddIns\ArcGISPro`
+   - Restart ArcGIS Pro if it's already running
 
-- Open ArcGIS Pro.
-- Look for the **Add‑In** tab on the ribbon.
-- Click the **Launch Overture** (or similarly named) button to launch the dockpane.
-- Follow the wizard steps to ingest, transform, and export your cloud‑native data!
+## Usage
 
-## Troubleshooting
-- **Missing ArcGIS Pro SDK Templates?**
-- Ensure you have installed the [ArcGIS Pro SDK for .NET](https://pro.arcgis.com/en/pro-app/latest/sdk/) extension in Visual Studio.
-- **Access Denied or Security Warnings?**
-- If Windows or your organization's policy blocks add‑ins from unknown publishers, you may need to unblock the .esriAddInX file or add its path to your trusted locations in ArcGIS Pro's Add-In Manager.
+### Basic Workflow
 
-## Why This Add‑in?
+1. **Start ArcGIS Pro** and open a project
+2. Navigate to the **Add-In** tab on the ribbon
+3. Click the **Launch Overture** button to open the dockpane
+4. Follow the wizard steps:
+   - Select data source
+   - Preview the data
+   - Apply transformations (if needed)
+   - Export to GeoParquet format
 
-- **User‑Friendly:** A wizard‑style dockpane guides you through file ingestion, data preview/validation, transformation, and export.
-- **Cloud‑Native Data:** Easily point to local files or public buckets (like S3 or Azure) and skip manual downloads.
-- **Integrated Workflow:** Ingest, transform, and export data—all in one place!
+### Working with Overture Maps Data
 
-## Key Features
+#### Step 1: Select Overture Maps Theme
+1. Open the Wizard Dockpane
+2. Choose a theme from the dropdown (addresses, base, buildings, etc.)
+3. Review the estimated data volume information
 
-1. **File Ingestion:**  
-   - Enter a file URL or browse for a local file.
-   - Ingest data directly via DuckDB's HTTP FS/S3 integration.
+#### Step 2: Define Your Area of Interest
+1. Select "Use Current Map Extent" to use your current view
+2. Alternatively, use "Custom Extent" to define a specific area
 
-2. **Data Preview & Validation:**  
-   - Quick attribute preview using a DataGrid.
-   - Validate that your data is correctly loaded.
+#### Step 3: Load and Transform
+1. Click "Load Data" to begin the download process
+2. Monitor the progress through the status indicator
+3. The add-in handles all necessary transformations automatically:
+   - Preserves complex data types
+   - Maintains spatial relationships
+   - Ensures proper georeferencing
 
-3. **Data Transformation:**  
-   - Apply custom SQL queries using DuckDB's in‑memory engine.
-   - Preview transformed data before export.
+#### Step 4: Visualization
+1. Data is automatically added to your map once processed
+2. Layers are named based on the Overture Maps theme and geometry type
+3. All attributes are preserved in their original structure
 
-4. **Export to GeoParquet:**  
-   - **Current Release:** Exports Overture Maps data directly to GeoParquet format.
-   - Takes advantage of ArcGIS Pro 3.5's native GeoParquet support.
-   - **Coming Soon:** Additional export formats such as File Geodatabases and GeoPackages.
+### Advanced Features
+
+- **Spatial Filtering**: Reduces data volume by filtering to your area of interest
+- **Geometry-Based Layers**: Data is separated by geometry type for optimal display
+- **Release Selection**: Choose specific Overture Maps data releases
+- **Progress Tracking**: Detailed logging of each processing step
 
 ## Project Structure
 
 - **Views/**  
-  - `WizardDockpane.xaml` / `WizardDockpane.xaml.cs`: The WPF UI for the wizard steps.
-  - `WizardDockpaneViewModel.cs`: The dockpane's view model (inherits from `DockPane`).
+  - `WizardDockpane.xaml` / `WizardDockpane.xaml.cs`: The UI components
+  - `WizardDockpaneViewModel.cs`: ViewModel controlling the UI logic
 - **Services/**  
-  - `DataProcessor.cs`: Contains logic for ingesting data via DuckDB, applying transformations, and exporting data.
-- **DuckDBGeoparquetModule.cs**  
-  - The main module class for the ArcGIS Pro add‑in.
-- **Config.daml**  
-  - The add‑in manifest (DAML) that defines the module, buttons, and dockpane.
+  - `DataProcessor.cs`: Core data handling using DuckDB
+- **DuckDBGeoparquetModule.cs**: Main module class
+- **Config.daml**: Add-in manifest defining components
 
-## Getting Started
+## Troubleshooting
 
-1. **Clone the Repository:**
+### Common Issues
 
-   ```bash
-   git clone https://github.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin.git
+#### Installation Problems
+- **Missing SDK Templates**: Ensure you've installed the [ArcGIS Pro SDK for .NET](https://pro.arcgis.com/en/pro-app/latest/sdk/)
+- **Access Denied Errors**: Right-click the .esriAddInX file → Properties → Unblock
+- **Add-in Not Appearing**: Verify installation path and restart ArcGIS Pro completely
+
+#### Data Loading Issues
+- **Timeout Errors**: Large Overture datasets may require multiple attempts
+- **Memory Errors**: Try reducing your area of interest or closing other applications
+- **Missing Data**: Verify internet connectivity and cloud storage permissions
+
+#### Performance Optimization
+- **Slow Processing**: 
+  - Reduce the area of interest
+  - Close other resource-intensive applications
+  - Ensure you have at least 8GB of available RAM
+- **Large Files**: 
+  - Consider using a machine with more RAM for very large areas
+  - Process data in smaller geographic chunks
+
+### Debug Logging
+
+The add-in maintains detailed logs that can help diagnose issues:
+- Check the log output in the dockpane
+- Review system logs for DuckDB-related errors
+- Enable verbose logging via the settings panel (coming in future release)
+
+## Contributing
+
+Contributions to this project are welcome! Here's how to get started:
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b new-feature`
+3. Make your changes
+4. Submit a pull request
+
+Please adhere to the existing code style and include appropriate tests.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE.txt](LICENSE.txt) file for details.
+
+## Acknowledgments
+
+- [Overture Maps Foundation](https://overturemaps.org/) for providing open map data
+- [DuckDB](https://duckdb.org/) for the powerful embedded database engine
+- [ArcGIS Pro SDK](https://pro.arcgis.com/en/pro-app/latest/sdk/) for development tools
+- All contributors who have helped improve this add-in
