@@ -15,6 +15,8 @@ using ArcGIS.Desktop.Catalog;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text;
+using System.IO;
+using System.Windows.Forms;
 
 namespace DuckDBGeoparquet.Views
 {
@@ -86,6 +88,10 @@ namespace DuckDBGeoparquet.Views
                 () => UseCustomExtent
             );
 
+            BrowseMfcLocationCommand = new RelayCommand(
+                () => BrowseMfcLocation()
+            );
+
             // Initialize properties
             Themes = new List<string>
             {
@@ -102,6 +108,12 @@ namespace DuckDBGeoparquet.Views
 
             System.Diagnostics.Debug.WriteLine("Starting async initialization");
             _ = InitializeAsync();
+
+            // Set default MFC output path to just the Connections folder
+            MfcOutputPath = Path.Combine(
+                Services.MfcUtility.DefaultMfcBasePath,
+                "Connections"
+            );
         }
 
         private async new Task InitializeAsync()
@@ -280,12 +292,41 @@ namespace DuckDBGeoparquet.Views
             get => _themeIconText;
             set => SetProperty(ref _themeIconText, value);
         }
+
+        private bool _createMfc = true;
+        public bool CreateMfc
+        {
+            get => _createMfc;
+            set => SetProperty(ref _createMfc, value);
+        }
+
+        private bool _useSpatialIndex = true;
+        public bool UseSpatialIndex
+        {
+            get => _useSpatialIndex;
+            set => SetProperty(ref _useSpatialIndex, value);
+        }
+
+        private string _mfcOutputPath;
+        public string MfcOutputPath
+        {
+            get => _mfcOutputPath;
+            set => SetProperty(ref _mfcOutputPath, value);
+        }
+
+        private bool _isSharedMfc = true;
+        public bool IsSharedMfc
+        {
+            get => _isSharedMfc;
+            set => SetProperty(ref _isSharedMfc, value);
+        }
         #endregion
 
         #region Commands
         public ICommand LoadDataCommand { get; private set; }
         public ICommand ShowThemeInfoCommand { get; private set; }
         public ICommand SetCustomExtentCommand { get; private set; }
+        public ICommand BrowseMfcLocationCommand { get; private set; }
         #endregion
 
         #region Helper Methods
@@ -399,6 +440,22 @@ namespace DuckDBGeoparquet.Views
                     AddToLog($"Error setting custom extent: {ex.Message}");
                 }
             });
+        }
+
+        private void BrowseMfcLocation()
+        {
+            var dialog = new System.Windows.Forms.FolderBrowserDialog
+            {
+                Description = "Select folder for MFC output",
+                UseDescriptionForTitle = true,
+                SelectedPath = MfcOutputPath ?? Services.MfcUtility.DefaultMfcBasePath
+            };
+
+            var result = dialog.ShowDialog();
+            if (result == System.Windows.Forms.DialogResult.OK)
+            {
+                MfcOutputPath = dialog.SelectedPath;
+            }
         }
         #endregion
 
@@ -533,6 +590,38 @@ namespace DuckDBGeoparquet.Views
                             StatusText = $"Successfully loaded {theme}/{type} data from release {LatestRelease}";
                             AddToLog($"Successfully loaded {theme}/{type} data");
                         }
+                    }
+                }
+
+                // After successfully loading all the data, create MFC if requested
+                if (CreateMfc && !string.IsNullOrEmpty(MfcOutputPath))
+                {
+                    StatusText = "Creating Multifile Feature Connection...";
+                    AddToLog("Setting up Multifile Feature Connection for loaded data");
+
+                    // Use the data files already stored in the MfcUtility.DefaultMfcBasePath/Data folder
+                    // No need to append "Data" to MfcOutputPath since we want to store the MFC file directly in the output path
+                    string dataFolder = Path.Combine(Services.MfcUtility.DefaultMfcBasePath, "Data");
+                    string mfcFilePath = Path.Combine(
+                        MfcOutputPath,  // This should be the parent Connections folder
+                        $"OvertureRelease_{LatestRelease.Replace("-", "")}.mfc"
+                    );
+
+                    bool success = await Services.MfcUtility.CreateMfcAsync(
+                        dataFolder,     // Point to where the actual data files are
+                        mfcFilePath,    // Where to create the MFC file
+                        IsSharedMfc
+                    );
+
+                    if (success)
+                    {
+                        StatusText = "Successfully created Multifile Feature Connection";
+                        AddToLog($"MFC created at: {mfcFilePath}");
+                    }
+                    else
+                    {
+                        StatusText = "Error creating Multifile Feature Connection";
+                        AddToLog("Failed to create MFC. See ArcGIS Pro logs for details.");
                     }
                 }
 

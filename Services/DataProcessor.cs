@@ -33,7 +33,7 @@ namespace DuckDBGeoparquet.Services
 
         /// <summary>
         /// Gets (or creates) a single output folder per session.
-        /// The folder will be named "OvertureMapsData_<release>".
+        /// The folder will be integrated with the MFC structure.
         /// </summary>
         /// <param name="releaseVersion">The release version string.</param>
         /// <returns>The folder path.</returns>
@@ -41,8 +41,11 @@ namespace DuckDBGeoparquet.Services
         {
             if (string.IsNullOrEmpty(_outputFolder))
             {
-                // For example, create the folder under the project's HomeFolderPath.
-                _outputFolder = Path.Combine(Project.Current.HomeFolderPath, $"OvertureMapsData_{releaseVersion}");
+                // Use the MFC folder structure for consistency
+                string mfcBasePath = MfcUtility.DefaultMfcBasePath;
+                string dataFolder = Path.Combine(mfcBasePath, "Data");
+                _outputFolder = Path.Combine(dataFolder, releaseVersion);
+
                 if (!Directory.Exists(_outputFolder))
                 {
                     Directory.CreateDirectory(_outputFolder);
@@ -228,9 +231,29 @@ namespace DuckDBGeoparquet.Services
                 }
             }
 
+            // Parse the layer name to extract theme and type
+            // Format is typically "theme - type" (e.g., "base - infrastructure" or "buildings - building_part")
+            string[] parts = layerNameBase.Split(new string[] { " - " }, StringSplitOptions.None);
+            string theme = parts[0].Trim().ToLowerInvariant();
+            string type = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : theme;
+
+            // Create theme folder if it doesn't exist
+            string themeFolder = Path.Combine(outputFolder, theme);
+            if (!Directory.Exists(themeFolder))
+            {
+                Directory.CreateDirectory(themeFolder);
+            }
+
+            // Create type subfolder if it doesn't exist
+            string typeFolder = Path.Combine(themeFolder, type);
+            if (!Directory.Exists(typeFolder))
+            {
+                Directory.CreateDirectory(typeFolder);
+            }
+
             foreach (var geomType in geomTypes)
             {
-                progress?.Report($"Processing {geomType} features...");
+                progress?.Report($"Processing {geomType} features for {theme}/{type}...");
 
                 // Build query that preserves all original columns including complex types
                 string filteredQuery = $@"
@@ -242,18 +265,24 @@ namespace DuckDBGeoparquet.Services
 
                 // Simplify the layer naming but keep geometry type suffix to avoid file collisions
                 string shortGeomType = GetShortGeometryType(geomType);
-                string layerName = $"{layerNameBase}_{shortGeomType}";
-                string parquetPath = Path.Combine(outputFolder, $"{layerName}.parquet");
 
-                progress?.Report($"Exporting {layerName} to GeoParquet...");
-                await ExportToGeoParquet(filteredQuery, parquetPath, layerName);
+                // Use cleaner file names without theme redundancy and with more descriptive geometry types
+                // For example: "infrastructure_lines.parquet" instead of "infrastructure_LN.parquet"
+                string geometryDescription = GetDescriptiveGeometryType(geomType);
+                string fileName = $"{type}_{geometryDescription}.parquet";
+
+                // Save to type subfolder inside theme folder
+                string parquetPath = Path.Combine(typeFolder, fileName);
+
+                progress?.Report($"Exporting {fileName} to {type} folder...");
+                await ExportToGeoParquet(filteredQuery, parquetPath, fileName);
 
                 if (File.Exists(parquetPath))
                 {
                     var fileInfo = new FileInfo(parquetPath);
                     if (fileInfo.Length > 0)
                     {
-                        progress?.Report($"Adding {layerName} to map...");
+                        progress?.Report($"Adding {fileName} to map...");
                         await QueuedTask.Run(() =>
                         {
                             var map = MapView.Active?.Map;
@@ -314,6 +343,28 @@ namespace DuckDBGeoparquet.Services
                     return "MPG";
                 default:
                     return geomType;
+            }
+        }
+
+        // Helper method to get a more descriptive geometry type name
+        private string GetDescriptiveGeometryType(string geomType)
+        {
+            switch (geomType)
+            {
+                case "POINT":
+                    return "points";
+                case "LINESTRING":
+                    return "lines";
+                case "POLYGON":
+                    return "polygons";
+                case "MULTIPOINT":
+                    return "multipoints";
+                case "MULTILINESTRING":
+                    return "multilines";
+                case "MULTIPOLYGON":
+                    return "multipolygons";
+                default:
+                    return geomType.ToLowerInvariant();
             }
         }
 

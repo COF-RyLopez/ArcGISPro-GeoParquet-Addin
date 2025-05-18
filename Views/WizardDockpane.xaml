@@ -149,6 +149,95 @@
                             </ListBoxItem>
                         </ListBox>
 
+                        <!-- Output Settings section -->
+                        <TextBlock Text="3. Output Settings" 
+                                   Style="{StaticResource ListBoxHeaderStyle}"
+                                   Margin="0,5,0,5"/>
+                        <ListBox Style="{DynamicResource Esri_ListBox}" 
+                                 Margin="0,0,0,10"
+                                 BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                 BorderThickness="1" 
+                                 Padding="5"
+                                 Background="Transparent"
+                                 IsHitTestVisible="True"
+                                 ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                 Focusable="False">
+                            <ListBoxItem IsSelected="False"
+                                         Focusable="False"
+                                         IsHitTestVisible="True"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         Padding="0">
+                                <StackPanel>
+                                    <!-- MFC Options -->
+                                    <CheckBox Content="Create Multifile Feature Connection" 
+                                              IsChecked="{Binding CreateMfc}"
+                                              Style="{DynamicResource Esri_CheckBox}"
+                                              Margin="0,5,0,5"
+                                              ToolTip="Creates an MFC for easier data management in ArcGIS Pro"/>
+
+                                    <StackPanel Margin="20,0,0,0" 
+                                                IsEnabled="{Binding CreateMfc}">
+
+                                        <Grid Margin="0,5,0,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Grid.Column="0" 
+                                                       Text="Output Location:" 
+                                                       VerticalAlignment="Center"
+                                                       Margin="0,0,10,0"
+                                                       Foreground="{DynamicResource Esri_TextControlBrush}"/>
+
+                                            <TextBox Grid.Column="1" 
+                                                     Text="{Binding MfcOutputPath}"
+                                                     VerticalAlignment="Center"
+                                                     Style="{DynamicResource Esri_TextBoxRegular}"
+                                                     IsReadOnly="True"
+                                                     Margin="0,0,5,0"/>
+
+                                            <Button Grid.Column="2" 
+                                                    Content="Browse..." 
+                                                    Style="{DynamicResource Esri_Button}"
+                                                    Command="{Binding BrowseMfcLocationCommand}"
+                                                    Width="70"/>
+                                        </Grid>
+
+                                        <TextBlock Text="MFC Options:" 
+                                                   Foreground="{DynamicResource Esri_TextControlBrush}"
+                                                   Margin="0,5,0,5"/>
+
+                                        <CheckBox Content="Use Spatial Indexing" 
+                                                  IsChecked="{Binding UseSpatialIndex}"
+                                                  Style="{DynamicResource Esri_CheckBox}"
+                                                  Margin="20,5,0,5"
+                                                  ToolTip="Improves performance for spatial queries"/>
+
+                                        <CheckBox Content="Create Shared Connection" 
+                                                  IsChecked="{Binding IsSharedMfc}"
+                                                  Style="{DynamicResource Esri_CheckBox}"
+                                                  Margin="20,5,0,5"
+                                                  ToolTip="Connection can be shared with other users"/>
+
+                                        <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}" 
+                                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                                BorderThickness="1"
+                                                Padding="10" 
+                                                Margin="0,5,0,5">
+                                            <TextBlock TextWrapping="Wrap"
+                                                       Style="{DynamicResource Esri_TextBlockSmall}"
+                                                       Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+                                                A Multifile Feature Connection (MFC) allows ArcGIS Pro to work efficiently with multiple GeoParquet files as a single dataset. This makes it easier to visualize and analyze the Overture Maps data.
+                                            </TextBlock>
+                                        </Border>
+                                    </StackPanel>
+                                </StackPanel>
+                            </ListBoxItem>
+                        </ListBox>
+
                         <!-- Theme Preview -->
                         <TextBlock Text="Selected Themes Preview" 
                                    Style="{StaticResource ListBoxHeaderStyle}"
