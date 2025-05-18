@@ -17,8 +17,7 @@ namespace DuckDBGeoparquet.Views
         {
             if (DataContext is WizardDockpaneViewModel viewModel)
             {
-                var checkBox = sender as CheckBox;
-                if (checkBox != null && checkBox.Tag != null)
+                if (sender is CheckBox checkBox && checkBox.Tag != null)
                 {
                     string theme = checkBox.Tag.ToString();
                     viewModel.ToggleThemeSelection(theme);

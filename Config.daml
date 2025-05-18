@@ -48,17 +48,12 @@
 				<dockPane id="DuckDBGeoparquet_Views_WizardDockpane"
                          caption="Overture Maps Data Loader"
                          className="DuckDBGeoparquet.Views.WizardDockpaneViewModel"
-                         dock="right"
-                         initiallyVisible="true"
-                         smallImage="Images\Overture16.png"
-                         loadingMessage="Initializing Overture Maps Data Loader..."
-                         keytip="W">
+                         dock="right">
 					<content className="DuckDBGeoparquet.Views.WizardDockpaneView" />
-					<group refID="DuckDBGeoparquet_DockPane_Group"/>
 				</dockPane>
 			</dockPanes>
 			<groups>
-				<group id="DuckDBGeoparquet_DockPane_Group" caption="Overture Maps Options">
+				<group id="DuckDBGeoparquet_DockPane_Group" caption="Overture Maps Options" keytip="O">
 					<labelControl refID="DuckDBGeoparquet_ThemeSelectionLabel"/>
 					<labelControl refID="DuckDBGeoparquet_AreaSelectionLabel"/>
 					<labelControl refID="DuckDBGeoparquet_StatusLabel"/>
@@ -68,7 +63,7 @@
 	</modules>
 	<propertySheets>
 		<updateSheet refID="esri_core_optionsPropertySheet">
-			<insertPage id="DuckDBGeoparquet_Options" caption="Overture Maps Settings" className="DuckDBGeoparquet.Views.OptionsPropertyPage" keytip="O">
+			<insertPage id="DuckDBGeoparquet_Options" caption="Overture Maps Settings" className="DuckDBGeoparquet.Views.OptionsPropertyPage">
 				<content className="DuckDBGeoparquet.Views.OptionsPropertyPageView" />
 			</insertPage>
 		</updateSheet>
@@ -80,7 +75,7 @@
 	</backstage>
 	<categories>
 		<updateCategory refID="esri_framework_configurationManager">
-			<insertComponent id="DuckDBGeoparquet_Config" className="DuckDBGeoparquet.Views.ConfigurationManager" keytip="C" />
+			<insertComponent id="DuckDBGeoparquet_Config" className="DuckDBGeoparquet.Views.ConfigurationManager" />
 		</updateCategory>
 	</categories>
 </ArcGIS>

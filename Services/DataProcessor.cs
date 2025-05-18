@@ -10,6 +10,7 @@ using ArcGIS.Desktop.Mapping;
 using ArcGIS.Desktop.Core;
 using ArcGIS.Desktop.Framework.Dialogs;
 using System.Windows;
+using ArcGIS.Core.CIM;
 
 namespace DuckDBGeoparquet.Services
 {
@@ -22,6 +23,9 @@ namespace DuckDBGeoparquet.Services
         private const string STRUCT_TYPE = "STRUCT";
         private const string BBOX_COLUMN = "bbox";
         private const string GEOMETRY_COLUMN = "geometry";
+
+        // Add static readonly field for the theme-type separator
+        private static readonly string[] THEME_TYPE_SEPARATOR = { " - " };
 
         // Property to hold the output folder for the session.
         private string _outputFolder;
@@ -60,20 +64,81 @@ namespace DuckDBGeoparquet.Services
             {
                 await _connection.OpenAsync();
 
-                using (var command = _connection.CreateCommand())
+                // Get the various potential paths where extensions might be found
+                string addInFolder = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+                string extensionsPath = Path.Combine(addInFolder, "Extensions");
+
+                using var command = _connection.CreateCommand();
+
+                try
                 {
+                    // First try using direct INSTALL command - might work if user has admin rights
                     command.CommandText = @"
                         INSTALL spatial;
                         INSTALL httpfs;
                         LOAD spatial;
                         LOAD httpfs;
-                        SET s3_region='us-west-2';
-                        SET enable_http_metadata_cache=true;
-                        SET enable_object_cache=true;
-                        SET enable_progress_bar=true;
                     ";
-                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+
+                    try
+                    {
+                        await command.ExecuteNonQueryAsync(CancellationToken.None);
+                        System.Diagnostics.Debug.WriteLine("Successfully installed extensions directly");
+                        // If we get here, extensions were successfully installed
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Direct installation failed: {ex.Message}. Trying bundled extensions...");
+
+                        // Try loading from our bundled extensions path
+                        if (Directory.Exists(extensionsPath))
+                        {
+                            var extensionFiles = Directory.GetFiles(extensionsPath, "*.duckdb_extension");
+                            System.Diagnostics.Debug.WriteLine($"Found {extensionFiles.Length} extension files in {extensionsPath}");
+
+                            if (extensionFiles.Length > 0)
+                            {
+                                // Make sure paths use forward slashes for DuckDB
+                                string normalizedPath = extensionsPath.Replace('\\', '/');
+                                command.CommandText = $@"
+                                    SET extension_directory='{normalizedPath}';
+                                    LOAD spatial;
+                                    LOAD httpfs;
+                                ";
+                                await command.ExecuteNonQueryAsync(CancellationToken.None);
+                                System.Diagnostics.Debug.WriteLine("Successfully loaded extensions from bundled directory");
+                            }
+                            else
+                            {
+                                throw new Exception($"No extension files found in {extensionsPath}. Please follow the instructions in Extensions/README.txt to obtain the required DuckDB extensions.");
+                            }
+                        }
+                        else
+                        {
+                            throw new Exception($"Extensions directory not found at {extensionsPath}. Please create this directory and add the required DuckDB extensions.");
+                        }
+                    }
                 }
+                catch (Exception ex)
+                {
+                    // If both methods failed, show a more informative error with detailed instructions
+                    throw new Exception(
+                        $"Failed to load DuckDB extensions: {ex.Message}\n\n" +
+                        "To resolve this issue:\n" +
+                        "1. Make sure the add-in's Extensions folder contains spatial.duckdb_extension and httpfs.duckdb_extension\n" +
+                        "2. The extensions must match your DuckDB version (1.2.0)\n" +
+                        "3. Download extensions from https://github.com/duckdb/duckdb/releases/tag/v1.2.0\n" +
+                        $"4. Current extension search path: {extensionsPath}", ex);
+                }
+
+                // Configure DuckDB settings
+                command.CommandText = @"
+                    SET s3_region='us-west-2';
+                    SET enable_http_metadata_cache=true;
+                    SET enable_object_cache=true;
+                    SET enable_progress_bar=true;
+                ";
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -85,80 +150,70 @@ namespace DuckDBGeoparquet.Services
         {
             try
             {
-                using (var command = _connection.CreateCommand())
+                using var command = _connection.CreateCommand();
+                command.CommandText = $@"
+                    CREATE OR REPLACE TABLE temp AS 
+                    SELECT * FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1) LIMIT 0;
+                ";
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+
+                command.CommandText = "DESCRIBE temp";
+                using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
+                System.Diagnostics.Debug.WriteLine("Schema from Parquet:");
+                while (await reader.ReadAsync())
                 {
-                    command.CommandText = $@"
-                        CREATE OR REPLACE TABLE temp AS 
-                        SELECT * FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1) LIMIT 0;
-                    ";
-                    await command.ExecuteNonQueryAsync(CancellationToken.None);
-
-                    command.CommandText = "DESCRIBE temp";
-                    using (var reader = await command.ExecuteReaderAsync(CancellationToken.None))
-                    {
-                        System.Diagnostics.Debug.WriteLine("Schema from Parquet:");
-                        while (await reader.ReadAsync())
-                        {
-                            System.Diagnostics.Debug.WriteLine($"Column: {reader["column_name"]}, Type: {reader["column_type"]}");
-                        }
-                    }
-
-                    string spatialFilter = "";
-                    if (extent != null)
-                    {
-                        spatialFilter = $@"
-                            WHERE bbox.xmin >= {extent.XMin}
-                              AND bbox.ymin >= {extent.YMin}
-                              AND bbox.xmax <= {extent.XMax}
-                              AND bbox.ymax <= {extent.YMax}";
-                    }
-
-                    string query = $@"
-                        CREATE OR REPLACE TABLE current_table AS 
-                        SELECT *
-                        FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
-                        {spatialFilter}
-                    ";
-                    command.CommandText = query;
-                    await command.ExecuteNonQueryAsync(CancellationToken.None);
-
-                    command.CommandText = "SELECT COUNT(*) FROM current_table";
-                    var count = await command.ExecuteScalarAsync(CancellationToken.None);
-                    System.Diagnostics.Debug.WriteLine($"Loaded {count} rows");
-
-                    command.CommandText = "DESCRIBE current_table";
-                    using (var reader = await command.ExecuteReaderAsync(CancellationToken.None))
-                    {
-                        System.Diagnostics.Debug.WriteLine("Final table structure:");
-                        while (await reader.ReadAsync())
-                        {
-                            System.Diagnostics.Debug.WriteLine($"Column: {reader["column_name"]}, Type: {reader["column_type"]}");
-                        }
-                    }
+                    System.Diagnostics.Debug.WriteLine($"Column: {reader["column_name"]}, Type: {reader["column_type"]}");
                 }
-                return true;
+
+                string spatialFilter = "";
+                if (extent != null)
+                {
+                    spatialFilter = $@"
+                        WHERE bbox.xmin >= {extent.XMin}
+                          AND bbox.ymin >= {extent.YMin}
+                          AND bbox.xmax <= {extent.XMax}
+                          AND bbox.ymax <= {extent.YMax}";
+                }
+
+                string query = $@"
+                    CREATE OR REPLACE TABLE current_table AS 
+                    SELECT *
+                    FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
+                    {spatialFilter}
+                ";
+                command.CommandText = query;
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+
+                command.CommandText = "SELECT COUNT(*) FROM current_table";
+                var count = await command.ExecuteScalarAsync(CancellationToken.None);
+                System.Diagnostics.Debug.WriteLine($"Loaded {count} rows");
+
+                command.CommandText = "DESCRIBE current_table";
+                using var reader2 = await command.ExecuteReaderAsync(CancellationToken.None);
+                System.Diagnostics.Debug.WriteLine("Final table structure:");
+                while (await reader2.ReadAsync())
+                {
+                    System.Diagnostics.Debug.WriteLine($"Column: {reader2["column_name"]}, Type: {reader2["column_type"]}");
+                }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Query error: {ex.Message}");
                 throw new Exception($"Failed to ingest file: {ex.Message}", ex);
             }
+            return true;
         }
 
         public async Task<DataTable> GetPreviewDataAsync()
         {
             try
             {
-                using (var command = _connection.CreateCommand())
-                {
-                    command.CommandText = "SELECT * FROM current_table LIMIT 1000";
-                    using (var reader = await command.ExecuteReaderAsync(CancellationToken.None))
-                    {
-                        DataTable previewTable = new DataTable();
-                        previewTable.Load(reader);
-                        return previewTable;
-                    }
-                }
+                using var command = _connection.CreateCommand();
+                command.CommandText = "SELECT * FROM current_table LIMIT 1000";
+                using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
+                var previewTable = new DataTable();
+                previewTable.Load(reader);
+                return previewTable;
             }
             catch (Exception ex)
             {
@@ -166,7 +221,7 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        private void DeleteParquetFile(string parquetPath)
+        private static void DeleteParquetFile(string parquetPath)
         {
             if (File.Exists(parquetPath))
             {
@@ -197,9 +252,8 @@ namespace DuckDBGeoparquet.Services
                 await QueuedTask.Run(async () =>
                 {
                     progress?.Report("Initializing...");
-                    var map = MapView.Active?.Map;
-                    if (map == null)
-                        throw new Exception("No active map found");
+                    var map = MapView.Active?.Map
+                        ?? throw new Exception("No active map found");
 
                     // With ArcGIS Pro 3.5's improved GeoParquet support, we can now use the original
                     // complex structure without extensive flattening
@@ -217,23 +271,21 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        private async Task ExportByGeometryType(string layerNameBase, string releaseVersion, string outputFolder, IProgress<string> progress = null)
+        private async Task ExportByGeometryType(string layerNameBase, string _releaseVersion, string outputFolder, IProgress<string> progress = null)
         {
             using var command = _connection.CreateCommand();
             command.CommandText = "SELECT DISTINCT ST_GeometryType(geometry) FROM current_table";
             var geomTypes = new List<string>();
 
-            using (var reader = await command.ExecuteReaderAsync())
+            using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
             {
-                while (await reader.ReadAsync())
-                {
-                    geomTypes.Add(reader.GetString(0));
-                }
+                geomTypes.Add(reader.GetString(0));
             }
 
             // Parse the layer name to extract theme and type
             // Format is typically "theme - type" (e.g., "base - infrastructure" or "buildings - building_part")
-            string[] parts = layerNameBase.Split(new string[] { " - " }, StringSplitOptions.None);
+            string[] parts = layerNameBase.Split(THEME_TYPE_SEPARATOR, StringSplitOptions.None);
             string theme = parts[0].Trim().ToLowerInvariant();
             string type = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : theme;
 
@@ -288,7 +340,28 @@ namespace DuckDBGeoparquet.Services
                             var map = MapView.Active?.Map;
                             if (map != null)
                             {
-                                LayerFactory.Instance.CreateLayer(new Uri(parquetPath), map);
+                                // Create the layer and get a reference to it
+                                var newLayer = LayerFactory.Instance.CreateLayer(new Uri(parquetPath), map);
+
+                                // Check if this is an address layer and disable binning if needed
+                                if (newLayer is FeatureLayer featureLayer && type.Contains("address"))
+                                {
+                                    try
+                                    {
+                                        var layerDef = featureLayer.GetDefinition() as CIMFeatureLayer;
+                                        if (layerDef?.FeatureReduction != null)
+                                        {
+                                            layerDef.FeatureReduction.Enabled = false;
+                                            featureLayer.SetDefinition(layerDef);
+                                            System.Diagnostics.Debug.WriteLine($"Disabled binning for address layer: {featureLayer.Name}");
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        // Just log the error but don't fail the process
+                                        System.Diagnostics.Debug.WriteLine($"Failed to disable binning: {ex.Message}");
+                                    }
+                                }
                             }
                         });
                     }
@@ -296,22 +369,22 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        private async Task ExportToGeoParquet(string query, string outputPath, string layerName)
+        private async Task ExportToGeoParquet(string query, string outputPath, string _layerName)
         {
             try
             {
                 using var command = _connection.CreateCommand();
                 command.CommandText = BuildGeoParquetCopyCommand(query, outputPath);
-                System.Diagnostics.Debug.WriteLine($"Export command for {layerName}: {command.CommandText}");
+                System.Diagnostics.Debug.WriteLine($"Export command for {_layerName}: {command.CommandText}");
                 await command.ExecuteNonQueryAsync();
             }
             catch (Exception ex)
             {
-                throw new Exception($"Failed to export GeoParquet for layer {layerName}", ex);
+                throw new Exception($"Failed to export GeoParquet for layer {_layerName}", ex);
             }
         }
 
-        private string BuildGeoParquetCopyCommand(string selectQuery, string outputPath)
+        private static string BuildGeoParquetCopyCommand(string selectQuery, string outputPath)
         {
             return $@"
                 COPY (
@@ -325,52 +398,33 @@ namespace DuckDBGeoparquet.Services
         }
 
         // Helper method to get a shorter geometry type name
-        private string GetShortGeometryType(string geomType)
+        private static string GetShortGeometryType(string geomType) => geomType switch
         {
-            switch (geomType)
-            {
-                case "POINT":
-                    return "PT";
-                case "LINESTRING":
-                    return "LN";
-                case "POLYGON":
-                    return "PG";
-                case "MULTIPOINT":
-                    return "MPT";
-                case "MULTILINESTRING":
-                    return "MLN";
-                case "MULTIPOLYGON":
-                    return "MPG";
-                default:
-                    return geomType;
-            }
-        }
+            "POINT" => "PT",
+            "LINESTRING" => "LN",
+            "POLYGON" => "PG",
+            "MULTIPOINT" => "MPT",
+            "MULTILINESTRING" => "MLN",
+            "MULTIPOLYGON" => "MPG",
+            _ => geomType
+        };
 
         // Helper method to get a more descriptive geometry type name
-        private string GetDescriptiveGeometryType(string geomType)
+        private static string GetDescriptiveGeometryType(string geomType) => geomType switch
         {
-            switch (geomType)
-            {
-                case "POINT":
-                    return "points";
-                case "LINESTRING":
-                    return "lines";
-                case "POLYGON":
-                    return "polygons";
-                case "MULTIPOINT":
-                    return "multipoints";
-                case "MULTILINESTRING":
-                    return "multilines";
-                case "MULTIPOLYGON":
-                    return "multipolygons";
-                default:
-                    return geomType.ToLowerInvariant();
-            }
-        }
+            "POINT" => "points",
+            "LINESTRING" => "lines",
+            "POLYGON" => "polygons",
+            "MULTIPOINT" => "multipoints",
+            "MULTILINESTRING" => "multilines",
+            "MULTIPOLYGON" => "multipolygons",
+            _ => geomType.ToLowerInvariant()
+        };
 
         public void Dispose()
         {
             _connection?.Dispose();
+            GC.SuppressFinalize(this);
         }
     }
 }

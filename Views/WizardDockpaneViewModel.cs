@@ -27,7 +27,12 @@ namespace DuckDBGeoparquet.Views
         private const string RELEASE_URL = "https://labs.overturemaps.org/data/releases.json";
         private const string S3_BASE_PATH = "s3://overturemaps-us-west-2/release";
 
-        private Dictionary<string, string> ThemeTypes = new Dictionary<string, string>
+        private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        };
+
+        private readonly Dictionary<string, string> ThemeTypes = new()
         {
             { "addresses", "address" },
             { "base", "land,water,land_use,land_cover,bathymetry,infrastructure" }, // base has multiple types
@@ -37,7 +42,7 @@ namespace DuckDBGeoparquet.Views
             { "transportation", "connector,segment" }
         };
 
-        private Dictionary<string, string> ThemeIcons = new Dictionary<string, string>
+        private readonly Dictionary<string, string> ThemeIcons = new()
         {
             { "addresses", "GeocodeAddressesIcon" },
             { "base", "GlobeIcon" },
@@ -47,7 +52,7 @@ namespace DuckDBGeoparquet.Views
             { "transportation", "TransportationNetworkIcon" }
         };
 
-        private Dictionary<string, string> ThemeDescriptions = new Dictionary<string, string>
+        private readonly Dictionary<string, string> ThemeDescriptions = new()
         {
             { "addresses", "Address points including street names, house numbers, and postal codes." },
             { "base", "Base layers including land, water, land use, land cover, and infrastructure boundaries." },
@@ -57,7 +62,7 @@ namespace DuckDBGeoparquet.Views
             { "transportation", "Transportation networks including roads, rail, paths, and other ways." }
         };
 
-        private Dictionary<string, int> ThemeFeatureEstimates = new Dictionary<string, int>
+        private readonly Dictionary<string, int> ThemeFeatureEstimates = new()
         {
             { "addresses", 500 },
             { "base", 300 },
@@ -71,7 +76,7 @@ namespace DuckDBGeoparquet.Views
         {
             System.Diagnostics.Debug.WriteLine("Initializing WizardDockpaneViewModel");
 
-            _dataProcessor = new DataProcessor();
+            _dataProcessor = new();
 
             LoadDataCommand = new RelayCommand(
                 async () => await LoadOvertureDataAsync(),
@@ -93,7 +98,7 @@ namespace DuckDBGeoparquet.Views
             );
 
             // Initialize properties
-            Themes = new List<string>
+            Themes = new()
             {
                 "addresses",
                 "base",
@@ -103,7 +108,7 @@ namespace DuckDBGeoparquet.Views
                 "transportation"
             };
 
-            LogOutput = new StringBuilder();
+            LogOutput = new();
             LogOutput.AppendLine("Initializing...");
 
             System.Diagnostics.Debug.WriteLine("Starting async initialization");
@@ -163,7 +168,7 @@ namespace DuckDBGeoparquet.Views
             private set => SetProperty(ref _themes, value);
         }
 
-        private List<string> _selectedThemes = new List<string>();
+        private List<string> _selectedThemes = new();
         public List<string> SelectedThemes
         {
             get => _selectedThemes;
@@ -180,9 +185,9 @@ namespace DuckDBGeoparquet.Views
                 (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 (ShowThemeInfoCommand as RelayCommand)?.RaiseCanExecuteChanged();
 
-                if (value != null && ThemeIcons.ContainsKey(value))
+                if (value != null && ThemeIcons.TryGetValue(value, out string iconText))
                 {
-                    ThemeIconText = ThemeIcons[value];
+                    ThemeIconText = iconText;
                 }
                 else
                 {
@@ -348,8 +353,8 @@ namespace DuckDBGeoparquet.Views
                 return;
             }
 
-            ThemeDescription = ThemeDescriptions.ContainsKey(SelectedTheme)
-                ? ThemeDescriptions[SelectedTheme]
+            ThemeDescription = ThemeDescriptions.TryGetValue(SelectedTheme, out string description)
+                ? description
                 : "No description available";
 
             // Calculate combined estimates for all selected themes
@@ -360,9 +365,8 @@ namespace DuckDBGeoparquet.Views
 
                 foreach (var theme in SelectedThemes)
                 {
-                    if (ThemeFeatureEstimates.ContainsKey(theme))
+                    if (ThemeFeatureEstimates.TryGetValue(theme, out int estimate))
                     {
-                        int estimate = ThemeFeatureEstimates[theme];
                         totalEstimatedFeatures += estimate;
                         totalSizeInKb += estimate * 2.5; // Assuming each feature is about 2.5KB on average
                     }
@@ -398,12 +402,12 @@ namespace DuckDBGeoparquet.Views
         {
             if (string.IsNullOrEmpty(SelectedTheme)) return;
 
-            string description = ThemeDescriptions.ContainsKey(SelectedTheme)
-                ? ThemeDescriptions[SelectedTheme]
+            string description = ThemeDescriptions.TryGetValue(SelectedTheme, out string themeDesc)
+                ? themeDesc
                 : "No detailed information available.";
 
-            string types = ThemeTypes.ContainsKey(SelectedTheme)
-                ? $"Type(s): {ThemeTypes[SelectedTheme]}"
+            string types = ThemeTypes.TryGetValue(SelectedTheme, out string themeTypes)
+                ? $"Type(s): {themeTypes}"
                 : "";
 
             string selectedCount = _selectedThemes.Count > 0 ?
@@ -463,28 +467,17 @@ namespace DuckDBGeoparquet.Views
         {
             try
             {
-                using (HttpClient client = new HttpClient())
-                {
-                    var response = await client.GetStringAsync(RELEASE_URL);
-                    System.Diagnostics.Debug.WriteLine($"Release API Response: {response}");
-                    AddToLog("Received release information from Overture Maps API");
+                using var client = new HttpClient();
+                var response = await client.GetStringAsync(RELEASE_URL);
+                System.Diagnostics.Debug.WriteLine($"Release API Response: {response}");
+                AddToLog("Received release information from Overture Maps API");
 
-                    var options = new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true
-                    };
+                var releaseInfo = JsonSerializer.Deserialize<ReleaseInfo>(response, _jsonOptions)
+                    ?? throw new Exception("Failed to deserialize release info");
 
-                    var releaseInfo = JsonSerializer.Deserialize<ReleaseInfo>(response, options);
-
-                    if (releaseInfo == null)
-                    {
-                        throw new Exception("Failed to deserialize release info");
-                    }
-
-                    System.Diagnostics.Debug.WriteLine($"Deserialized Latest Release: {releaseInfo.Latest}");
-                    AddToLog($"Latest release available: {releaseInfo.Latest}");
-                    return releaseInfo.Latest;
-                }
+                System.Diagnostics.Debug.WriteLine($"Deserialized Latest Release: {releaseInfo.Latest}");
+                AddToLog($"Latest release available: {releaseInfo.Latest}");
+                return releaseInfo.Latest;
             }
             catch (Exception ex)
             {
@@ -531,9 +524,9 @@ namespace DuckDBGeoparquet.Views
                 // Calculate total number of theme types to process for progress reporting
                 foreach (var theme in SelectedThemes)
                 {
-                    if (ThemeTypes.ContainsKey(theme))
+                    if (ThemeTypes.TryGetValue(theme, out string themeTypes))
                     {
-                        string[] types = ThemeTypes[theme].Split(',');
+                        string[] types = themeTypes.Split(',');
                         totalThemeTypes += types.Length;
                     }
                 }
@@ -546,9 +539,9 @@ namespace DuckDBGeoparquet.Views
                     AddToLog($"Processing theme: {theme}");
 
                     // Process each type within the current theme
-                    if (ThemeTypes.ContainsKey(theme))
+                    if (ThemeTypes.TryGetValue(theme, out string themeTypes))
                     {
-                        string[] types = ThemeTypes[theme].Split(',');
+                        string[] types = themeTypes.Split(',');
 
                         foreach (var type in types)
                         {
@@ -664,9 +657,7 @@ namespace DuckDBGeoparquet.Views
 
         public void ToggleThemeSelection(string theme)
         {
-            if (_selectedThemes.Contains(theme))
-                _selectedThemes.Remove(theme);
-            else
+            if (!_selectedThemes.Remove(theme))
                 _selectedThemes.Add(theme);
 
             NotifyPropertyChanged("SelectedThemes");

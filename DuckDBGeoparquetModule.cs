@@ -20,7 +20,7 @@ namespace DuckDBGeoparquet
         {
             get
             {
-                return _this ?? (_this = (DuckDBGeoparquetModule)FrameworkApplication.FindModule("DuckDBGeoparquet_Module"));
+                return _this ??= (DuckDBGeoparquetModule)FrameworkApplication.FindModule("DuckDBGeoparquet_Module");
             }
         }
 
