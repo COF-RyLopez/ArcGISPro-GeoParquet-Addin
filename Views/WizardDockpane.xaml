@@ -133,11 +133,9 @@
 
                                     <RadioButton Content="Current Map Extent"
                                                  IsChecked="{Binding UseCurrentMapExtent}"
-                                                 Style="{DynamicResource Esri_RadioButton}"
                                                  Margin="0,5,0,0"/>
                                     <RadioButton Content="Custom Extent" 
                                                  IsChecked="{Binding UseCustomExtent}"
-                                                 Style="{DynamicResource Esri_RadioButton}"
                                                  Margin="0,5,0,0"/>
                                     <Button Content="Set Custom Extent..."
                                             HorizontalAlignment="Left"
@@ -172,7 +170,6 @@
                                     <!-- MFC Options -->
                                     <CheckBox Content="Create Multifile Feature Connection" 
                                               IsChecked="{Binding CreateMfc}"
-                                              Style="{DynamicResource Esri_CheckBox}"
                                               Margin="0,5,0,5"
                                               ToolTip="Creates an MFC for easier data management in ArcGIS Pro"/>
 
@@ -212,13 +209,11 @@
 
                                         <CheckBox Content="Use Spatial Indexing" 
                                                   IsChecked="{Binding UseSpatialIndex}"
-                                                  Style="{DynamicResource Esri_CheckBox}"
                                                   Margin="20,5,0,5"
                                                   ToolTip="Improves performance for spatial queries"/>
 
                                         <CheckBox Content="Create Shared Connection" 
                                                   IsChecked="{Binding IsSharedMfc}"
-                                                  Style="{DynamicResource Esri_CheckBox}"
                                                   Margin="20,5,0,5"
                                                   ToolTip="Connection can be shared with other users"/>
 
@@ -396,7 +391,7 @@
                     <TextBlock Text="Operation Progress" 
                                Style="{StaticResource ListBoxHeaderStyle}"
                                Margin="0,0,0,5"/>
-                    <ListBox Style="{DynamicResource Esri_ListBox}" 
+                    <ListBox 
                              Margin="0,0,0,10"
                              BorderBrush="{DynamicResource Esri_BorderBrush}"
                              BorderThickness="1" 
