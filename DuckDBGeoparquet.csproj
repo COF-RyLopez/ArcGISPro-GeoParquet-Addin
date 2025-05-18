@@ -17,6 +17,8 @@
 		<Content Include="Images\Overture32.png" />
 		<Content Include="DarkImages\AddInDesktop16.png" />
 		<Content Include="DarkImages\AddInDesktop32.png" />
+		<Content Include="DarkImages\Overture16.png" />
+		<Content Include="DarkImages\Overture32.png" />
 	</ItemGroup>
 	<ItemGroup>
 		<None Include="Properties\launchSettings.json" />
@@ -41,8 +43,8 @@
 			<CopyLocal>False</CopyLocal>
 			<Private>False</Private>
 		</Reference>
-		<Reference Include="ArcGIS.Core">
-			<HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Core.dll</HintPath>
+		<Reference Include="ArcGIS.Desktop.Framework.Threading.Tasks">
+			<HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Desktop.Framework.Threading.Tasks.dll</HintPath>
 			<CopyLocal>False</CopyLocal>
 			<Private>False</Private>
 		</Reference>
@@ -103,6 +105,16 @@
 		</Reference>
 		<Reference Include="ArcGIS.Desktop.Resources">
 			<HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Desktop.Resources.dll</HintPath>
+			<CopyLocal>False</CopyLocal>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="ArcGIS.Desktop.Bars.Wpf">
+			<HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Desktop.Bars.Wpf.dll</HintPath>
+			<CopyLocal>False</CopyLocal>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="ArcGIS.Desktop.Charts.Wpf">
+			<HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Desktop.Charts.Wpf.dll</HintPath>
 			<CopyLocal>False</CopyLocal>
 			<Private>False</Private>
 		</Reference>

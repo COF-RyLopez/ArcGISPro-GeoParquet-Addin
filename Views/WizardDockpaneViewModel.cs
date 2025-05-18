@@ -35,6 +35,16 @@ namespace DuckDBGeoparquet.Views
             { "transportation", "connector,segment" }
         };
 
+        private Dictionary<string, string> ThemeIcons = new Dictionary<string, string>
+        {
+            { "addresses", "GeocodeAddressesIcon" },
+            { "base", "GlobeIcon" },
+            { "buildings", "BuildingLayerIcon" },
+            { "divisions", "BoundaryIcon" },
+            { "places", "PointOfInterestIcon" },
+            { "transportation", "TransportationNetworkIcon" }
+        };
+
         private Dictionary<string, string> ThemeDescriptions = new Dictionary<string, string>
         {
             { "addresses", "Address points including street names, house numbers, and postal codes." },
@@ -63,7 +73,7 @@ namespace DuckDBGeoparquet.Views
 
             LoadDataCommand = new RelayCommand(
                 async () => await LoadOvertureDataAsync(),
-                () => !string.IsNullOrEmpty(SelectedTheme)
+                () => SelectedThemes.Count > 0
             );
 
             ShowThemeInfoCommand = new RelayCommand(
@@ -94,7 +104,7 @@ namespace DuckDBGeoparquet.Views
             _ = InitializeAsync();
         }
 
-        private async Task InitializeAsync()
+        private async new Task InitializeAsync()
         {
             try
             {
@@ -119,6 +129,11 @@ namespace DuckDBGeoparquet.Views
                 StatusText = error;
                 AddToLog($"ERROR: {error}");
             }
+            finally
+            {
+                // Set loading state to false when initialization is complete
+                IsLoading = false;
+            }
         }
 
         #region Properties
@@ -136,6 +151,13 @@ namespace DuckDBGeoparquet.Views
             private set => SetProperty(ref _themes, value);
         }
 
+        private List<string> _selectedThemes = new List<string>();
+        public List<string> SelectedThemes
+        {
+            get => _selectedThemes;
+            set => SetProperty(ref _selectedThemes, value);
+        }
+
         private string _selectedTheme;
         public string SelectedTheme
         {
@@ -145,8 +167,25 @@ namespace DuckDBGeoparquet.Views
                 SetProperty(ref _selectedTheme, value);
                 (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 (ShowThemeInfoCommand as RelayCommand)?.RaiseCanExecuteChanged();
+
+                if (value != null && ThemeIcons.ContainsKey(value))
+                {
+                    ThemeIconText = ThemeIcons[value];
+                }
+                else
+                {
+                    ThemeIconText = "GlobeIcon"; // Default icon (globe)
+                }
+
                 UpdateThemePreview();
             }
+        }
+
+        private int _selectedTabIndex = 0;
+        public int SelectedTabIndex
+        {
+            get => _selectedTabIndex;
+            set => SetProperty(ref _selectedTabIndex, value);
         }
 
         private string _statusText = "Initializing...";
@@ -196,9 +235,15 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 SetProperty(ref _useCustomExtent, value);
-                UseCurrentMapExtent = !value;
                 (SetCustomExtentCommand as RelayCommand)?.RaiseCanExecuteChanged();
             }
+        }
+
+        private bool _isLoading = true;
+        public bool IsLoading
+        {
+            get => _isLoading;
+            set => SetProperty(ref _isLoading, value);
         }
 
         private Envelope _customExtent;
@@ -228,6 +273,13 @@ namespace DuckDBGeoparquet.Views
             get => _estimatedSize;
             set => SetProperty(ref _estimatedSize, value);
         }
+
+        private string _themeIconText = "GlobeIcon"; // Default icon (globe)
+        public string ThemeIconText
+        {
+            get => _themeIconText;
+            set => SetProperty(ref _themeIconText, value);
+        }
         #endregion
 
         #region Commands
@@ -246,9 +298,10 @@ namespace DuckDBGeoparquet.Views
 
         private void UpdateThemePreview()
         {
+            // Use the single selection for preview purposes for the description
             if (string.IsNullOrEmpty(SelectedTheme))
             {
-                ThemeDescription = "Select a theme to see description";
+                ThemeDescription = "Select one or more themes to load";
                 EstimatedFeatures = "--";
                 EstimatedSize = "--";
                 return;
@@ -258,15 +311,40 @@ namespace DuckDBGeoparquet.Views
                 ? ThemeDescriptions[SelectedTheme]
                 : "No description available";
 
-            if (ThemeFeatureEstimates.ContainsKey(SelectedTheme))
+            // Calculate combined estimates for all selected themes
+            if (SelectedThemes.Count > 0)
             {
-                var estimate = ThemeFeatureEstimates[SelectedTheme];
-                EstimatedFeatures = $"{estimate} per sq km (approx.)";
-                // Rough estimate of size based on feature count
-                double sizeInKb = estimate * 2.5; // Assuming each feature is about 2.5KB on average
-                EstimatedSize = sizeInKb > 1024
-                    ? $"{sizeInKb / 1024:F1} MB per sq km (approx.)"
-                    : $"{sizeInKb:F0} KB per sq km (approx.)";
+                int totalEstimatedFeatures = 0;
+                double totalSizeInKb = 0;
+
+                foreach (var theme in SelectedThemes)
+                {
+                    if (ThemeFeatureEstimates.ContainsKey(theme))
+                    {
+                        int estimate = ThemeFeatureEstimates[theme];
+                        totalEstimatedFeatures += estimate;
+                        totalSizeInKb += estimate * 2.5; // Assuming each feature is about 2.5KB on average
+                    }
+                }
+
+                // Format the estimates
+                if (SelectedThemes.Count > 1)
+                {
+                    EstimatedFeatures = $"{totalEstimatedFeatures} total per sq km (approx.)";
+                    EstimatedSize = totalSizeInKb > 1024
+                        ? $"{totalSizeInKb / 1024:F1} MB total per sq km (approx.)"
+                        : $"{totalSizeInKb:F0} KB total per sq km (approx.)";
+                }
+                else
+                {
+                    // For single selection, use the original format
+                    var estimate = ThemeFeatureEstimates[SelectedTheme];
+                    EstimatedFeatures = $"{estimate} per sq km (approx.)";
+                    double sizeInKb = estimate * 2.5;
+                    EstimatedSize = sizeInKb > 1024
+                        ? $"{sizeInKb / 1024:F1} MB per sq km (approx.)"
+                        : $"{sizeInKb:F0} KB per sq km (approx.)";
+                }
             }
             else
             {
@@ -287,8 +365,11 @@ namespace DuckDBGeoparquet.Views
                 ? $"Type(s): {ThemeTypes[SelectedTheme]}"
                 : "";
 
+            string selectedCount = _selectedThemes.Count > 0 ?
+                $"\n\nYou have selected {_selectedThemes.Count} theme(s) in total." : "";
+
             ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
-                $"{description}\n\n{types}",
+                $"{description}\n\n{types}{selectedCount}",
                 $"About {SelectedTheme} theme",
                 System.Windows.MessageBoxButton.OK,
                 System.Windows.MessageBoxImage.Information);
@@ -360,9 +441,17 @@ namespace DuckDBGeoparquet.Views
         {
             try
             {
-                ProgressValue = 0;
-                StatusText = $"Loading {SelectedTheme} data...";
-                AddToLog($"Starting to load {SelectedTheme} data from release {LatestRelease}");
+                if (SelectedThemes.Count == 0)
+                {
+                    AddToLog("No themes selected.");
+                    return;
+                }
+
+                // Switch to status tab
+                SelectedTabIndex = 1;
+
+                StatusText = $"Loading {SelectedThemes.Count} themes...";
+                AddToLog($"Starting to load multiple themes from release {LatestRelease}");
 
                 // Get map extent
                 Envelope extent = null;
@@ -381,57 +470,75 @@ namespace DuckDBGeoparquet.Views
                     }
                 });
 
-                // Process each type within the selected theme
-                if (ThemeTypes.ContainsKey(SelectedTheme))
+                int totalThemeTypes = 0;
+                // Calculate total number of theme types to process for progress reporting
+                foreach (var theme in SelectedThemes)
                 {
-                    string[] types = ThemeTypes[SelectedTheme].Split(',');
-                    ProgressValue = 0;
-                    double increment = 100.0 / types.Length;
-
-                    foreach (var type in types)
+                    if (ThemeTypes.ContainsKey(theme))
                     {
-                        AddToLog($"Processing theme type: {type.Trim()}");
-                        System.Diagnostics.Debug.WriteLine($"Theme type: {type.Trim()}");
-
-                        // Ensure proper path construction with trimmed release
-                        string trimmedRelease = LatestRelease?.Trim() ?? "";
-                        string s3Path = trimmedRelease.Length > 0
-                            ? $"{S3_BASE_PATH}/{trimmedRelease}/theme={SelectedTheme}/type={type.Trim()}/*.parquet"
-                            : $"{S3_BASE_PATH}/theme={SelectedTheme}/type={type.Trim()}/*.parquet";
-
-                        StatusText = $"Attempting to load from: {s3Path}";
-                        AddToLog($"Loading from path: {s3Path}");
-                        System.Diagnostics.Debug.WriteLine($"Loading from path: {s3Path}");
-
-                        await _dataProcessor.IngestFileAsync(s3Path, extent);
-
-                        // Create a feature layer for the loaded data
-                        string layerName = $"{SelectedTheme} - {type.Trim()}";
-                        var progress = new Progress<string>(status =>
-                        {
-                            StatusText = status;
-                            AddToLog(status);
-                            if (status.StartsWith("Processing: "))
-                            {
-                                var percent = status.Split('%')[0].Split(':')[1].Trim();
-                                if (double.TryParse(percent, out double value))
-                                {
-                                    ProgressValue = value;
-                                }
-                            }
-                        });
-
-                        await _dataProcessor.CreateFeatureLayerAsync(layerName, LatestRelease, progress);
-
-                        StatusText = $"Successfully loaded {SelectedTheme}/{type} data from release {LatestRelease}";
-                        AddToLog($"Successfully loaded {SelectedTheme}/{type} data");
-                        ProgressValue += increment;
+                        string[] types = ThemeTypes[theme].Split(',');
+                        totalThemeTypes += types.Length;
                     }
-
-                    StatusText = $"Successfully loaded all {SelectedTheme} data from release {LatestRelease}";
-                    AddToLog($"All {SelectedTheme} data loaded successfully");
-                    ProgressValue = 100;
                 }
+
+                int processedTypes = 0;
+                // Process each selected theme
+                foreach (var theme in SelectedThemes)
+                {
+                    StatusText = $"Processing theme: {theme}";
+                    AddToLog($"Processing theme: {theme}");
+
+                    // Process each type within the current theme
+                    if (ThemeTypes.ContainsKey(theme))
+                    {
+                        string[] types = ThemeTypes[theme].Split(',');
+
+                        foreach (var type in types)
+                        {
+                            AddToLog($"Processing theme type: {type.Trim()}");
+                            System.Diagnostics.Debug.WriteLine($"Theme type: {type.Trim()}");
+
+                            // Ensure proper path construction with trimmed release
+                            string trimmedRelease = LatestRelease?.Trim() ?? "";
+                            string s3Path = trimmedRelease.Length > 0
+                                ? $"{S3_BASE_PATH}/{trimmedRelease}/theme={theme}/type={type.Trim()}/*.parquet"
+                                : $"{S3_BASE_PATH}/theme={theme}/type={type.Trim()}/*.parquet";
+
+                            StatusText = $"Loading from path: {s3Path}";
+                            AddToLog($"Loading from path: {s3Path}");
+                            System.Diagnostics.Debug.WriteLine($"Loading from path: {s3Path}");
+
+                            await _dataProcessor.IngestFileAsync(s3Path, extent);
+
+                            // Create a feature layer for the loaded data
+                            string layerName = $"{theme} - {type.Trim()}";
+                            var progress = new Progress<string>(status =>
+                            {
+                                StatusText = status;
+                                AddToLog(status);
+                                if (status.StartsWith("Processing: "))
+                                {
+                                    var percent = status.Split('%')[0].Split(':')[1].Trim();
+                                    if (double.TryParse(percent, out double value))
+                                    {
+                                        // Scale the progress to the overall progress across all themes
+                                        processedTypes++;
+                                        ProgressValue = (processedTypes * 100.0) / totalThemeTypes;
+                                    }
+                                }
+                            });
+
+                            await _dataProcessor.CreateFeatureLayerAsync(layerName, LatestRelease, progress);
+
+                            StatusText = $"Successfully loaded {theme}/{type} data from release {LatestRelease}";
+                            AddToLog($"Successfully loaded {theme}/{type} data");
+                        }
+                    }
+                }
+
+                StatusText = $"Successfully loaded all selected themes from release {LatestRelease}";
+                AddToLog($"All selected themes loaded successfully");
+                ProgressValue = 100;
             }
             catch (Exception ex)
             {
@@ -459,6 +566,33 @@ namespace DuckDBGeoparquet.Views
                 return;
 
             pane.Activate();
+        }
+
+        public bool IsThemeSelected(string theme)
+        {
+            return _selectedThemes.Contains(theme);
+        }
+
+        public void ToggleThemeSelection(string theme)
+        {
+            if (_selectedThemes.Contains(theme))
+                _selectedThemes.Remove(theme);
+            else
+                _selectedThemes.Add(theme);
+
+            NotifyPropertyChanged("SelectedThemes");
+            UpdateThemePreview();
+            (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        }
+
+        // Add a method to check the selected status in the ViewModel
+        private void CheckInitialThemeSelection()
+        {
+            // Update the preview based on the first selected theme (if any)
+            if (_selectedThemes.Count > 0)
+            {
+                SelectedTheme = _selectedThemes[0];
+            }
         }
     }
 }

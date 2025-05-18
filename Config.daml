@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <ArcGIS defaultAssembly="DuckDBGeoparquet.dll" defaultNamespace="DuckDBGeoparquet" xmlns="http://schemas.esri.com/DADF/Registry" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 	<AddInInfo id="{9e44d8fc-6e1a-4513-9992-85c2de3e2d61}" version="1.1" desktopVersion="3.5">
-		<n>DuckDBGeoparquet</n>
+		<Name>DuckDBGeoparquet</Name>
 		<Description>Export Overture Maps data to GeoParquet format for use in ArcGIS Pro 3.5</Description>
 		<Image>Images\AddinDesktop32.png</Image>
 		<Author>rylopez</Author>
@@ -15,21 +15,67 @@
 		<insertModule id="DuckDBGeoparquet_Module" className="DuckDBGeoparquet.DuckDBGeoparquetModule" autoLoad="false" caption="DuckDBGeoparquet Module">
 			<groups>
 				<group id="DuckDBGeoparquet_Group2" caption="Overture Maps" appearsOnAddInTab="true" keytip="A">
+					<labelControl refID="DuckDBGeoparquet_OvertureMapDescription"/>
 					<button refID="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" size="large" />
 				</group>
 			</groups>
 			<controls>
-				<button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" caption="Launch Overture" className="DuckDBGeoparquet.Views.WizardDockpaneShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="load Overture Maps Data">
-					<tooltip heading="Show Dockpane">
-						Show Dockpane<disabledText />
+				<labelControl id="DuckDBGeoparquet_OvertureMapDescription" caption="Import and explore GeoParquet data" />
+				<labelControl id="DuckDBGeoparquet_ThemeSelectionLabel" caption="Theme" />
+				<labelControl id="DuckDBGeoparquet_AreaSelectionLabel" caption="Area" />
+				<labelControl id="DuckDBGeoparquet_StatusLabel" caption="Status" />
+
+				<button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton"
+                       caption="Launch Overture"
+                       className="DuckDBGeoparquet.Views.WizardDockpaneShowButton"
+                       loadOnClick="true"
+                       smallImage="Images\Overture16.png"
+                       largeImage="Images\Overture32.png"
+                       keytip="Z"
+                       extendedCaption="Load Overture Maps Data">
+					<tooltip heading="Overture Maps Data Loader">
+						Launch the Overture Maps Data Loader to import GeoParquet data
+						<disabledText>Unable to launch Overture Maps Data Loader at this time</disabledText>
 					</tooltip>
 				</button>
 			</controls>
 			<dockPanes>
-				<dockPane id="DuckDBGeoparquet_Views_WizardDockpane" caption="Overture Maps Data Loader" className="DuckDBGeoparquet.Views.WizardDockpaneViewModel" dock="group" dockWith="esri_core_contentsDockPane">
+				<dockPane id="DuckDBGeoparquet_Views_WizardDockpane"
+                         caption="Overture Maps Data Loader"
+                         className="DuckDBGeoparquet.Views.WizardDockpaneViewModel"
+                         dock="right"
+                         initiallyVisible="true"
+                         smallImage="Images\Overture16.png"
+                         loadingMessage="Initializing Overture Maps Data Loader..."
+                         keytip="W">
 					<content className="DuckDBGeoparquet.Views.WizardDockpaneView" />
+					<group refID="DuckDBGeoparquet_DockPane_Group"/>
 				</dockPane>
 			</dockPanes>
+			<groups>
+				<group id="DuckDBGeoparquet_DockPane_Group" caption="Overture Maps Options">
+					<labelControl refID="DuckDBGeoparquet_ThemeSelectionLabel"/>
+					<labelControl refID="DuckDBGeoparquet_AreaSelectionLabel"/>
+					<labelControl refID="DuckDBGeoparquet_StatusLabel"/>
+				</group>
+			</groups>
 		</insertModule>
 	</modules>
+	<propertySheets>
+		<updateSheet refID="esri_core_optionsPropertySheet">
+			<insertPage id="DuckDBGeoparquet_Options" caption="Overture Maps Settings" className="DuckDBGeoparquet.Views.OptionsPropertyPage" keytip="O">
+				<content className="DuckDBGeoparquet.Views.OptionsPropertyPageView" />
+			</insertPage>
+		</updateSheet>
+	</propertySheets>
+	<backstage>
+		<insertTab id="DuckDBGeoparquet_Backstage" caption="Overture Maps" className="DuckDBGeoparquet.Views.BackstageTab" keytip="M">
+			<content className="DuckDBGeoparquet.Views.BackstageTabView" />
+		</insertTab>
+	</backstage>
+	<categories>
+		<updateCategory refID="esri_framework_configurationManager">
+			<insertComponent id="DuckDBGeoparquet_Config" className="DuckDBGeoparquet.Views.ConfigurationManager" keytip="C" />
+		</updateCategory>
+	</categories>
 </ArcGIS>

@@ -20,11 +20,45 @@ using ArcGIS.Desktop.Mapping;
 
 namespace DuckDBGeoparquet.Views
 {
+    /// <summary>
+    /// Button implementation to show the Overture Maps Wizard Dockpane
+    /// </summary>
     internal class WizardDockpaneShowButton : Button
     {
+        /// <summary>
+        /// Called when the button is clicked
+        /// </summary>
         protected override void OnClick()
         {
-            WizardDockpaneViewModel.Show();
+            try
+            {
+                // Log that button was clicked
+                System.Diagnostics.Debug.WriteLine("Overture Maps wizard button clicked");
+
+                // Show the dockpane
+                WizardDockpaneViewModel.Show();
+            }
+            catch (Exception ex)
+            {
+                // Log any errors that occur
+                System.Diagnostics.Debug.WriteLine($"Error showing Overture Maps wizard: {ex.Message}");
+
+                // Show a friendly error message
+                ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                    "Unable to open the Overture Maps Data Loader. Please check ArcGIS Pro logs for details.",
+                    "Error Opening Overture Maps",
+                    System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Error);
+            }
+        }
+
+        /// <summary>
+        /// Called by the framework to determine whether the button should be enabled or disabled
+        /// </summary>
+        protected override void OnUpdate()
+        {
+            // Button is always enabled
+            Enabled = true;
         }
     }
 }
