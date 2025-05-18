@@ -22,6 +22,14 @@
 		<Content Include="DarkImages\Overture32.png" />
 	</ItemGroup>
 	<ItemGroup>
+		<Content Include="Extensions\spatial.duckdb_extension">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</Content>
+		<Content Include="Extensions\httpfs.duckdb_extension">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</Content>
+	</ItemGroup>
+	<ItemGroup>
 		<None Include="Properties\launchSettings.json" />
 	</ItemGroup>
 	<ItemGroup>
