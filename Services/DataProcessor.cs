@@ -1,16 +1,16 @@
 ﻿using System;
-using System.Data;
-using System.Threading.Tasks;
-using DuckDB.NET.Data;
 using System.Collections.Generic;
-using System.Threading;
+using System.Data;
 using System.IO;
-using ArcGIS.Desktop.Framework.Threading.Tasks;
-using ArcGIS.Desktop.Mapping;
-using ArcGIS.Desktop.Core;
-using ArcGIS.Desktop.Framework.Dialogs;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using ArcGIS.Core.CIM;
+using ArcGIS.Desktop.Core;
+using ArcGIS.Desktop.Framework.Dialogs;
+using ArcGIS.Desktop.Framework.Threading.Tasks;
+using ArcGIS.Desktop.Mapping;
+using DuckDB.NET.Data;
 
 namespace DuckDBGeoparquet.Services
 {
@@ -50,9 +50,26 @@ namespace DuckDBGeoparquet.Services
                 string dataFolder = Path.Combine(mfcBasePath, "Data");
                 _outputFolder = Path.Combine(dataFolder, releaseVersion);
 
+                System.Diagnostics.Debug.WriteLine($"Creating output folder structure at {_outputFolder}");
+
+                if (!Directory.Exists(dataFolder))
+                {
+                    Directory.CreateDirectory(dataFolder);
+                    System.Diagnostics.Debug.WriteLine($"Created Data folder: {dataFolder}");
+                }
+
                 if (!Directory.Exists(_outputFolder))
                 {
                     Directory.CreateDirectory(_outputFolder);
+                    System.Diagnostics.Debug.WriteLine($"Created release folder: {_outputFolder}");
+                }
+
+                // For MFC compatibility in ArcGIS Pro 3.5, we also need to create the Connection folder
+                string connectionFolder = Path.Combine(mfcBasePath, "Connection");
+                if (!Directory.Exists(connectionFolder))
+                {
+                    Directory.CreateDirectory(connectionFolder);
+                    System.Diagnostics.Debug.WriteLine($"Created Connection folder: {connectionFolder}");
                 }
             }
             return _outputFolder;
@@ -271,7 +288,7 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        private async Task ExportByGeometryType(string layerNameBase, string _releaseVersion, string outputFolder, IProgress<string> progress = null)
+        private async Task ExportByGeometryType(string layerNameBase, string releaseVersion, string outputFolder, IProgress<string> progress = null)
         {
             using var command = _connection.CreateCommand();
             command.CommandText = "SELECT DISTINCT ST_GeometryType(geometry) FROM current_table";
@@ -289,18 +306,13 @@ namespace DuckDBGeoparquet.Services
             string theme = parts[0].Trim().ToLowerInvariant();
             string type = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : theme;
 
-            // Create theme folder if it doesn't exist
-            string themeFolder = Path.Combine(outputFolder, theme);
-            if (!Directory.Exists(themeFolder))
+            // Create a dataset folder - this needs to be a direct child of the output folder
+            // Following MFC requirements per documentation
+            string datasetFolder = Path.Combine(outputFolder, $"{theme}_{type}");
+            if (!Directory.Exists(datasetFolder))
             {
-                Directory.CreateDirectory(themeFolder);
-            }
-
-            // Create type subfolder if it doesn't exist
-            string typeFolder = Path.Combine(themeFolder, type);
-            if (!Directory.Exists(typeFolder))
-            {
-                Directory.CreateDirectory(typeFolder);
+                System.Diagnostics.Debug.WriteLine($"Creating dataset folder: {datasetFolder}");
+                Directory.CreateDirectory(datasetFolder);
             }
 
             foreach (var geomType in geomTypes)
@@ -315,18 +327,16 @@ namespace DuckDBGeoparquet.Services
                     FROM current_table
                     WHERE ST_GeometryType(geometry) = '{geomType}'";
 
-                // Simplify the layer naming but keep geometry type suffix to avoid file collisions
-                string shortGeomType = GetShortGeometryType(geomType);
-
-                // Use cleaner file names without theme redundancy and with more descriptive geometry types
-                // For example: "infrastructure_lines.parquet" instead of "infrastructure_LN.parquet"
+                // Get the descriptive geometry type (e.g., "points", "lines", "polygons")
                 string geometryDescription = GetDescriptiveGeometryType(geomType);
-                string fileName = $"{type}_{geometryDescription}.parquet";
 
-                // Save to type subfolder inside theme folder
-                string parquetPath = Path.Combine(typeFolder, fileName);
+                // Create a filename that includes theme, type and geometry for uniqueness
+                string fileName = $"{theme}_{type}_{geometryDescription}.parquet";
 
-                progress?.Report($"Exporting {fileName} to {type} folder...");
+                // Place all files in the same dataset folder to maintain schema compatibility
+                string parquetPath = Path.Combine(datasetFolder, fileName);
+
+                progress?.Report($"Exporting {fileName}...");
                 await ExportToGeoParquet(filteredQuery, parquetPath, fileName);
 
                 if (File.Exists(parquetPath))
@@ -396,18 +406,6 @@ namespace DuckDBGeoparquet.Services
                     COMPRESSION 'ZSTD'
                 );";
         }
-
-        // Helper method to get a shorter geometry type name
-        private static string GetShortGeometryType(string geomType) => geomType switch
-        {
-            "POINT" => "PT",
-            "LINESTRING" => "LN",
-            "POLYGON" => "PG",
-            "MULTIPOINT" => "MPT",
-            "MULTILINESTRING" => "MLN",
-            "MULTIPOLYGON" => "MPG",
-            _ => geomType
-        };
 
         // Helper method to get a more descriptive geometry type name
         private static string GetDescriptiveGeometryType(string geomType) => geomType switch

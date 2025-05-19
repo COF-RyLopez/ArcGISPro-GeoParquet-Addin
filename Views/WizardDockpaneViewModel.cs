@@ -607,7 +607,7 @@ namespace DuckDBGeoparquet.Views
         {
             var dialog = new System.Windows.Forms.FolderBrowserDialog
             {
-                Description = "Select folder for MFC output",
+                Description = "Select base folder for Overture MFC structure",
                 UseDescriptionForTitle = true,
                 SelectedPath = MfcOutputPath ?? Services.MfcUtility.DefaultMfcBasePath
             };
@@ -615,7 +615,15 @@ namespace DuckDBGeoparquet.Views
             var result = dialog.ShowDialog();
             if (result == System.Windows.Forms.DialogResult.OK)
             {
+                // Set the MfcOutputPath to the selected base folder
+                // The Connection and Data subfolders will be created automatically during processing
                 MfcOutputPath = dialog.SelectedPath;
+
+                // Display helpful information to the user
+                AddToLog($"Selected base folder: {MfcOutputPath}");
+                AddToLog("The following structure will be created:");
+                AddToLog($"- {Path.Combine(MfcOutputPath, "Connection")} (for the MFC file)");
+                AddToLog($"- {Path.Combine(MfcOutputPath, "Data", LatestRelease)} (for the data files)");
             }
         }
 
@@ -761,29 +769,154 @@ namespace DuckDBGeoparquet.Views
                     StatusText = "Creating Multifile Feature Connection...";
                     AddToLog("Setting up Multifile Feature Connection for loaded data");
 
-                    // Use the data files already stored in the MfcUtility.DefaultMfcBasePath/Data folder
-                    // No need to append "Data" to MfcOutputPath since we want to store the MFC file directly in the output path
-                    string dataFolder = Path.Combine(Services.MfcUtility.DefaultMfcBasePath, "Data");
-                    string mfcFilePath = Path.Combine(
-                        MfcOutputPath,  // This should be the parent Connections folder
-                        $"OvertureRelease_{LatestRelease.Replace("-", "")}.mfc"
-                    );
+                    // Set up paths to match the structure shown in the Python example
+                    // This structure has separate Connection and Data folders
+                    string mfcBasePath = Path.GetDirectoryName(MfcOutputPath); // Get the parent folder
+                    string connectionFolder = Path.Combine(mfcBasePath, "Connection");
+                    string dataFolder = Path.Combine(mfcBasePath, "Data", LatestRelease);
 
-                    bool success = await Services.MfcUtility.CreateMfcAsync(
-                        dataFolder,     // Point to where the actual data files are
-                        mfcFilePath,    // Where to create the MFC file
-                        IsSharedMfc
-                    );
-
-                    if (success)
+                    // Ensure folders exist
+                    if (!Directory.Exists(connectionFolder))
                     {
-                        StatusText = "Successfully created Multifile Feature Connection";
-                        AddToLog($"MFC created at: {mfcFilePath}");
+                        AddToLog($"Creating connection folder: {connectionFolder}");
+                        Directory.CreateDirectory(connectionFolder);
+                    }
+
+                    if (!Directory.Exists(dataFolder))
+                    {
+                        AddToLog($"Checking if data folder exists: {dataFolder}");
+                        // Just verify this exists - if it doesn't, there's no data to create an MFC for
+                        if (!Directory.Exists(dataFolder))
+                        {
+                            AddToLog($"ERROR: Data folder does not exist: {dataFolder}");
+                            AddToLog("Cannot create MFC - no data has been loaded or data folder not found");
+                            StatusText = "Error creating Multifile Feature Connection - data folder not found";
+                            return;
+                        }
+                    }
+
+                    // Do a sanity check on the data folder contents
+                    int fileCount = Directory.GetFiles(dataFolder, "*.parquet", SearchOption.AllDirectories).Length;
+                    if (fileCount == 0)
+                    {
+                        AddToLog($"WARNING: No parquet files found in {dataFolder} or its subdirectories");
+
+                        // Check if theme folders were created
+                        var themeFolders = Directory.GetDirectories(dataFolder);
+                        AddToLog($"Found {themeFolders.Length} theme folders in {dataFolder}");
+                        foreach (var folder in themeFolders)
+                        {
+                            AddToLog($"Theme folder: {Path.GetFileName(folder)}");
+                            var typeFolders = Directory.GetDirectories(folder);
+                            AddToLog($"  Contains {typeFolders.Length} type folders");
+                            foreach (var typeFolder in typeFolders)
+                            {
+                                var filesInType = Directory.GetFiles(typeFolder, "*.parquet");
+                                AddToLog($"  Type folder {Path.GetFileName(typeFolder)} contains {filesInType.Length} parquet files");
+                            }
+                        }
+
+                        if (fileCount == 0)
+                        {
+                            AddToLog("No data files were created during the loading process. Cannot create MFC.");
+                            StatusText = "Error creating Multifile Feature Connection - no data files found";
+                            return;
+                        }
                     }
                     else
                     {
+                        AddToLog($"Found {fileCount} parquet files in data folder");
+                    }
+
+                    // Create a nice MFC filename based on the release and sanitize it
+                    string mfcName = $"OvertureRelease_{LatestRelease.Replace("-", "")}";
+                    string mfcFilePath = Path.Combine(connectionFolder, $"{mfcName}.mfc");
+
+                    AddToLog($"MFC source folder: {dataFolder}");
+                    AddToLog($"MFC output location: {connectionFolder}");
+                    AddToLog($"MFC name: {mfcName}");
+                    AddToLog($"Spatial indexing: {(UseSpatialIndex ? "Enabled" : "Disabled")}");
+                    AddToLog($"Connection type: {(IsSharedMfc ? "Shared" : "Standalone")}");
+
+                    try
+                    {
+                        bool success = await Services.MfcUtility.CreateMfcAsync(
+                            dataFolder,         // Source folder with the properly structured datasets
+                            mfcFilePath,        // Full path to the output MFC file
+                            IsSharedMfc,        // Whether to create a shared connection
+                            true,               // Always keep geometry fields visible
+                            true                // Always keep time fields visible
+                        );
+
+                        if (success)
+                        {
+                            StatusText = "Successfully created Multifile Feature Connection";
+                            AddToLog($"MFC created at: {mfcFilePath}");
+
+                            // Add the MFC to the current project connections
+                            try
+                            {
+                                await QueuedTask.Run(() => {
+                                    // Try to add the MFC to the current project
+                                    if (ArcGIS.Desktop.Core.Project.Current != null)
+                                    {
+                                        var connectionPath = Path.GetDirectoryName(mfcFilePath);
+
+                                        AddToLog($"Adding folder connection to project: {connectionPath}");
+
+                                        try
+                                        {
+                                            // Get or create an IProjectItem for the folder using the string path directly
+                                            // Note: ItemFactory.Create() expects a string path, not a Uri object
+                                            var folderItem = ArcGIS.Desktop.Core.ItemFactory.Instance.Create(connectionPath);
+
+                                            // Add the item to the project using the correct AddItem method signature
+                                            // that accepts a single IProjectItem parameter
+                                            if (folderItem != null && ArcGIS.Desktop.Core.Project.Current.AddItem(folderItem as ArcGIS.Desktop.Core.IProjectItem))
+                                            {
+                                                AddToLog("MFC connection added to project. You can now find it in the Catalog pane.");
+                                            }
+                                            else
+                                            {
+                                                AddToLog("Warning: Unable to create folder connection.");
+                                            }
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            AddToLog($"Failed to add folder connection: {ex.Message}");
+                                            System.Diagnostics.Debug.WriteLine($"Error adding folder connection: {ex}");
+                                        }
+                                    }
+                                });
+                            }
+                            catch (Exception ex)
+                            {
+                                AddToLog($"Warning: Could not add MFC to project connections: {ex.Message}");
+                            }
+                        }
+                        else
+                        {
+                            StatusText = "Error creating Multifile Feature Connection";
+                            AddToLog("Failed to create MFC. See ArcGIS Pro logs for details.");
+
+                            // Show a message box with more details to help the user
+                            ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                                "The Multifile Feature Connection could not be created.\n\n" +
+                                "Possible reasons:\n" +
+                                "1. No data files were found in the expected folder structure\n" +
+                                "2. The GeoParquet files don't have the correct structure\n" +
+                                "3. ArcGIS Pro doesn't have permission to create the MFC file\n\n" +
+                                "Check the log tab for more details.",
+                                "MFC Creation Failed",
+                                System.Windows.MessageBoxButton.OK,
+                                System.Windows.MessageBoxImage.Warning);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
                         StatusText = "Error creating Multifile Feature Connection";
-                        AddToLog("Failed to create MFC. See ArcGIS Pro logs for details.");
+                        AddToLog($"ERROR: Exception creating MFC: {ex.Message}");
+                        AddToLog($"Stack trace: {ex.StackTrace}");
                     }
                 }
 

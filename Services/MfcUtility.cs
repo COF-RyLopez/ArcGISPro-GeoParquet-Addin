@@ -6,6 +6,7 @@ using ArcGIS.Desktop.Core;
 using ArcGIS.Desktop.Core.Geoprocessing;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace DuckDBGeoparquet.Services
 {
@@ -100,37 +101,116 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Creates an MFC file for the specified release folder
         /// </summary>
-        /// <param name="sourceFolderPath">Path to the folder containing theme subfolders</param>
+        /// <param name="dataSourceFolder">Path to the folder containing the data files</param>
         /// <param name="outputMfcPath">Path where the MFC file should be created</param>
         /// <param name="isShared">Whether the connection should be shared (true) or standalone (false)</param>
+        /// <param name="geometryVisible">Whether geometry fields should be visible in analysis (default true)</param>
+        /// <param name="timeVisible">Whether time fields should be visible in analysis (default true)</param>
         /// <returns>True if the MFC was created successfully</returns>
-        public static async Task<bool> CreateMfcAsync(string sourceFolderPath, string outputMfcPath, bool isShared = true)
+        public static async Task<bool> CreateMfcAsync(
+            string dataSourceFolder,
+            string outputMfcPath,
+            bool isShared = true,
+            bool geometryVisible = true,
+            bool timeVisible = true)
         {
             try
             {
-                // Set connection type
-                string connectionType = isShared ? "SHARED" : "STAND_ALONE";
+                // Debug the data source folder structure first
+                System.Diagnostics.Debug.WriteLine($"Checking structure of data source folder: {dataSourceFolder}");
+                if (!Directory.Exists(dataSourceFolder))
+                {
+                    System.Diagnostics.Debug.WriteLine($"ERROR: Data source folder does not exist: {dataSourceFolder}");
+                    throw new DirectoryNotFoundException($"Data source folder does not exist: {dataSourceFolder}");
+                }
 
-                // Create parameters for the GP tool
+                // Log the contents of the data source folder to help debug
+                var files = Directory.GetFiles(dataSourceFolder, "*.parquet");
+                System.Diagnostics.Debug.WriteLine($"Found {files.Length} parquet files in data source folder");
+                foreach (var file in files.Take(5))  // Just log the first 5 to avoid too much output
+                {
+                    System.Diagnostics.Debug.WriteLine($"Found file: {Path.GetFileName(file)}");
+                }
+                if (files.Length > 5)
+                {
+                    System.Diagnostics.Debug.WriteLine($"... and {files.Length - 5} more files");
+                }
+
+                // Get output folder and output name
+                string bdcLocation = Path.GetDirectoryName(outputMfcPath);
+                string bdcName = Path.GetFileNameWithoutExtension(outputMfcPath);
+
+                // Check and create output folder if needed
+                if (!Directory.Exists(bdcLocation))
+                {
+                    System.Diagnostics.Debug.WriteLine($"Creating output folder: {bdcLocation}");
+                    Directory.CreateDirectory(bdcLocation);
+                }
+
+                // Set geometry and time visibility strings
+                string visibleGeometry = geometryVisible ? "GEOMETRY_VISIBLE" : "GEOMETRY_NOT_VISIBLE";
+                string visibleTime = timeVisible ? "TIME_VISIBLE" : "TIME_NOT_VISIBLE";
+
+                // Connection type is always FOLDER for file-based connections
+                string connectionType = "FOLDER";
+
+                // Set shared mode
+                string sharedMode = isShared ? "SHARED" : "STANDALONE";
+
+                // Create parameters for the GP tool in exact order matching ArcGIS Pro 3.5:
+                // arcpy.gapro.CreateBDC(
+                //     bdc_location=r"C:\...\Connection",
+                //     bdc_name="OvertureMapsMFC",
+                //     connection_type="FOLDER",
+                //     data_source_folder=r"C:\...\Data\2025-04-23.0",
+                //     visible_geometry="GEOMETRY_VISIBLE",
+                //     visible_time="TIME_VISIBLE",
+                //     sharing_mode="SHARED"
+                // )
                 var parameters = Geoprocessing.MakeValueArray(
-                    sourceFolderPath,          // Input folder containing theme subfolders
-                    outputMfcPath,             // Output .mfc file location
-                    connectionType,            // Connection type
-                    "YES_REMOVE_INVALID"       // Remove invalid schemas option
+                    bdcLocation,         // bdc_location
+                    bdcName,             // bdc_name
+                    connectionType,      // connection_type
+                    dataSourceFolder,    // data_source_folder
+                    visibleGeometry,     // visible_geometry
+                    visibleTime,         // visible_time
+                    sharedMode           // sharing_mode
                 );
 
-                // Execute the GP tool
-                var result = await Geoprocessing.ExecuteToolAsync(
-                    "GeoAnalyticsBigData.CreateMultifileFeatureConnection",
-                    parameters
-                );
+                // Log what we're doing
+                System.Diagnostics.Debug.WriteLine($"Creating MFC at {outputMfcPath}");
+                System.Diagnostics.Debug.WriteLine($"Source folder: {dataSourceFolder}");
+                System.Diagnostics.Debug.WriteLine($"Parameters: {bdcLocation}, {bdcName}, {connectionType}, {dataSourceFolder}, {visibleGeometry}, {visibleTime}, {sharedMode}");
 
-                return result.IsFailed != true;
+                // Try different geoprocessing tool names based on ArcGIS Pro version compatibility
+                var result = await QueuedTask.Run(() =>
+                {
+                    // Use only the official gapro.CreateBDC tool as documented in ArcGIS Pro 3.5
+                    System.Diagnostics.Debug.WriteLine("Executing gapro.CreateBDC");
+                    return Geoprocessing.ExecuteToolAsync("gapro.CreateBDC", parameters);
+                });
+
+                if (result.IsFailed)
+                {
+                    // Log the error messages from the result's Messages collection
+                    System.Diagnostics.Debug.WriteLine($"MFC creation failed");
+                    foreach (var msg in result.Messages)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"GP message: {msg.Text}");
+                    }
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine("MFC creation succeeded!");
+                }
+
+                return !result.IsFailed;
             }
             catch (Exception ex)
             {
                 // Log the error
                 System.Diagnostics.Debug.WriteLine($"Error creating MFC: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Stack trace: {ex.StackTrace}");
                 return false;
             }
         }
@@ -147,13 +227,29 @@ namespace DuckDBGeoparquet.Services
                 // Create parameters for the GP tool
                 var parameters = Geoprocessing.MakeValueArray(mfcPath);
 
+                // Log what we're doing
+                System.Diagnostics.Debug.WriteLine($"Refreshing MFC at {mfcPath}");
+
                 // Execute the GP tool
-                var result = await Geoprocessing.ExecuteToolAsync(
-                    "GeoAnalyticsBigData.RefreshMultifileFeatureConnection",
-                    parameters
+                var result = await QueuedTask.Run(() =>
+                    Geoprocessing.ExecuteToolAsync("RefreshMultifileFeatureConnection", parameters)
                 );
 
-                return result.IsFailed != true;
+                if (result.IsFailed)
+                {
+                    // Log the error messages from the result's Messages collection
+                    System.Diagnostics.Debug.WriteLine($"MFC refresh failed");
+                    foreach (var msg in result.Messages)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"GP message: {msg.Text}");
+                    }
+                    return false;
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine("MFC refresh succeeded!");
+                    return true;
+                }
             }
             catch (Exception ex)
             {
