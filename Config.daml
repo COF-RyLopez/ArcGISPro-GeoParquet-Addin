@@ -43,6 +43,20 @@
 						<disabledText>Unable to launch Overture Maps Data Loader at this time</disabledText>
 					</tooltip>
 				</button>
+
+				<!-- Custom Extent Tool -->
+				<tool id="DuckDBGeoparquet_CustomExtentTool"
+                     className="DuckDBGeoparquet.Views.CustomExtentTool"
+                     caption="Draw Custom Extent"
+                     loadOnClick="true"
+                     smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool16.png"
+                     largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool32.png"
+                     condition="esri_mapping_mapPane">
+					<tooltip heading="Draw Custom Extent">
+						Draw a rectangle on the map to define a custom data extent
+						<disabledText>A map must be open to use this tool</disabledText>
+					</tooltip>
+				</tool>
 			</controls>
 			<dockPanes>
 				<dockPane id="DuckDBGeoparquet_Views_WizardDockpane"
@@ -63,7 +77,7 @@
 	</modules>
 	<propertySheets>
 		<updateSheet refID="esri_core_optionsPropertySheet">
-			<insertPage id="DuckDBGeoparquet_Options" caption="Overture Maps Settings" className="DuckDBGeoparquet.Views.OptionsPropertyPage">
+			<insertPage id="DuckDBGeoparquet_Options" caption="Overture Maps Settings" className="DuckDBGeoparquet.Views.OptionsPropertyPage" keytip="O">
 				<content className="DuckDBGeoparquet.Views.OptionsPropertyPageView" />
 			</insertPage>
 		</updateSheet>

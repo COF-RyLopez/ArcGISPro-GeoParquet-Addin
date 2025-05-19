@@ -72,6 +72,8 @@ namespace DuckDBGeoparquet.Views
             { "transportation", 750 }
         };
 
+        private CustomExtentTool _customExtentTool;
+
         protected WizardDockpaneViewModel()
         {
             System.Diagnostics.Debug.WriteLine("Initializing WizardDockpaneViewModel");
@@ -96,6 +98,20 @@ namespace DuckDBGeoparquet.Views
             BrowseMfcLocationCommand = new RelayCommand(
                 () => BrowseMfcLocation()
             );
+
+            // Subscribe to static events
+            CustomExtentTool.ExtentCreatedStatic += OnExtentCreated;
+
+            // Register for DockPane closing
+            try
+            {
+                System.Diagnostics.Debug.WriteLine("Registering dockpane event handlers for cleanup");
+                // The ArcGIS Pro framework will handle the lifecycle and cleanup
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error setting up event handlers: {ex.Message}");
+            }
 
             // Initialize properties
             Themes = new()
@@ -240,19 +256,36 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 SetProperty(ref _useCurrentMapExtent, value);
-                UseCustomExtent = !value;
+                // Only update UseCustomExtent if setting UseCurrentMapExtent to true
+                if (value)
+                {
+                    UseCustomExtent = false;
+                }
+                // Always raise can execute changed for the command
                 (SetCustomExtentCommand as RelayCommand)?.RaiseCanExecuteChanged();
+
+                // Add debug info
+                System.Diagnostics.Debug.WriteLine($"UseCurrentMapExtent set to {value}, UseCustomExtent is now {_useCustomExtent}");
             }
         }
 
-        private bool _useCustomExtent;
+        private bool _useCustomExtent = false;
         public bool UseCustomExtent
         {
             get => _useCustomExtent;
             set
             {
                 SetProperty(ref _useCustomExtent, value);
+                // Only update UseCurrentMapExtent if setting UseCustomExtent to true
+                if (value)
+                {
+                    UseCurrentMapExtent = false;
+                }
+                // Always raise can execute changed for the command
                 (SetCustomExtentCommand as RelayCommand)?.RaiseCanExecuteChanged();
+
+                // Add debug info
+                System.Diagnostics.Debug.WriteLine($"UseCustomExtent set to {value}, UseCurrentMapExtent is now {_useCurrentMapExtent}");
             }
         }
 
@@ -267,7 +300,27 @@ namespace DuckDBGeoparquet.Views
         public Envelope CustomExtent
         {
             get => _customExtent;
-            set => SetProperty(ref _customExtent, value);
+            set
+            {
+                SetProperty(ref _customExtent, value);
+                // Update the display string and has-extent flag when extent changes
+                HasCustomExtent = value != null;
+                UpdateCustomExtentDisplay();
+            }
+        }
+
+        private bool _hasCustomExtent;
+        public bool HasCustomExtent
+        {
+            get => _hasCustomExtent;
+            set => SetProperty(ref _hasCustomExtent, value);
+        }
+
+        private string _customExtentDisplay = "No custom extent set";
+        public string CustomExtentDisplay
+        {
+            get => _customExtentDisplay;
+            set => SetProperty(ref _customExtentDisplay, value);
         }
 
         private string _themeDescription = "Select a theme to see description";
@@ -422,28 +475,132 @@ namespace DuckDBGeoparquet.Views
 
         private void SetCustomExtent()
         {
-            // This would typically use the current map to let the user draw an extent
-            // For now, we'll just get the current map extent as a placeholder
-            QueuedTask.Run(() =>
+            try
             {
+                // Add diagnostic logging
+                System.Diagnostics.Debug.WriteLine("SetCustomExtent method called");
+                AddToLog("SetCustomExtent method called - attempting to activate drawing tool");
+
+                // Ensure the custom extent radio button is selected
+                UseCustomExtent = true;
+
+                // Make sure we're subscribed to the static event
+                // We already subscribed in the constructor, but ensure it's still active
                 try
                 {
-                    var mapView = MapView.Active;
-                    if (mapView != null && mapView.Extent != null)
-                    {
-                        CustomExtent = mapView.Extent;
-                        AddToLog($"Custom extent set: {CustomExtent.XMin}, {CustomExtent.YMin}, {CustomExtent.XMax}, {CustomExtent.YMax}");
-                    }
-                    else
-                    {
-                        AddToLog("Unable to set custom extent: No active map view");
-                    }
+                    // Remove any existing subscription and add it again to be safe
+                    // This prevents multiple handlers if called multiple times
+                    CustomExtentTool.ExtentCreatedStatic -= OnExtentCreated;
+                    CustomExtentTool.ExtentCreatedStatic += OnExtentCreated;
+                    System.Diagnostics.Debug.WriteLine("Re-established event subscription for CustomExtentTool");
                 }
                 catch (Exception ex)
                 {
-                    AddToLog($"Error setting custom extent: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Error managing event subscriptions: {ex.Message}");
+                }
+
+                // Create the instance tool as well for backward compatibility
+                if (_customExtentTool == null)
+                {
+                    _customExtentTool = new CustomExtentTool();
+                    _customExtentTool.ExtentCreated += OnExtentCreated;
+                }
+
+                // Use ArcGIS Pro's drawing tool to select an extent
+                QueuedTask.Run(async () =>
+                {
+                    System.Diagnostics.Debug.WriteLine("Inside QueuedTask.Run");
+                    AddToLog("Starting custom extent drawing operation...");
+
+                    // Get a reference to the active map and make sure one exists
+                    var mapView = MapView.Active;
+                    if (mapView == null)
+                    {
+                        AddToLog("Unable to set custom extent: No active map view");
+                        ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                            "Please open a map before setting a custom extent.",
+                            "No Active Map");
+                        return;
+                    }
+
+                    AddToLog($"Active map view found: {mapView.Map.Name}");
+
+                    try
+                    {
+                        // Activate our custom tool
+                        AddToLog("Activating custom drawing tool...");
+                        System.Diagnostics.Debug.WriteLine("Activating custom extent tool");
+
+                        // Use our custom tool by ID as defined in the Config.daml
+                        await FrameworkApplication.SetCurrentToolAsync("DuckDBGeoparquet_CustomExtentTool");
+                        AddToLog("Draw a rectangle on the map to set the custom extent...");
+                        System.Diagnostics.Debug.WriteLine("Custom tool activated successfully");
+                    }
+                    catch (Exception ex)
+                    {
+                        AddToLog($"Error in tool activation: {ex.Message}");
+                        System.Diagnostics.Debug.WriteLine($"Exception in tool activation: {ex}");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"Error setting custom extent: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Exception in SetCustomExtent: {ex}");
+            }
+        }
+
+        // Handler for when our custom tool creates an extent
+        private void OnExtentCreated(Envelope extent)
+        {
+            // Add more detailed logging
+            System.Diagnostics.Debug.WriteLine($"Custom extent created: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
+            AddToLog($"CUSTOM EXTENT SET SUCCESSFULLY: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
+
+            // Store the extent - this will trigger the property change handlers
+            CustomExtent = extent;
+
+            // Explicitly set these properties to ensure UI updates
+            HasCustomExtent = true;
+            UpdateCustomExtentDisplay();
+            NotifyPropertyChanged("CustomExtentDisplay");
+            NotifyPropertyChanged("HasCustomExtent");
+
+            // Make sure custom extent radio is selected
+            UseCustomExtent = true;
+            UseCurrentMapExtent = false;
+
+            // First ensure we're completely back to the default tool
+            QueuedTask.Run(async () => {
+                try
+                {
+                    // Make absolutely sure we return to the default explore tool first
+                    await FrameworkApplication.SetCurrentToolAsync("esri_mapping_exploreTool");
+                    System.Diagnostics.Debug.WriteLine("Ensuring return to default tool before showing feedback");
+
+                    // Give the UI thread a moment to update and remove the sketch cursor
+                    await Task.Delay(200);
+
+                    // Then show the message box
+                    ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                        $"Custom extent set successfully:\nMin X,Y: {extent.XMin:F4}, {extent.YMin:F4}\nMax X,Y: {extent.XMax:F4}, {extent.YMax:F4}",
+                        "Custom Extent Set",
+                        System.Windows.MessageBoxButton.OK,
+                        System.Windows.MessageBoxImage.Information);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Error showing custom extent feedback: {ex.Message}");
                 }
             });
+
+            // Update the UI to reflect the custom extent is set
+            AddToLog("Custom extent will be used for data loading");
+            AddToLog("You may now select data themes and click 'Load Data'");
+
+            // Force property change notifications
+            NotifyPropertyChanged("UseCustomExtent");
+            NotifyPropertyChanged("UseCurrentMapExtent");
         }
 
         private void BrowseMfcLocation()
@@ -459,6 +616,18 @@ namespace DuckDBGeoparquet.Views
             if (result == System.Windows.Forms.DialogResult.OK)
             {
                 MfcOutputPath = dialog.SelectedPath;
+            }
+        }
+
+        private void UpdateCustomExtentDisplay()
+        {
+            if (_customExtent != null)
+            {
+                CustomExtentDisplay = $"Min X: {_customExtent.XMin:F4}\nMin Y: {_customExtent.YMin:F4}\nMax X: {_customExtent.XMax:F4}\nMax Y: {_customExtent.YMax:F4}";
+            }
+            else
+            {
+                CustomExtentDisplay = "No custom extent set";
             }
         }
         #endregion
@@ -673,6 +842,20 @@ namespace DuckDBGeoparquet.Views
             {
                 SelectedTheme = _selectedThemes[0];
             }
+        }
+
+        // Cleanup method that will be called when the add-in is unloaded
+        // No override needed - this will be called by the framework
+        private void CleanupResources()
+        {
+            // Cleanup by unsubscribing from static events
+            System.Diagnostics.Debug.WriteLine("WizardDockpaneViewModel cleaning up, unsubscribing from static events");
+            CustomExtentTool.ExtentCreatedStatic -= OnExtentCreated;
+        }
+
+        ~WizardDockpaneViewModel()
+        {
+            CleanupResources();
         }
     }
 }

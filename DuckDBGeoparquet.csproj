@@ -22,14 +22,6 @@
 		<Content Include="DarkImages\Overture32.png" />
 	</ItemGroup>
 	<ItemGroup>
-		<Content Include="Extensions\spatial.duckdb_extension">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</Content>
-		<Content Include="Extensions\httpfs.duckdb_extension">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</Content>
-	</ItemGroup>
-	<ItemGroup>
 		<None Include="Properties\launchSettings.json" />
 	</ItemGroup>
 	<ItemGroup>
@@ -129,6 +121,16 @@
 		</Reference>
 		<Reference Include="ESRI.ArcGIS.ItemIndex">
 			<HintPath>C:\Program Files\ArcGIS\Pro\bin\ESRI.ArcGIS.ItemIndex.dll</HintPath>
+			<CopyLocal>False</CopyLocal>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="ArcGIS.Desktop.Docking.Wpf">
+			<HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Desktop.Docking.Wpf.dll</HintPath>
+			<CopyLocal>False</CopyLocal>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="ArcGIS.Desktop.Editors.Wpf">
+			<HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Desktop.Editors.Wpf.dll</HintPath>
 			<CopyLocal>False</CopyLocal>
 			<Private>False</Private>
 		</Reference>

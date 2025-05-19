@@ -9,9 +9,9 @@
              d:DesignHeight="600" d:DesignWidth="400">
     <UserControl.Resources>
         <ResourceDictionary>
-            <!-- Use ArcGIS Pro built-in theme resources -->
+            <!-- Use standard resource dictionary from ArcGIS Pro -->
             <ResourceDictionary.MergedDictionaries>
-                <extensions:DesignOnlyResourceDictionary Source="pack://application:,,,/ArcGIS.Desktop.Framework;component\Themes\Default.xaml"/>
+                <ResourceDictionary Source="pack://application:,,,/ArcGIS.Desktop.Framework;component\Themes\Default.xaml"/>
             </ResourceDictionary.MergedDictionaries>
 
             <!-- Image Resources -->
@@ -143,6 +143,26 @@
                                             Command="{Binding SetCustomExtentCommand}"
                                             Style="{DynamicResource Esri_Button}"
                                             IsEnabled="{Binding UseCustomExtent}"/>
+
+                                    <!-- Add custom extent coordinates display -->
+                                    <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}" 
+                                            BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                            BorderThickness="1"
+                                            Padding="5" 
+                                            Margin="20,5,0,5"
+                                            Visibility="{Binding HasCustomExtent, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <StackPanel>
+                                            <TextBlock Text="Custom Extent Coordinates:" 
+                                                      Style="{DynamicResource Esri_TextBlockSmall}"
+                                                      Foreground="{DynamicResource Esri_TextStyleActiveBrush}"
+                                                      FontWeight="SemiBold"
+                                                      Margin="0,0,0,2"/>
+                                            <TextBlock Text="{Binding CustomExtentDisplay}" 
+                                                     Style="{DynamicResource Esri_TextBlockSmall}"
+                                                     Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"
+                                                     TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
                             </ListBoxItem>
                         </ListBox>
