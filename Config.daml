@@ -77,7 +77,7 @@
 	</modules>
 	<propertySheets>
 		<updateSheet refID="esri_core_optionsPropertySheet">
-			<insertPage id="DuckDBGeoparquet_Options" caption="Overture Maps Settings" className="DuckDBGeoparquet.Views.OptionsPropertyPage">
+			<insertPage id="DuckDBGeoparquet_Options" caption="Overture Maps Settings" className="DuckDBGeoparquet.Views.OptionsPropertyPage" keytip="O">
 				<content className="DuckDBGeoparquet.Views.OptionsPropertyPageView" />
 			</insertPage>
 		</updateSheet>
