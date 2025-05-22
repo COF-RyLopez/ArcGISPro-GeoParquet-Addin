@@ -77,27 +77,19 @@
                                 Padding="8"
                                 Margin="0,0,0,12">
                             <StackPanel>
-                                <CheckBox Content="Create Multifile Feature Connection" IsChecked="{Binding CreateMfc}"  Margin="0,2,0,2" ToolTip="Creates an MFC for easier data management in ArcGIS Pro"/>
-                                <StackPanel Margin="16,0,0,0" IsEnabled="{Binding CreateMfc}">
-                                    <Grid Margin="0,4,0,4">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="Output Location:" VerticalAlignment="Center" Margin="0,0,8,0" />
-                                        <TextBox Grid.Column="1" Text="{Binding MfcOutputPath}" VerticalAlignment="Center"  IsReadOnly="True" Margin="0,0,4,0"/>
-                                        <Button Grid.Column="2" Content="Browse..." Style="{DynamicResource Esri_Button}" Command="{Binding BrowseMfcLocationCommand}" Width="70"/>
-                                    </Grid>
-                                    <TextBlock Text="MFC Options:" Margin="0,4,0,4"/>
-                                    <CheckBox Content="Use Spatial Indexing" IsChecked="{Binding UseSpatialIndex}"  Margin="16,2,0,2" ToolTip="Improves performance for spatial queries"/>
-                                    <CheckBox Content="Create Shared Connection" IsChecked="{Binding IsSharedMfc}"  Margin="16,2,0,2" ToolTip="Connection can be shared with other users"/>
-                                    <Border  BorderBrush="{DynamicResource Esri_BorderBrush}" BorderThickness="1" Padding="8" Margin="0,4,0,0">
-                                        <TextBlock TextWrapping="Wrap">
-                                            A Multifile Feature Connection (MFC) allows ArcGIS Pro to work efficiently with multiple GeoParquet files as a single dataset. This makes it easier to visualize and analyze the Overture Maps data.
-                                        </TextBlock>
-                                    </Border>
-                                </StackPanel>
+                                <TextBlock TextWrapping="Wrap" Margin="0,4,0,4">
+                                    Files will be saved as GeoParquet format. After loading data, you can optionally create a Multifile Feature Connection (MFC) from the "Create MFC" tab.
+                                </TextBlock>
+                                <Grid Margin="0,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Data Output Location:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBox Grid.Column="1" Text="{Binding DataOutputPath}" VerticalAlignment="Center" IsReadOnly="True" Margin="0,0,4,0"/>
+                                    <Button Grid.Column="2" Content="Browse..." Style="{DynamicResource Esri_Button}" Command="{Binding BrowseDataLocationCommand}" Width="70"/>
+                                </Grid>
                             </StackPanel>
                         </Border>
                         <!-- Selected Themes Preview -->
@@ -180,9 +172,88 @@
                             BorderThickness="1"
                             CornerRadius="2"
                             Padding="8">
-                        <TextBox Height="300" IsReadOnly="True" Text="{Binding LogOutputText, Mode=OneWay}" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0" FontFamily="Consolas" Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}" Foreground="{DynamicResource Esri_TextControlBrush}" Style="{DynamicResource Esri_TextBoxMedium}"/>
+                        <TextBox Height="300" IsReadOnly="True" Text="{Binding LogOutputText, Mode=OneWay}" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,0,0,12" FontFamily="Consolas" Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}" Foreground="{DynamicResource Esri_TextControlBrush}" Style="{DynamicResource Esri_TextBoxMedium}"/>
                     </Border>
+
+                    <!-- Navigation Buttons -->
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                        <Button Content="Go to Create MFC" Command="{Binding GoToCreateMfcTabCommand}" Style="{DynamicResource Esri_Button}" Width="120"/>
+                    </StackPanel>
                 </StackPanel>
+            </TabItem>
+            <!-- Create MFC Tab -->
+            <TabItem Header="Create MFC" Style="{DynamicResource Esri_TabItem}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="16,12,16,12" Orientation="Vertical">
+                        <TextBlock Text="Create Multifile Feature Connection" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,12"/>
+
+                        <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <TextBlock TextWrapping="Wrap">
+                                A Multifile Feature Connection (MFC) allows ArcGIS Pro to work efficiently with multiple GeoParquet files as a single dataset. This makes it easier to visualize and analyze the Overture Maps data.
+                                <LineBreak/><LineBreak/>
+                                Note: Creating an MFC can take some time as it indexes all of your data files.
+                            </TextBlock>
+                        </Border>
+
+                        <TextBlock Text="MFC Settings" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <Grid Margin="0,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="MFC Output Location:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBox Grid.Column="1" Text="{Binding MfcOutputPath}" VerticalAlignment="Center" IsReadOnly="True" Margin="0,0,4,0"/>
+                                    <Button Grid.Column="2" Content="Browse..." Style="{DynamicResource Esri_Button}" Command="{Binding BrowseMfcLocationCommand}" Width="70"/>
+                                </Grid>
+                                <TextBlock Text="MFC Options:" Margin="0,8,0,4"/>
+                                <CheckBox Content="Use Spatial Indexing" IsChecked="{Binding UseSpatialIndex}" Margin="16,2,0,2" ToolTip="Improves performance for spatial queries"/>
+                                <CheckBox Content="Create Shared Connection" IsChecked="{Binding IsSharedMfc}" Margin="16,2,0,2" ToolTip="Connection can be shared with other users"/>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="Data Source" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="Data Source:" Margin="0,0,0,4"/>
+                                <RadioButton Content="Use previously loaded data" IsChecked="{Binding UsePreviouslyLoadedData}" Margin="0,2,0,2"/>
+                                <RadioButton Content="Specify data folder location" IsChecked="{Binding UseCustomDataFolder}" Margin="0,2,0,2"/>
+                                <Grid Margin="16,4,0,0" IsEnabled="{Binding UseCustomDataFolder}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Data Folder:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBox Grid.Column="1" Text="{Binding CustomDataFolderPath}" VerticalAlignment="Center" IsReadOnly="True" Margin="0,0,4,0"/>
+                                    <Button Grid.Column="2" Content="Browse..." Style="{DynamicResource Esri_Button}" Command="{Binding BrowseCustomDataFolderCommand}" Width="70"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Action Buttons -->
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                            <Button Content="Create MFC" Command="{Binding CreateMfcCommand}" Style="{DynamicResource Esri_ButtonBlue}" Width="120"/>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
             </TabItem>
         </TabControl>
         <!-- Loading Overlay -->
