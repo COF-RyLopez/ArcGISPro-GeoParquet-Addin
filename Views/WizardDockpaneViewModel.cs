@@ -8,6 +8,10 @@ using System;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+using System.Linq;
 using System.Data;
 using DuckDBGeoparquet.Services;
 using Microsoft.Win32;
@@ -21,6 +25,54 @@ using System.Threading;
 
 namespace DuckDBGeoparquet.Views
 {
+    // Selectable theme item class for binding
+    public class SelectableThemeItem : INotifyPropertyChanged
+    {
+        private string _name;
+        private bool _isSelected;
+
+        public string Name
+        {
+            get => _name;
+            set
+            {
+                if (_name != value)
+                {
+                    _name = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected != value)
+                {
+                    _isSelected = value;
+                    OnPropertyChanged();
+                    SelectionChanged?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        public event EventHandler SelectionChanged;
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+
+        public SelectableThemeItem(string name, bool isSelected = false)
+        {
+            _name = name;
+            _isSelected = isSelected;
+        }
+    }
+
     internal class WizardDockpaneViewModel : DockPane
     {
         private const string _dockPaneID = "DuckDBGeoparquet_Views_WizardDockpane";
@@ -114,6 +166,10 @@ namespace DuckDBGeoparquet.Views
                         _cts.Cancel();
                     }
 
+                    // Reset the state of the add-in
+                    ResetState();
+                    AddToLog("Add-in state has been reset");
+
                     // Close the dockpane - use the base class method
                     try
                     {
@@ -143,15 +199,21 @@ namespace DuckDBGeoparquet.Views
             }
 
             // Initialize properties
-            Themes = new()
+            Themes = new ObservableCollection<SelectableThemeItem>
             {
-                "addresses",
-                "base",
-                "buildings",
-                "divisions",
-                "places",
-                "transportation"
+                new SelectableThemeItem("addresses"),
+                new SelectableThemeItem("base"),
+                new SelectableThemeItem("buildings"),
+                new SelectableThemeItem("divisions"),
+                new SelectableThemeItem("places"),
+                new SelectableThemeItem("transportation")
             };
+
+            // Subscribe to selection changed events for each theme item
+            foreach (var themeItem in Themes)
+            {
+                themeItem.SelectionChanged += OnThemeSelectionChanged;
+            }
 
             LogOutput = new();
             LogOutput.AppendLine("Initializing...");
@@ -206,8 +268,8 @@ namespace DuckDBGeoparquet.Views
             set => SetProperty(ref _latestRelease, value);
         }
 
-        private List<string> _themes;
-        public List<string> Themes
+        private ObservableCollection<SelectableThemeItem> _themes;
+        public ObservableCollection<SelectableThemeItem> Themes
         {
             get => _themes;
             private set => SetProperty(ref _themes, value);
@@ -1051,22 +1113,29 @@ namespace DuckDBGeoparquet.Views
             if (pane == null)
                 return;
 
+            // Reset the state when showing the dockpane
+            if (pane is WizardDockpaneViewModel viewModel)
+            {
+                viewModel.ResetState();
+            }
+
             pane.Activate();
         }
 
         public bool IsThemeSelected(string theme)
         {
-            return _selectedThemes.Contains(theme);
+            var themeItem = Themes.FirstOrDefault(t => t.Name == theme);
+            return themeItem != null && themeItem.IsSelected;
         }
 
         public void ToggleThemeSelection(string theme)
         {
-            if (!_selectedThemes.Remove(theme))
-                _selectedThemes.Add(theme);
-
-            NotifyPropertyChanged("SelectedThemes");
-            UpdateThemePreview();
-            (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            var themeItem = Themes.FirstOrDefault(t => t.Name == theme);
+            if (themeItem != null)
+            {
+                themeItem.IsSelected = !themeItem.IsSelected;
+                // The OnThemeSelectionChanged event handler will update SelectedThemes
+            }
         }
 
         // Add a method to check the selected status in the ViewModel
@@ -1098,6 +1167,90 @@ namespace DuckDBGeoparquet.Views
         ~WizardDockpaneViewModel()
         {
             CleanupResources();
+        }
+
+        private void OnThemeSelectionChanged(object sender, EventArgs e)
+        {
+            // Update the SelectedThemes list based on the currently selected theme items
+            _selectedThemes.Clear();
+            foreach (var themeItem in Themes)
+            {
+                if (themeItem.IsSelected)
+                {
+                    _selectedThemes.Add(themeItem.Name);
+                }
+            }
+
+            NotifyPropertyChanged("SelectedThemes");
+            UpdateThemePreview();
+            (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
+
+            // If a theme was selected, set it as the current preview theme
+            if (sender is SelectableThemeItem selectedItem && selectedItem.IsSelected)
+            {
+                SelectedTheme = selectedItem.Name;
+            }
+            else if (_selectedThemes.Count > 0)
+            {
+                // If we just deselected an item but others are still selected, show the first selected theme
+                SelectedTheme = _selectedThemes[0];
+            }
+            else
+            {
+                // If no themes are selected, clear the selection
+                SelectedTheme = null;
+            }
+        }
+
+        private void ResetState()
+        {
+            // Clear theme selections
+            foreach (var themeItem in Themes)
+            {
+                // Temporarily unsubscribe to avoid multiple event triggers
+                themeItem.SelectionChanged -= OnThemeSelectionChanged;
+                themeItem.IsSelected = false;
+                themeItem.SelectionChanged += OnThemeSelectionChanged;
+            }
+
+            // Clear selected themes list
+            _selectedThemes.Clear();
+            NotifyPropertyChanged("SelectedThemes");
+
+            // Reset other properties
+            SelectedTheme = null;
+            SelectedTabIndex = 0; // Switch back to the first tab
+
+            // Reset extent options
+            UseCurrentMapExtent = true;
+            UseCustomExtent = false;
+            CustomExtent = null;
+
+            // Reset MFC options
+            CreateMfc = true;
+            UseSpatialIndex = true;
+            IsSharedMfc = true;
+            MfcOutputPath = Path.Combine(
+                Services.MfcUtility.DefaultMfcBasePath,
+                "Connections"
+            );
+
+            // Reset progress and status
+            ProgressValue = 0;
+            StatusText = "Ready to load Overture Maps data";
+
+            // Clear log but keep initialization messages
+            LogOutput = new();
+            LogOutput.AppendLine("Initialization complete. Ready for a new query.");
+            LogOutputText = LogOutput.ToString();
+            NotifyPropertyChanged("LogOutputText");
+
+            // Raise can execute changed on commands
+            (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (ShowThemeInfoCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (SetCustomExtentCommand as RelayCommand)?.RaiseCanExecuteChanged();
+
+            System.Diagnostics.Debug.WriteLine("Add-in state has been reset");
         }
     }
 }

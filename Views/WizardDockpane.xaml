@@ -42,7 +42,7 @@
                             <ListBox Style="{DynamicResource Esri_ListBox}" MaxHeight="150" ItemsSource="{Binding Themes}" BorderThickness="0" Background="Transparent">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
-                                        <CheckBox Content="{Binding}" Style="{DynamicResource Esri_CheckBox}" Margin="0,2,0,2" Tag="{Binding}" Checked="ThemeCheckBox_CheckedChanged" Unchecked="ThemeCheckBox_CheckedChanged"/>
+                                        <CheckBox Content="{Binding Name}" IsChecked="{Binding IsSelected, Mode=TwoWay}" Style="{DynamicResource Esri_CheckBox}" Margin="0,2,0,2"/>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
