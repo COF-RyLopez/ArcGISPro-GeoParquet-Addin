@@ -560,7 +560,10 @@ namespace DuckDBGeoparquet.Views
         #region Helper Methods
         private void AddToLog(string message)
         {
+            // Append the new log entry to the end of the log
             LogOutput.AppendLine($"[{DateTime.Now:HH:mm:ss}] {message}");
+
+            // Update the text property
             LogOutputText = LogOutput.ToString();
             NotifyPropertyChanged("LogOutputText");
         }

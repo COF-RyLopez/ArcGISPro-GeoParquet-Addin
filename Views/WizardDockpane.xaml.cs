@@ -58,5 +58,17 @@ namespace DuckDBGeoparquet.Views
         {
             // Add your export button click logic here
         }
+
+        /// <summary>
+        /// Event handler for the log text box to scroll to the end whenever text changes
+        /// </summary>
+        private void LogTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            // Automatically scroll to the end when text changes
+            if (sender is TextBox textBox)
+            {
+                textBox.ScrollToEnd();
+            }
+        }
     }
 }

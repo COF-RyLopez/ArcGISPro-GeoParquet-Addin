@@ -172,7 +172,11 @@
                             BorderThickness="1"
                             CornerRadius="2"
                             Padding="8">
-                        <TextBox Height="300" IsReadOnly="True" Text="{Binding LogOutputText, Mode=OneWay}" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,0,0,12" FontFamily="Consolas" Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}" Foreground="{DynamicResource Esri_TextControlBrush}" Style="{DynamicResource Esri_TextBoxMedium}"/>
+                        <TextBox x:Name="LogTextBox" Height="300" IsReadOnly="True" Text="{Binding LogOutputText, Mode=OneWay}" 
+                                 TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,0,0,12" 
+                                 FontFamily="Consolas" Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}" 
+                                 Foreground="{DynamicResource Esri_TextControlBrush}" Style="{DynamicResource Esri_TextBoxMedium}"
+                                 TextChanged="LogTextBox_TextChanged"/>
                     </Border>
 
                     <!-- Navigation Buttons -->
