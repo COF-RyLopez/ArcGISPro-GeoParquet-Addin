@@ -212,13 +212,14 @@ namespace DuckDBGeoparquet.Services
                 {
                     System.Diagnostics.Debug.WriteLine($"Column: {reader2["column_name"]}, Type: {reader2["column_type"]}");
                 }
+
+                return true;
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Query error: {ex.Message}");
-                throw new Exception($"Failed to ingest file: {ex.Message}", ex);
+                return false;
             }
-            return true;
         }
 
         public async Task<DataTable> GetPreviewDataAsync()

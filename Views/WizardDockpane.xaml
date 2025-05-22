@@ -153,7 +153,7 @@
                         </Border>
                         <!-- Action Buttons -->
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
-                            <Button Content="Cancel" Style="{DynamicResource Esri_Button}" Margin="0,0,8,0" Width="80"/>
+                            <Button Content="Cancel" Command="{Binding CancelCommand}" Style="{DynamicResource Esri_Button}" Margin="0,0,8,0" Width="80"/>
                             <Button Content="Load Data" Command="{Binding LoadDataCommand}" Style="{DynamicResource Esri_ButtonBlue}" Width="100"/>
                         </StackPanel>
                     </StackPanel>

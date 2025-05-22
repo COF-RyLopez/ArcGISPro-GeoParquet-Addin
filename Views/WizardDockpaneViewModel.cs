@@ -17,6 +17,7 @@ using System.Text.Json;
 using System.Text;
 using System.IO;
 using System.Windows.Forms;
+using System.Threading;
 
 namespace DuckDBGeoparquet.Views
 {
@@ -26,6 +27,9 @@ namespace DuckDBGeoparquet.Views
         private readonly DataProcessor _dataProcessor;
         private const string RELEASE_URL = "https://labs.overturemaps.org/data/releases.json";
         private const string S3_BASE_PATH = "s3://overturemaps-us-west-2/release";
+
+        // Add CancellationTokenSource for cancelling operations
+        private CancellationTokenSource _cts;
 
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
         {
@@ -97,6 +101,31 @@ namespace DuckDBGeoparquet.Views
 
             BrowseMfcLocationCommand = new RelayCommand(
                 () => BrowseMfcLocation()
+            );
+
+            CancelCommand = new RelayCommand(
+                () =>
+                {
+                    // Cancel any ongoing operations
+                    if (_cts != null && !_cts.IsCancellationRequested)
+                    {
+                        AddToLog("Operation cancelled by user");
+                        System.Diagnostics.Debug.WriteLine("Operation cancelled by user");
+                        _cts.Cancel();
+                    }
+
+                    // Close the dockpane - use the base class method
+                    try
+                    {
+                        // Use the Hide method to close the dockpane
+                        // In ArcGIS Pro 3.5, DockPane base class provides this method
+                        this.Hide();
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Error closing dockpane: {ex.Message}");
+                    }
+                }
             );
 
             // Subscribe to static events
@@ -385,6 +414,7 @@ namespace DuckDBGeoparquet.Views
         public ICommand ShowThemeInfoCommand { get; private set; }
         public ICommand SetCustomExtentCommand { get; private set; }
         public ICommand BrowseMfcLocationCommand { get; private set; }
+        public ICommand CancelCommand { get; private set; }
         #endregion
 
         #region Helper Methods
@@ -674,6 +704,11 @@ namespace DuckDBGeoparquet.Views
                     return;
                 }
 
+                // Initialize a new cancellation token source
+                _cts?.Dispose();
+                _cts = new CancellationTokenSource();
+                var cancellationToken = _cts.Token;
+
                 // Switch to status tab
                 SelectedTabIndex = 1;
 
@@ -697,6 +732,14 @@ namespace DuckDBGeoparquet.Views
                     }
                 });
 
+                // Check for cancellation
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    StatusText = "Operation cancelled";
+                    AddToLog("Operation was cancelled");
+                    return;
+                }
+
                 int totalThemeTypes = 0;
                 // Calculate total number of theme types to process for progress reporting
                 foreach (var theme in SelectedThemes)
@@ -712,6 +755,14 @@ namespace DuckDBGeoparquet.Views
                 // Process each selected theme
                 foreach (var theme in SelectedThemes)
                 {
+                    // Check for cancellation between themes
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        StatusText = "Operation cancelled";
+                        AddToLog("Operation was cancelled");
+                        return;
+                    }
+
                     StatusText = $"Processing theme: {theme}";
                     AddToLog($"Processing theme: {theme}");
 
@@ -722,6 +773,14 @@ namespace DuckDBGeoparquet.Views
 
                         foreach (var type in types)
                         {
+                            // Check for cancellation between types
+                            if (cancellationToken.IsCancellationRequested)
+                            {
+                                StatusText = "Operation cancelled";
+                                AddToLog("Operation was cancelled");
+                                return;
+                            }
+
                             AddToLog($"Processing theme type: {type.Trim()}");
                             System.Diagnostics.Debug.WriteLine($"Theme type: {type.Trim()}");
 
@@ -735,7 +794,22 @@ namespace DuckDBGeoparquet.Views
                             AddToLog($"Loading from path: {s3Path}");
                             System.Diagnostics.Debug.WriteLine($"Loading from path: {s3Path}");
 
-                            await _dataProcessor.IngestFileAsync(s3Path, extent);
+                            // Pass cancellation token to IngestFileAsync
+                            bool ingestSuccess = await _dataProcessor.IngestFileAsync(s3Path, extent);
+                            if (!ingestSuccess)
+                            {
+                                AddToLog($"Failed to ingest data from {s3Path}");
+                                StatusText = $"Error loading data from {s3Path}";
+                                continue;
+                            }
+
+                            // Check for cancellation
+                            if (cancellationToken.IsCancellationRequested)
+                            {
+                                StatusText = "Operation cancelled";
+                                AddToLog("Operation was cancelled");
+                                return;
+                            }
 
                             // Create a feature layer for the loaded data
                             string layerName = $"{theme} - {type.Trim()}";
@@ -761,6 +835,14 @@ namespace DuckDBGeoparquet.Views
                             AddToLog($"Successfully loaded {theme}/{type} data");
                         }
                     }
+                }
+
+                // Check for cancellation before creating MFC
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    StatusText = "Operation cancelled";
+                    AddToLog("Operation was cancelled");
+                    return;
                 }
 
                 // After successfully loading all the data, create MFC if requested
@@ -793,6 +875,14 @@ namespace DuckDBGeoparquet.Views
                             StatusText = "Error creating Multifile Feature Connection - data folder not found";
                             return;
                         }
+                    }
+
+                    // Check for cancellation
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        StatusText = "Operation cancelled";
+                        AddToLog("Operation was cancelled during MFC creation");
+                        return;
                     }
 
                     // Do a sanity check on the data folder contents
@@ -828,6 +918,14 @@ namespace DuckDBGeoparquet.Views
                         AddToLog($"Found {fileCount} parquet files in data folder");
                     }
 
+                    // Check for cancellation
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        StatusText = "Operation cancelled";
+                        AddToLog("Operation was cancelled before MFC creation");
+                        return;
+                    }
+
                     // Create a nice MFC filename based on the release and sanitize it
                     string mfcName = $"OvertureRelease_{LatestRelease.Replace("-", "")}";
                     string mfcFilePath = Path.Combine(connectionFolder, $"{mfcName}.mfc");
@@ -848,50 +946,45 @@ namespace DuckDBGeoparquet.Views
                             true                // Always keep time fields visible
                         );
 
+                        // Check for cancellation
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            StatusText = "Operation cancelled";
+                            AddToLog("Operation was cancelled during MFC creation");
+                            return;
+                        }
+
                         if (success)
                         {
                             StatusText = "Successfully created Multifile Feature Connection";
                             AddToLog($"MFC created at: {mfcFilePath}");
 
-                            // Add the MFC to the current project connections
+                            // Provide simplified instructions for adding the MFC to the project
                             try
                             {
-                                await QueuedTask.Run(() => {
-                                    // Try to add the MFC to the current project
-                                    if (ArcGIS.Desktop.Core.Project.Current != null)
-                                    {
-                                        var connectionPath = Path.GetDirectoryName(mfcFilePath);
+                                AddToLog("----------------");
+                                AddToLog("To use the MFC in your project:");
+                                AddToLog("1. In the Catalog pane, navigate to the location of the MFC file");
+                                AddToLog($"2. Right-click on the file: {Path.GetFileName(mfcFilePath)}");
+                                AddToLog("3. Select 'Add To Project'");
+                                AddToLog("4. The MFC will appear in the 'Multifile Feature Connections' section");
+                                AddToLog("----------------");
 
-                                        AddToLog($"Adding folder connection to project: {connectionPath}");
-
-                                        try
-                                        {
-                                            // Get or create an IProjectItem for the folder using the string path directly
-                                            // Note: ItemFactory.Create() expects a string path, not a Uri object
-                                            var folderItem = ArcGIS.Desktop.Core.ItemFactory.Instance.Create(connectionPath);
-
-                                            // Add the item to the project using the correct AddItem method signature
-                                            // that accepts a single IProjectItem parameter
-                                            if (folderItem != null && ArcGIS.Desktop.Core.Project.Current.AddItem(folderItem as ArcGIS.Desktop.Core.IProjectItem))
-                                            {
-                                                AddToLog("MFC connection added to project. You can now find it in the Catalog pane.");
-                                            }
-                                            else
-                                            {
-                                                AddToLog("Warning: Unable to create folder connection.");
-                                            }
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            AddToLog($"Failed to add folder connection: {ex.Message}");
-                                            System.Diagnostics.Debug.WriteLine($"Error adding folder connection: {ex}");
-                                        }
-                                    }
-                                });
+                                // Display a message box with instructions
+                                ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                                    $"Multifile Feature Connection created successfully!\n\n" +
+                                    $"Location: {mfcFilePath}\n\n" +
+                                    "To add it to your project:\n" +
+                                    "1. Navigate to the MFC file in the Catalog pane\n" +
+                                    $"2. Right-click on '{Path.GetFileName(mfcFilePath)}'\n" +
+                                    "3. Select 'Add To Project'",
+                                    "MFC Created Successfully",
+                                    System.Windows.MessageBoxButton.OK,
+                                    System.Windows.MessageBoxImage.Information);
                             }
                             catch (Exception ex)
                             {
-                                AddToLog($"Warning: Could not add MFC to project connections: {ex.Message}");
+                                AddToLog($"Warning: {ex.Message}");
                             }
                         }
                         else
@@ -931,6 +1024,15 @@ namespace DuckDBGeoparquet.Views
                 AddToLog($"Stack trace: {ex.StackTrace}");
                 ProgressValue = 0;
                 System.Diagnostics.Debug.WriteLine($"Load error: {ex}");
+            }
+            finally
+            {
+                // Clean up the cancellation token source
+                if (_cts != null)
+                {
+                    _cts.Dispose();
+                    _cts = null;
+                }
             }
         }
 
@@ -984,6 +1086,13 @@ namespace DuckDBGeoparquet.Views
             // Cleanup by unsubscribing from static events
             System.Diagnostics.Debug.WriteLine("WizardDockpaneViewModel cleaning up, unsubscribing from static events");
             CustomExtentTool.ExtentCreatedStatic -= OnExtentCreated;
+
+            // Dispose of the cancellation token source if it exists
+            if (_cts != null)
+            {
+                _cts.Dispose();
+                _cts = null;
+            }
         }
 
         ~WizardDockpaneViewModel()
