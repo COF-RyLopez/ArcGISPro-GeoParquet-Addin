@@ -152,9 +152,9 @@
                 </ScrollViewer>
             </TabItem>
             <!-- Status Tab -->
-            <TabItem Header="Status" Style="{DynamicResource Esri_TabItem}">
+            <TabItem Header="Status" >
                 <StackPanel Margin="16,12,16,12">
-                    <TextBlock Text="Operation Progress" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,4"/>
+                    <TextBlock Text="Operation Progress" Margin="0,0,0,4"/>
                     <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
                             BorderBrush="{DynamicResource Esri_BorderBrush}"
                             BorderThickness="1"
@@ -163,7 +163,7 @@
                             Margin="0,0,0,12">
                         <StackPanel>
                             <TextBlock Text="{Binding StatusText}" Style="{DynamicResource Esri_TextBlockRegular}" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}" TextWrapping="Wrap" Margin="0,0,0,4"/>
-                            <ProgressBar Value="{Binding ProgressValue}" Height="20" Margin="0,4,0,0" Style="{DynamicResource Esri_ProgressBar}"/>
+                            <ProgressBar Value="{Binding ProgressValue}" Height="20" Margin="0,4,0,0" />
                         </StackPanel>
                     </Border>
                     <TextBlock Text="Log Output" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,4"/>

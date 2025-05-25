@@ -270,7 +270,16 @@ namespace DuckDBGeoparquet.Views
                 LatestRelease = await GetLatestRelease();
 
                 System.Diagnostics.Debug.WriteLine($"Latest release set to: {LatestRelease}");
-                NotifyPropertyChanged("LatestRelease");
+                NotifyPropertyChanged(nameof(LatestRelease));
+
+                // Update DataOutputPath with the fetched release version
+                var defaultBasePath = Services.MfcUtility.DefaultMfcBasePath;
+                DataOutputPath = Path.Combine(
+                    defaultBasePath,
+                    "Data",
+                    LatestRelease ?? "latest"
+                );
+                NotifyPropertyChanged(nameof(DataOutputPath));
 
                 StatusText = "Ready to load Overture Maps data";
                 AddToLog("Ready to load Overture Maps data");
@@ -565,7 +574,7 @@ namespace DuckDBGeoparquet.Views
 
             // Update the text property
             LogOutputText = LogOutput.ToString();
-            NotifyPropertyChanged("LogOutputText");
+            NotifyPropertyChanged(nameof(LogOutputText));
         }
 
         private void UpdateThemePreview()
@@ -736,8 +745,8 @@ namespace DuckDBGeoparquet.Views
             // Explicitly set these properties to ensure UI updates
             HasCustomExtent = true;
             UpdateCustomExtentDisplay();
-            NotifyPropertyChanged("CustomExtentDisplay");
-            NotifyPropertyChanged("HasCustomExtent");
+            NotifyPropertyChanged(nameof(CustomExtentDisplay));
+            NotifyPropertyChanged(nameof(HasCustomExtent));
 
             // Make sure custom extent radio is selected
             UseCustomExtent = true;
@@ -772,8 +781,8 @@ namespace DuckDBGeoparquet.Views
             AddToLog("You may now select data themes and click 'Load Data'");
 
             // Force property change notifications
-            NotifyPropertyChanged("UseCustomExtent");
-            NotifyPropertyChanged("UseCurrentMapExtent");
+            NotifyPropertyChanged(nameof(UseCustomExtent));
+            NotifyPropertyChanged(nameof(UseCurrentMapExtent));
         }
 
         private void BrowseMfcLocation()
@@ -920,6 +929,44 @@ namespace DuckDBGeoparquet.Views
                     return;
                 }
 
+                // Check if any of the themes already have data in the target location
+                bool existingDataFound = false;
+                string dataPath = DataOutputPath;
+
+                // Check if the folder exists and has theme folders that match selected themes
+                if (Directory.Exists(dataPath))
+                {
+                    foreach (var theme in SelectedThemes)
+                    {
+                        // Look for folders matching the theme pattern
+                        var matchingFolders = Directory.GetDirectories(dataPath, $"{theme}_*");
+                        if (matchingFolders.Length > 0)
+                        {
+                            existingDataFound = true;
+                            break;
+                        }
+                    }
+                }
+
+                // If existing data is found, confirm with user before overwriting
+                if (existingDataFound)
+                {
+                    var confirmResult = ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                        "Existing data found for one or more selected themes. Loading new data will replace the existing files.\n\nDo you want to continue?",
+                        "Replace Existing Data?",
+                        System.Windows.MessageBoxButton.YesNo,
+                        System.Windows.MessageBoxImage.Warning);
+
+                    if (confirmResult == System.Windows.MessageBoxResult.No)
+                    {
+                        StatusText = "Operation cancelled by user";
+                        AddToLog("Operation cancelled - user chose not to replace existing data");
+                        return;
+                    }
+
+                    AddToLog("User confirmed replacing existing data");
+                }
+
                 int totalThemeTypes = 0;
                 // Calculate total number of theme types to process for progress reporting
                 foreach (var theme in SelectedThemes)
@@ -960,6 +1007,37 @@ namespace DuckDBGeoparquet.Views
                                 AddToLog("Operation was cancelled");
                                 return;
                             }
+
+                            // ---- NEW CODE START: Remove existing layer ----
+                            string layerNameToRemove = $"{theme} - {type.Trim()}";
+                            AddToLog($"Checking for existing layer: {layerNameToRemove}");
+
+                            await QueuedTask.Run(() =>
+                            {
+                                var activeMap = MapView.Active?.Map;
+                                if (activeMap != null)
+                                {
+                                    // Find layers with the exact name (case-insensitive)
+                                    var layersToRemove = activeMap.GetLayersAsFlattenedList()
+                                        .Where(l => l.Name.Equals(layerNameToRemove, StringComparison.OrdinalIgnoreCase))
+                                        .ToList();
+
+                                    if (layersToRemove.Any())
+                                    {
+                                        AddToLog($"Found {layersToRemove.Count} existing layer(s) named '{layerNameToRemove}'. Removing them.");
+                                        activeMap.RemoveLayers(layersToRemove);
+                                    }
+                                    else
+                                    {
+                                        AddToLog($"No existing layer named '{layerNameToRemove}' found.");
+                                    }
+                                }
+                                else
+                                {
+                                    AddToLog("No active map to remove layers from.");
+                                }
+                            });
+                            // ---- NEW CODE END ----
 
                             AddToLog($"Processing theme type: {type.Trim()}");
                             System.Diagnostics.Debug.WriteLine($"Theme type: {type.Trim()}");
@@ -1053,13 +1131,41 @@ namespace DuckDBGeoparquet.Views
 
                 StatusText = $"Successfully loaded all selected themes from release {LatestRelease}";
                 AddToLog($"All selected themes loaded successfully");
+                AddToLog("----------------");
+                if (extent != null)
+                {
+                    AddToLog($"Data for extent: {extent.XMin:F2}, {extent.YMin:F2}, {extent.XMax:F2}, {extent.YMax:F2}");
+                    AddToLog("When you load data for a different extent, the existing data will be replaced.");
+                    AddToLog("This ensures a clean folder structure for MFC creation.");
+                }
+                AddToLog("----------------");
                 ProgressValue = 100;
             }
             catch (Exception ex)
             {
-                StatusText = $"Error loading data: {ex.Message}";
-                AddToLog($"ERROR: {ex.Message}");
-                AddToLog($"Stack trace: {ex.StackTrace}");
+                // Determine if this is a file access issue
+                bool isFileAccessError = ex.Message.Contains("because it is being used by another process") ||
+                                         ex.Message.Contains("access") ||
+                                         ex.Message.Contains("denied") ||
+                                         ex.Message.Contains("locked");
+
+                if (isFileAccessError)
+                {
+                    StatusText = "File access error";
+                    AddToLog($"ERROR: File access error. One or more files are locked by another process.");
+                    AddToLog($"Try the following:");
+                    AddToLog($"1. Close any other ArcGIS Pro projects that might be using this data");
+                    AddToLog($"2. Remove any layers from your current map that use Overture data");
+                    AddToLog($"3. In extreme cases, restart ArcGIS Pro and try again");
+                    AddToLog($"Detailed error: {ex.Message}");
+                }
+                else
+                {
+                    StatusText = $"Error loading data: {ex.Message}";
+                    AddToLog($"ERROR: {ex.Message}");
+                    AddToLog($"Stack trace: {ex.StackTrace}");
+                }
+
                 ProgressValue = 0;
                 System.Diagnostics.Debug.WriteLine($"Load error: {ex}");
             }
@@ -1367,7 +1473,7 @@ namespace DuckDBGeoparquet.Views
                 }
             }
 
-            NotifyPropertyChanged("SelectedThemes");
+            NotifyPropertyChanged(nameof(SelectedThemes));
             UpdateThemePreview();
             (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
 
@@ -1401,7 +1507,7 @@ namespace DuckDBGeoparquet.Views
 
             // Clear selected themes list
             _selectedThemes.Clear();
-            NotifyPropertyChanged("SelectedThemes");
+            NotifyPropertyChanged(nameof(SelectedThemes));
 
             // Reset other properties
             SelectedTheme = null;
@@ -1444,7 +1550,7 @@ namespace DuckDBGeoparquet.Views
             LogOutput = new();
             LogOutput.AppendLine("Initialization complete. Ready for a new query.");
             LogOutputText = LogOutput.ToString();
-            NotifyPropertyChanged("LogOutputText");
+            NotifyPropertyChanged(nameof(LogOutputText));
 
             // Raise can execute changed on commands
             (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();

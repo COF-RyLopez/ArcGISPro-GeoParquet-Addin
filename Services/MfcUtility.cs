@@ -124,6 +124,20 @@ namespace DuckDBGeoparquet.Services
                     throw new DirectoryNotFoundException($"Data source folder does not exist: {dataSourceFolder}");
                 }
 
+                // Set geoprocessing environment to allow overwriting datasets
+                await QueuedTask.Run(() => {
+                    try
+                    {
+                        // Configure environment to allow overwriting of existing datasets
+                        var envSettings = Geoprocessing.MakeEnvironmentArray(overwriteoutput: true);
+                        System.Diagnostics.Debug.WriteLine("Set geoprocessing environment to allow overwriting");
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Warning: Could not set geoprocessing environment: {ex.Message}");
+                    }
+                });
+
                 // Log the contents of the data source folder to help debug
                 var files = Directory.GetFiles(dataSourceFolder, "*.parquet");
                 System.Diagnostics.Debug.WriteLine($"Found {files.Length} parquet files in data source folder");
@@ -187,7 +201,10 @@ namespace DuckDBGeoparquet.Services
                 {
                     // Use only the official gapro.CreateBDC tool as documented in ArcGIS Pro 3.5
                     System.Diagnostics.Debug.WriteLine("Executing gapro.CreateBDC");
-                    return Geoprocessing.ExecuteToolAsync("gapro.CreateBDC", parameters);
+                    return Geoprocessing.ExecuteToolAsync(
+                        "gapro.CreateBDC",
+                        parameters,
+                        flags: ArcGIS.Desktop.Core.Geoprocessing.GPExecuteToolFlags.Default);
                 });
 
                 if (result.IsFailed)

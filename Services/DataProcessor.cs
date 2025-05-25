@@ -2,11 +2,14 @@
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using ArcGIS.Core.CIM;
+using ArcGIS.Core.Data;
 using ArcGIS.Desktop.Core;
+using ArcGIS.Desktop.Core.Geoprocessing;
 using ArcGIS.Desktop.Framework.Dialogs;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
 using ArcGIS.Desktop.Mapping;
@@ -29,6 +32,9 @@ namespace DuckDBGeoparquet.Services
 
         // Property to hold the output folder for the session.
         private string _outputFolder;
+
+        // Add a class-level field to store the current extent
+        private dynamic _currentExtent;
 
         public DataProcessor()
         {
@@ -167,6 +173,24 @@ namespace DuckDBGeoparquet.Services
         {
             try
             {
+                // Store the extent for later use in CreateFeatureLayerAsync
+                _currentExtent = extent;
+
+                // The following call to MakeEnvironmentArray was not directly used by a GP tool in this method.
+                // Overwrite for deletion is handled in DeleteParquetFileAsync if needed elsewhere.
+                // DuckDB handles its own table replacement/creation.
+                /* 
+                await QueuedTask.Run(() => {
+                    try {
+                        Geoprocessing.MakeEnvironmentArray(overwriteoutput: true);
+                        System.Diagnostics.Debug.WriteLine("Set geoprocessing environment to allow overwriting");
+                    }
+                    catch (Exception ex) {
+                        System.Diagnostics.Debug.WriteLine($"Warning: Could not set geoprocessing environment: {ex.Message}");
+                    }
+                });
+                */
+
                 using var command = _connection.CreateCommand();
                 command.CommandText = $@"
                     CREATE OR REPLACE TABLE temp AS 
@@ -239,20 +263,336 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        private static void DeleteParquetFile(string parquetPath)
+        private static async Task RemoveLayersUsingFileAsync(string filePath)
         {
-            if (File.Exists(parquetPath))
+            // Validate the file path
+            if (string.IsNullOrEmpty(filePath))
             {
-                try
+                System.Diagnostics.Debug.WriteLine("RemoveLayersUsingFileAsync: File path is null or empty.");
+                return;
+            }
+
+            System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Attempting to remove layers associated with file: {filePath}");
+
+            await QueuedTask.Run(() =>
+            {
+                var map = MapView.Active?.Map;
+                if (map == null)
                 {
-                    File.Delete(parquetPath);
+                    System.Diagnostics.Debug.WriteLine("RemoveLayersUsingFileAsync: No active map found.");
+                    return;
                 }
-                catch (Exception ex)
+
+                var membersToRemove = new List<MapMember>();
+                var allLayers = map.GetLayersAsFlattenedList().ToList();
+                var allTables = map.GetStandaloneTablesAsFlattenedList().ToList();
+
+                System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Found {allLayers.Count} layers and {allTables.Count} standalone tables in the map.");
+
+                string normalizedTargetPath = Path.GetFullPath(filePath).ToLowerInvariant();
+                System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Normalized target path: {normalizedTargetPath}");
+
+                // Helper to get the actual file path from a potential dataset path
+                Func<string, string> getActualFilePath = (string dataSourcePath) =>
                 {
-                    // Handle any deletion errors (e.g., file is locked).
-                    ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show($"Failed to delete {parquetPath}: {ex.Message}");
+                    if (string.IsNullOrEmpty(dataSourcePath)) return null;
+                    string lowerPath = dataSourcePath.ToLowerInvariant();
+                    // If path is like "...file.parquet\dataset_name"
+                    if (lowerPath.Contains(".parquet\\") || lowerPath.Contains(".parquet/"))
+                    {
+                        int parquetIndex = lowerPath.IndexOf(".parquet");
+                        if (parquetIndex > -1)
+                        {
+                            return Path.GetFullPath(dataSourcePath.Substring(0, parquetIndex + ".parquet".Length)).ToLowerInvariant();
+                        }
+                    }
+                    return Path.GetFullPath(dataSourcePath).ToLowerInvariant(); // Default to the full path
+                };
+
+                // Check layers
+                foreach (var layer in allLayers)
+                {
+                    if (layer is FeatureLayer featureLayer)
+                    {
+                        bool removedByPath = false;
+                        try
+                        {
+                            using var fc = featureLayer.GetFeatureClass();
+                            if (fc != null)
+                            {
+                                var fcPathUri = fc.GetPath();
+                                if (fcPathUri != null && fcPathUri.IsFile)
+                                {
+                                    string rawLayerDataSourcePath = fcPathUri.LocalPath;
+                                    string actualLayerFilePath = getActualFilePath(rawLayerDataSourcePath);
+                                    System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Layer '{featureLayer.Name}' path from FeatureClass.GetPath(): {rawLayerDataSourcePath}, Resolved to: {actualLayerFilePath}");
+                                    if (actualLayerFilePath == normalizedTargetPath)
+                                    {
+                                        membersToRemove.Add(featureLayer);
+                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Added layer '{featureLayer.Name}' for removal based on FeatureClass.GetPath().");
+                                        removedByPath = true;
+                                    }
+                                }
+
+                                if (!removedByPath)
+                                {
+                                    using var datastore = fc.GetDatastore();
+                                    var connector = datastore.GetConnector();
+                                    string dsPathViaConnectorRaw = string.Empty;
+                                    if (connector is FileSystemConnectionPath fileSystemConnectionPath)
+                                    {
+                                        dsPathViaConnectorRaw = fileSystemConnectionPath.Path?.LocalPath;
+                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Layer '{featureLayer.Name}' (Connector Fallback) FileSystemConnectionPath: {dsPathViaConnectorRaw}");
+                                    }
+                                    else if (connector is ArcGIS.Core.Data.PluginDatastore.PluginDatasourceConnectionPath)
+                                    {
+                                        var datastoreUri = datastore.GetPath();
+                                        dsPathViaConnectorRaw = datastoreUri?.LocalPath;
+                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Layer '{featureLayer.Name}' (Connector Fallback) PluginDatasourceConnectionPath from Datastore: {dsPathViaConnectorRaw}");
+                                    }
+                                    else
+                                    {
+                                        if (connector != null) { System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Layer '{featureLayer.Name}' (Connector Fallback) type: {connector.GetType().Name}"); }
+                                        else { System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Layer '{featureLayer.Name}' (Connector Fallback) connector is null."); }
+                                        var connString = datastore.GetConnectionString();
+                                        if (!string.IsNullOrEmpty(connString) && Uri.TryCreate(connString, UriKind.Absolute, out Uri uriResult) && uriResult.IsFile) { dsPathViaConnectorRaw = uriResult.LocalPath; }
+                                        else if (!string.IsNullOrEmpty(connString)) { try { dsPathViaConnectorRaw = Path.GetFullPath(connString); } catch { } }
+                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Layer '{featureLayer.Name}' (Connector Fallback) path via ConnStr: {dsPathViaConnectorRaw}");
+                                    }
+                                    string actualDsPathViaConnector = getActualFilePath(dsPathViaConnectorRaw);
+                                    if (!string.IsNullOrEmpty(actualDsPathViaConnector) && actualDsPathViaConnector == normalizedTargetPath)
+                                    {
+                                        membersToRemove.Add(featureLayer);
+                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Added layer '{featureLayer.Name}' for removal based on Connector Fallback (Resolved Path: {actualDsPathViaConnector}).");
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Error processing layer '{featureLayer.Name}': {ex.Message}");
+                        }
+                    }
+                }
+
+                // Check standalone tables
+                foreach (var tableMember in allTables)
+                {
+                    if (tableMember is StandaloneTable standaloneTable)
+                    {
+                        bool removedByPath = false;
+                        try
+                        {
+                            using var tbl = standaloneTable.GetTable();
+                            if (tbl != null)
+                            {
+                                var tblPathUri = tbl.GetPath();
+                                if (tblPathUri != null && tblPathUri.IsFile)
+                                {
+                                    string rawTableDataSourcePath = tblPathUri.LocalPath;
+                                    string actualTableFilePath = getActualFilePath(rawTableDataSourcePath);
+                                    System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Table '{standaloneTable.Name}' path from Table.GetPath(): {rawTableDataSourcePath}, Resolved to: {actualTableFilePath}");
+                                    if (actualTableFilePath == normalizedTargetPath)
+                                    {
+                                        membersToRemove.Add(standaloneTable);
+                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Added table '{standaloneTable.Name}' for removal based on Table.GetPath().");
+                                        removedByPath = true;
+                                    }
+                                }
+
+                                if (!removedByPath)
+                                {
+                                    using var datastore = tbl.GetDatastore();
+                                    var connector = datastore.GetConnector();
+                                    string dsPathViaConnectorRaw = string.Empty;
+                                    if (connector is FileSystemConnectionPath fileSystemConnectionPath)
+                                    {
+                                        dsPathViaConnectorRaw = fileSystemConnectionPath.Path?.LocalPath;
+                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Table '{standaloneTable.Name}' (Connector Fallback) FileSystemConnectionPath: {dsPathViaConnectorRaw}");
+                                    }
+                                    else if (connector is ArcGIS.Core.Data.PluginDatastore.PluginDatasourceConnectionPath)
+                                    {
+                                        var datastoreUri = datastore.GetPath();
+                                        dsPathViaConnectorRaw = datastoreUri?.LocalPath;
+                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Table '{standaloneTable.Name}' (Connector Fallback) PluginDatasourceConnectionPath from Datastore: {dsPathViaConnectorRaw}");
+                                    }
+                                    else
+                                    {
+                                        if (connector != null) { System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Table '{standaloneTable.Name}' (Connector Fallback) type: {connector.GetType().Name}."); }
+                                        else { System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Table '{standaloneTable.Name}' (Connector Fallback) connector is null."); }
+                                        var connString = datastore.GetConnectionString();
+                                        if (!string.IsNullOrEmpty(connString) && Uri.TryCreate(connString, UriKind.Absolute, out Uri uriResult) && uriResult.IsFile) { dsPathViaConnectorRaw = uriResult.LocalPath; }
+                                        else if (!string.IsNullOrEmpty(connString)) { try { dsPathViaConnectorRaw = Path.GetFullPath(connString); } catch { } }
+                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Table '{standaloneTable.Name}' (Connector Fallback) path via ConnStr: {dsPathViaConnectorRaw}");
+                                    }
+                                    string actualDsPathViaConnector = getActualFilePath(dsPathViaConnectorRaw);
+                                    if (!string.IsNullOrEmpty(actualDsPathViaConnector) && actualDsPathViaConnector == normalizedTargetPath)
+                                    {
+                                        membersToRemove.Add(standaloneTable);
+                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Added table '{standaloneTable.Name}' for removal based on Connector Fallback (Resolved Path: {actualDsPathViaConnector}).");
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Error processing table '{standaloneTable.Name}': {ex.Message}");
+                        }
+                    }
+                }
+
+                if (membersToRemove.Count > 0)
+                {
+                    var distinctMembersToRemove = membersToRemove.Distinct().ToList();
+                    System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Removing {distinctMembersToRemove.Count} distinct layers/tables associated with file: {filePath}");
+                    foreach (var member in distinctMembersToRemove)
+                    {
+                        if (member is Layer layerToRemove)
+                        {
+                            map.RemoveLayer(layerToRemove);
+                            System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Removed layer '{member.Name}'.");
+                            (layerToRemove as IDisposable)?.Dispose();
+                        }
+                        else if (member is StandaloneTable tableToRemove)
+                        {
+                            map.RemoveStandaloneTable(tableToRemove);
+                            System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Removed table '{member.Name}'.");
+                            (tableToRemove as IDisposable)?.Dispose();
+                        }
+                    }
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: No layers or tables found using the file: {filePath}");
+                }
+            });
+        }
+
+        private static async Task DeleteParquetFileAsync(string parquetPath)
+        {
+            if (!File.Exists(parquetPath))
+            {
+                System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: File does not exist, no action needed: {parquetPath}");
+                return;
+            }
+
+            try
+            {
+                System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: Starting deletion process for: {parquetPath}");
+                await RemoveLayersUsingFileAsync(parquetPath);
+
+                System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: Layers removed. Waiting for file locks to release...");
+                await Task.Delay(2500); // Increased delay to 2.5 seconds
+
+                System.Diagnostics.Debug.WriteLine("DeleteParquetFileAsync: Invoking GC.Collect and WaitForPendingFinalizers.");
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                await Task.Delay(500); // Short additional delay after GC
+
+                bool deleted = false;
+                int gpRetryCount = 2; // Try GP delete a couple of times
+
+                for (int i = 0; i < gpRetryCount && !deleted; i++)
+                {
+                    if (i > 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: Retrying GP delete, attempt {i + 1} after delay...");
+                        await Task.Delay(1500 * i); // Increasing delay for GP retries
+                    }
+                    System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: Attempting GP delete (attempt {i + 1}/{gpRetryCount}): {parquetPath}");
+
+                    await QueuedTask.Run(async () =>
+                    {
+                        try
+                        {
+                            var env = Geoprocessing.MakeEnvironmentArray(overwriteoutput: true);
+                            var parameters = Geoprocessing.MakeValueArray(parquetPath);
+                            var result = await Geoprocessing.ExecuteToolAsync(
+                                "management.Delete",
+                                parameters,
+                                env,
+                                flags: ArcGIS.Desktop.Core.Geoprocessing.GPExecuteToolFlags.Default);
+
+                            if (!result.IsFailed)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: Successfully deleted via geoprocessing: {parquetPath}");
+                                deleted = true;
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: GP delete failed (attempt {i + 1}). Messages:");
+                                foreach (var msg in result.Messages)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"  GP Error: {msg.Text}");
+                                }
+                            }
+                        }
+                        catch (Exception gpEx)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: Error in geoprocessing deletion (attempt {i + 1}): {gpEx.Message}");
+                        }
+                    });
+                }
+
+                if (!deleted && File.Exists(parquetPath))
+                {
+                    System.Diagnostics.Debug.WriteLine("DeleteParquetFileAsync: GP deletion failed or file still exists. Trying direct file operations as fallback...");
+                    int fileDeleteRetryCount = 3;
+                    Exception lastFileDeleteException = null;
+
+                    for (int i = 0; i < fileDeleteRetryCount && !deleted; i++)
+                    {
+                        try
+                        {
+                            File.Delete(parquetPath);
+                            deleted = true;
+                            System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: Successfully deleted via direct file operation: {parquetPath}");
+                        }
+                        catch (IOException ex)
+                        {
+                            lastFileDeleteException = ex;
+                            if (i < fileDeleteRetryCount - 1)
+                            {
+                                int delay = (i + 1) * 1000;
+                                System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: Direct delete attempt {i + 1} failed (file locked), waiting {delay}ms to retry: {parquetPath}");
+                                await Task.Delay(delay);
+                            }
+                        }
+                    }
+
+                    if (!deleted && lastFileDeleteException != null)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: All direct file delete attempts failed. Last error: {lastFileDeleteException.Message}");
+                        // No longer throwing here, will fall through to the final message box if still not deleted.
+                    }
+                }
+
+                if (!deleted && File.Exists(parquetPath))
+                {
+                    string errorMsg = $"Failed to delete {parquetPath}: File is still locked after multiple attempts.\n\nTry closing any ArcGIS Pro projects that might be using this data before proceeding, or manually delete the file.";
+                    System.Diagnostics.Debug.WriteLine(errorMsg);
+                    ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(errorMsg, "File Deletion Error",
+                        System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+                }
+                else if (!File.Exists(parquetPath))
+                {
+                    System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: Confirmed file successfully deleted: {parquetPath}");
                 }
             }
+            catch (Exception ex) // Catch unexpected errors in the overall deletion process
+            {
+                string errorMsg = $"An unexpected error occurred during the deletion of {parquetPath}: {ex.Message}";
+                System.Diagnostics.Debug.WriteLine(errorMsg);
+                ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(errorMsg, "File Deletion Error",
+                    System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+            }
+        }
+
+        // Keep the non-async version for backward compatibility but make it call the async version
+        private static void DeleteParquetFile(string parquetPath)
+        {
+            // Call the async version and wait for it to complete
+            Task.Run(async () => await DeleteParquetFileAsync(parquetPath)).Wait();
         }
 
         /// <summary>
@@ -272,6 +612,32 @@ namespace DuckDBGeoparquet.Services
                     progress?.Report("Initializing...");
                     var map = MapView.Active?.Map
                         ?? throw new Exception("No active map found");
+
+                    // The following call to MakeEnvironmentArray was not directly used by a GP tool in this method's immediate scope.
+                    // Overwrite for file deletion is handled correctly within DeleteParquetFileAsync, which is called by ExportByGeometryType.
+                    // DuckDB's COPY TO handles its own file overwriting during export.
+                    /*
+                    try
+                    {
+                        Geoprocessing.MakeEnvironmentArray(overwriteoutput: true);
+                        System.Diagnostics.Debug.WriteLine("Set geoprocessing environment to allow overwriting");
+                        progress?.Report("Environment configured to allow file overwriting");
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Warning: Could not set geoprocessing environment: {ex.Message}");
+                    }
+                    */
+
+                    // Check if we have an extent filter (for info purposes)
+                    if (_currentExtent != null)
+                    {
+                        progress?.Report($"Creating data filtered to current map extent");
+                    }
+                    else
+                    {
+                        progress?.Report("Creating data (no extent filter applied)");
+                    }
 
                     // With ArcGIS Pro 3.5's improved GeoParquet support, we can now use the original
                     // complex structure without extensive flattening
@@ -301,15 +667,47 @@ namespace DuckDBGeoparquet.Services
                 geomTypes.Add(reader.GetString(0));
             }
 
-            // Parse the layer name to extract theme and type
-            // Format is typically "theme - type" (e.g., "base - infrastructure" or "buildings - building_part")
             string[] parts = layerNameBase.Split(THEME_TYPE_SEPARATOR, StringSplitOptions.None);
             string theme = parts[0].Trim().ToLowerInvariant();
             string type = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : theme;
 
-            // Create a dataset folder - this needs to be a direct child of the output folder
-            // Following MFC requirements per documentation
             string datasetFolder = Path.Combine(outputFolder, $"{theme}_{type}");
+
+            // Proactive cleanup of layers from the dataset folder
+            if (Directory.Exists(datasetFolder))
+            {
+                System.Diagnostics.Debug.WriteLine($"ExportByGeometryType: Proactively cleaning layers from folder: {datasetFolder}");
+                progress?.Report($"Cleaning existing layers for {theme}/{type}...");
+                var existingParquetFiles = Directory.GetFiles(datasetFolder, "*.parquet", SearchOption.TopDirectoryOnly);
+                if (existingParquetFiles.Length > 0)
+                {
+                    foreach (var existingFile in existingParquetFiles)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"ExportByGeometryType: Proactively removing layers for existing file: {existingFile}");
+                        await RemoveLayersUsingFileAsync(existingFile); // This runs on MCT
+                    }
+
+                    System.Diagnostics.Debug.WriteLine($"ExportByGeometryType: Proactive layer removal complete for {datasetFolder}. Waiting for locks to release.");
+                    await Task.Delay(1500); // Increased delay after proactive removal
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    await Task.Delay(750); // Short additional delay after GC
+                    System.Diagnostics.Debug.WriteLine($"ExportByGeometryType: Post-GC delay complete for {datasetFolder}.");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"ExportByGeometryType: No existing .parquet files found in {datasetFolder} for proactive cleanup.");
+                }
+            }
+
+            // Additional delay and GC after all proactive cleanup for the current datasetFolder is complete
+            System.Diagnostics.Debug.WriteLine($"ExportByGeometryType: Additional delay and GC after proactive cleanup of {datasetFolder} before processing geometry types.");
+            await Task.Delay(2000); // 2-second delay
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            await Task.Delay(500); // Short additional delay after GC
+            System.Diagnostics.Debug.WriteLine($"ExportByGeometryType: Post-additional GC delay for {datasetFolder}.");
+
             if (!Directory.Exists(datasetFolder))
             {
                 System.Diagnostics.Debug.WriteLine($"Creating dataset folder: {datasetFolder}");
@@ -320,7 +718,6 @@ namespace DuckDBGeoparquet.Services
             {
                 progress?.Report($"Processing {geomType} features for {theme}/{type}...");
 
-                // Build query that preserves all original columns including complex types
                 string filteredQuery = $@"
                     SELECT 
                         *,
@@ -328,21 +725,85 @@ namespace DuckDBGeoparquet.Services
                     FROM current_table
                     WHERE ST_GeometryType(geometry) = '{geomType}'";
 
-                // Get the descriptive geometry type (e.g., "points", "lines", "polygons")
                 string geometryDescription = GetDescriptiveGeometryType(geomType);
-
-                // Create a filename that includes theme, type and geometry for uniqueness
                 string fileName = $"{theme}_{type}_{geometryDescription}.parquet";
 
-                // Place all files in the same dataset folder to maintain schema compatibility
-                string parquetPath = Path.Combine(datasetFolder, fileName);
+                string finalParquetPath = Path.Combine(datasetFolder, fileName);
+                string tempFileName = $"temp_{Guid.NewGuid()}_{fileName}";
+                string tempParquetPath = Path.Combine(datasetFolder, tempFileName);
 
-                progress?.Report($"Exporting {fileName}...");
-                await ExportToGeoParquet(filteredQuery, parquetPath, fileName);
-
-                if (File.Exists(parquetPath))
+                if (!Directory.Exists(datasetFolder))
                 {
-                    var fileInfo = new FileInfo(parquetPath);
+                    System.Diagnostics.Debug.WriteLine($"Creating dataset folder: {datasetFolder}");
+                    Directory.CreateDirectory(datasetFolder);
+                }
+
+                bool exportToTempSuccess = false;
+                Exception lastExportToTempException = null;
+                progress?.Report($"Exporting data for {fileName} to temporary file...");
+                for (int exportAttempt = 0; exportAttempt < 3 && !exportToTempSuccess; exportAttempt++)
+                {
+                    try
+                    {
+                        // Use tempFileName for the layer name hint during temp export if needed by ExportToGeoParquet
+                        await ExportToGeoParquet(filteredQuery, tempParquetPath, tempFileName);
+                        exportToTempSuccess = true;
+                        System.Diagnostics.Debug.WriteLine($"Successfully exported to temporary file: {tempParquetPath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        lastExportToTempException = ex;
+                        System.Diagnostics.Debug.WriteLine($"Temporary export attempt {exportAttempt + 1} for {fileName} failed: {ex.Message}");
+                        if (File.Exists(tempParquetPath)) try { File.Delete(tempParquetPath); } catch (Exception iex) { System.Diagnostics.Debug.WriteLine($"Failed to delete incomplete temp file {tempParquetPath}: {iex.Message}"); }
+                        await Task.Delay(1000 * (exportAttempt + 1));
+                    }
+                }
+
+                if (!exportToTempSuccess)
+                {
+                    progress?.Report($"Failed to create temporary data for {fileName}. Last error: {lastExportToTempException?.Message}");
+                    System.Diagnostics.Debug.WriteLine($"All temporary export attempts for {fileName} failed. Last error: {lastExportToTempException?.Message}");
+                    continue;
+                }
+
+                if (File.Exists(finalParquetPath))
+                {
+                    progress?.Report($"Attempting to replace existing file: {fileName}...");
+                    System.Diagnostics.Debug.WriteLine($"Attempting to delete final target '{finalParquetPath}' before rename.");
+                    await DeleteParquetFileAsync(finalParquetPath);
+                }
+
+                bool renameSuccess = false;
+                if (File.Exists(tempParquetPath))
+                {
+                    if (!File.Exists(finalParquetPath))
+                    {
+                        try
+                        {
+                            File.Move(tempParquetPath, finalParquetPath);
+                            renameSuccess = true;
+                            System.Diagnostics.Debug.WriteLine($"Successfully moved temporary file to final path: {finalParquetPath}");
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Failed to move temporary file {tempParquetPath} to {finalParquetPath}: {ex.Message}");
+                            if (File.Exists(tempParquetPath)) try { File.Delete(tempParquetPath); } catch (Exception iex) { System.Diagnostics.Debug.WriteLine($"Failed to delete orphaned temp file {tempParquetPath} after move failed: {iex.Message}"); }
+                        }
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Final target file {finalParquetPath} still exists after delete attempts. Cannot rename temporary file. Cleaning up temp file.");
+                        if (File.Exists(tempParquetPath)) try { File.Delete(tempParquetPath); } catch (Exception iex) { System.Diagnostics.Debug.WriteLine($"Failed to delete orphaned temp file {tempParquetPath} because final target still exists: {iex.Message}"); }
+                    }
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"Temporary file {tempParquetPath} does not exist, cannot rename. This might indicate an issue with the temp export.");
+                }
+
+                if (renameSuccess && File.Exists(finalParquetPath))
+                {
+                    var fileInfo = new FileInfo(finalParquetPath);
                     if (fileInfo.Length > 0)
                     {
                         progress?.Report($"Adding {fileName} to map...");
@@ -351,10 +812,28 @@ namespace DuckDBGeoparquet.Services
                             var map = MapView.Active?.Map;
                             if (map != null)
                             {
-                                // Create the layer and get a reference to it
-                                var newLayer = LayerFactory.Instance.CreateLayer(new Uri(parquetPath), map);
+                                var newLayer = LayerFactory.Instance.CreateLayer(new Uri(finalParquetPath), map);
 
-                                // Check if this is an address layer and disable binning if needed
+                                if (newLayer is FeatureLayer featureLayerForCacheSettings)
+                                {
+                                    try
+                                    {
+                                        var layerDef = featureLayerForCacheSettings.GetDefinition() as CIMFeatureLayer;
+                                        if (layerDef != null)
+                                        {
+                                            System.Diagnostics.Debug.WriteLine($"Setting cache options for layer: {featureLayerForCacheSettings.Name}");
+                                            layerDef.DisplayCacheType = ArcGIS.Core.CIM.DisplayCacheType.None;
+                                            layerDef.FeatureCacheType = ArcGIS.Core.CIM.FeatureCacheType.None;
+                                            featureLayerForCacheSettings.SetDefinition(layerDef);
+                                            System.Diagnostics.Debug.WriteLine($"Successfully set DisplayCacheType and FeatureCacheType to None for {featureLayerForCacheSettings.Name}.");
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        System.Diagnostics.Debug.WriteLine($"Warning: Failed to set cache options for layer {featureLayerForCacheSettings.Name}: {ex.Message}");
+                                    }
+                                }
+
                                 if (newLayer is FeatureLayer featureLayer && type.Contains("address"))
                                 {
                                     try
@@ -369,13 +848,22 @@ namespace DuckDBGeoparquet.Services
                                     }
                                     catch (Exception ex)
                                     {
-                                        // Just log the error but don't fail the process
                                         System.Diagnostics.Debug.WriteLine($"Failed to disable binning: {ex.Message}");
                                     }
                                 }
                             }
                         });
                     }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Final parquet file {finalParquetPath} is empty or does not exist after rename. Layer not added.");
+                        progress?.Report($"Error: Final data file for {fileName} is invalid.");
+                    }
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"Failed to prepare final file {finalParquetPath}. Layer not added for {fileName}.");
+                    progress?.Report($"Failed to update data on map for {fileName}.");
                 }
             }
         }
