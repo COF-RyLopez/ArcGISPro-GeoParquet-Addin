@@ -1,12 +1,11 @@
 ﻿using System;
-using System.IO;
-using System.Threading.Tasks;
-using ArcGIS.Core.Geometry;
-using ArcGIS.Desktop.Core;
-using ArcGIS.Desktop.Core.Geoprocessing;
-using ArcGIS.Desktop.Framework.Threading.Tasks;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading.Tasks;
+using DuckDB.NET.Data;
 
 namespace DuckDBGeoparquet.Services
 {
@@ -16,290 +15,358 @@ namespace DuckDBGeoparquet.Services
     /// </summary>
     public class MfcUtility
     {
-        /// <summary>
-        /// Default base folder for Overture Maps MFC data
-        /// Uses the current ArcGIS Pro project folder if available, or falls back to Documents
-        /// </summary>
-        public static string DefaultMfcBasePath
+        // C# Models for MFC JSON Structure
+        public class MfcConnectionProps
         {
-            get
-            {
-                // Try to get the current project path first
-                try
-                {
-                    var project = Project.Current;
-                    if (project != null && !string.IsNullOrEmpty(project.Path))
-                    {
-                        string projectFolder = Path.GetDirectoryName(project.Path);
-                        return Path.Combine(projectFolder, "OvertureMapsMFC");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    // Log error and fall back to Documents folder
-                    System.Diagnostics.Debug.WriteLine($"Error getting project path: {ex.Message}");
-                }
-
-                // Fall back to Documents folder if no project is open
-                return Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                    "OvertureMapsMFC"
-                );
-            }
+            [JsonPropertyName("path")]
+            public string Path { get; set; }
         }
 
-        /// <summary>
-        /// Creates a properly structured folder hierarchy for Overture Maps data
-        /// based on the MFC requirements
-        /// </summary>
-        /// <param name="basePath">Base folder path (optional)</param>
-        /// <param name="releaseDate">Release date of Overture Maps data</param>
-        /// <returns>The root path of the created MFC structure</returns>
-        public static string CreateMfcFolderStructure(string basePath, string releaseDate)
+        public class MfcConnectionInfo // Renamed from MfcConnection to avoid conflict
         {
-            // Use default path if none specified
-            if (string.IsNullOrEmpty(basePath))
-            {
-                basePath = Path.Combine(DefaultMfcBasePath, "Data");
-            }
+            [JsonPropertyName("type")]
+            public string Type { get; set; } = "filesystem";
 
-            // Create the release folder path
-            string releasePath = Path.Combine(basePath, releaseDate);
-
-            // Create base directory if it doesn't exist
-            if (!Directory.Exists(basePath))
-            {
-                Directory.CreateDirectory(basePath);
-            }
-
-            // Create release directory if it doesn't exist
-            if (!Directory.Exists(releasePath))
-            {
-                Directory.CreateDirectory(releasePath);
-            }
-
-            return releasePath;
+            [JsonPropertyName("properties")]
+            public MfcConnectionProps Properties { get; set; }
         }
 
-        /// <summary>
-        /// Creates theme subfolders within the release folder
-        /// </summary>
-        /// <param name="releasePath">Path to the release folder</param>
-        /// <param name="themes">List of themes to create folders for</param>
-        public static void CreateThemeFolders(string releasePath, IEnumerable<string> themes)
+        public class MfcDatasetProperties
         {
-            foreach (var theme in themes)
-            {
-                string themePath = Path.Combine(releasePath, theme);
-                if (!Directory.Exists(themePath))
-                {
-                    Directory.CreateDirectory(themePath);
-                }
-            }
+            [JsonPropertyName("fileformat")]
+            public string FileFormat { get; set; } = "parquet";
         }
 
-        /// <summary>
-        /// Creates an MFC file for the specified release folder
-        /// </summary>
-        /// <param name="dataSourceFolder">Path to the folder containing the data files</param>
-        /// <param name="outputMfcPath">Path where the MFC file should be created</param>
-        /// <param name="isShared">Whether the connection should be shared (true) or standalone (false)</param>
-        /// <param name="geometryVisible">Whether geometry fields should be visible in analysis (default true)</param>
-        /// <param name="timeVisible">Whether time fields should be visible in analysis (default true)</param>
-        /// <returns>True if the MFC was created successfully</returns>
-        public static async Task<bool> CreateMfcAsync(
-            string dataSourceFolder,
-            string outputMfcPath,
-            bool isShared = true,
-            bool geometryVisible = true,
-            bool timeVisible = true)
+        public class MfcField
         {
+            [JsonPropertyName("name")]
+            public string Name { get; set; }
+
+            [JsonPropertyName("type")]
+            public string Type { get; set; }
+
+            // Only serialize 'visible' if it's false, as true is default implication by Esri's behavior
+            // However, spec says "All other fields are set to true by default."
+            // For clarity and to match user's example, let's explicitly serialize it.
+            // But, geometry field should be false.
+            [JsonPropertyName("visible")]
+            public bool Visible { get; set; } = true;
+        }
+
+        public class MfcGeometryField
+        {
+            [JsonPropertyName("name")]
+            public string Name { get; set; }
+
+            [JsonPropertyName("formats")]
+            public List<string> Formats { get; set; }
+        }
+
+        public class MfcSpatialReference
+        {
+            [JsonPropertyName("wkid")]
+            public int Wkid { get; set; }
+        }
+
+        public class MfcGeometry
+        {
+            [JsonPropertyName("geometryType")]
+            public string GeometryType { get; set; }
+
+            [JsonPropertyName("spatialReference")]
+            public MfcSpatialReference SpatialReference { get; set; }
+
+            [JsonPropertyName("fields")]
+            public List<MfcGeometryField> Fields { get; set; }
+        }
+
+        public class MfcDataset
+        {
+            [JsonPropertyName("name")]
+            public string Name { get; set; }
+
+            [JsonPropertyName("alias")]
+            public string Alias { get; set; }
+
+            [JsonPropertyName("properties")]
+            public MfcDatasetProperties Properties { get; set; } = new MfcDatasetProperties();
+
+            [JsonPropertyName("fields")]
+            public List<MfcField> FieldsList { get; set; } // Renamed to avoid conflict with MfcGeometry.Fields
+
+            [JsonPropertyName("geometry")]
+            public MfcGeometry Geometry { get; set; }
+        }
+
+        public class MfcRoot
+        {
+            [JsonPropertyName("connection")]
+            public MfcConnectionInfo Connection { get; set; } // Use renamed MfcConnectionInfo
+
+            [JsonPropertyName("datasets")]
+            public List<MfcDataset> Datasets { get; set; } = new List<MfcDataset>();
+        }
+
+        public static string SanitizeFileName(string fileName)
+        {
+            // Basic sanitization, can be expanded
+            return string.Join("_", fileName.Split(Path.GetInvalidFileNameChars()));
+        }
+
+        public static async Task<bool> GenerateMfcFileAsync(string sourceDataFolder, string outputMfcFilePath, string addinExecutingPath, Action<string> logAction = null)
+        {
+            logAction ??= Console.WriteLine; // Default logger
+
             try
             {
-                // Debug the data source folder structure first
-                System.Diagnostics.Debug.WriteLine($"Checking structure of data source folder: {dataSourceFolder}");
-                if (!Directory.Exists(dataSourceFolder))
-                {
-                    System.Diagnostics.Debug.WriteLine($"ERROR: Data source folder does not exist: {dataSourceFolder}");
-                    throw new DirectoryNotFoundException($"Data source folder does not exist: {dataSourceFolder}");
-                }
+                logAction($"Starting MFC generation. Source: {sourceDataFolder}, Output: {outputMfcFilePath}");
 
-                // Set geoprocessing environment to allow overwriting datasets
-                await QueuedTask.Run(() => {
-                    try
+                var mfcRoot = new MfcRoot
+                {
+                    Connection = new MfcConnectionInfo
                     {
-                        // Configure environment to allow overwriting of existing datasets
-                        var envSettings = Geoprocessing.MakeEnvironmentArray(overwriteoutput: true);
-                        System.Diagnostics.Debug.WriteLine("Set geoprocessing environment to allow overwriting");
+                        Properties = new MfcConnectionProps
+                        {
+                            // Ensure paths are stored with backslashes for Windows, which Pro expects for MFC paths.
+                            Path = sourceDataFolder.Replace('/', '\\')
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Warning: Could not set geoprocessing environment: {ex.Message}");
-                    }
-                });
+                };
 
-                // Log the contents of the data source folder to help debug
-                var files = Directory.GetFiles(dataSourceFolder, "*.parquet");
-                System.Diagnostics.Debug.WriteLine($"Found {files.Length} parquet files in data source folder");
-                foreach (var file in files.Take(5))  // Just log the first 5 to avoid too much output
+                var datasetDirectories = Directory.GetDirectories(sourceDataFolder);
+                if (!datasetDirectories.Any())
                 {
-                    System.Diagnostics.Debug.WriteLine($"Found file: {Path.GetFileName(file)}");
-                }
-                if (files.Length > 5)
-                {
-                    System.Diagnostics.Debug.WriteLine($"... and {files.Length - 5} more files");
-                }
-
-                // Get output folder and output name
-                string bdcLocation = Path.GetDirectoryName(outputMfcPath);
-                string bdcName = Path.GetFileNameWithoutExtension(outputMfcPath);
-
-                // Check and create output folder if needed
-                if (!Directory.Exists(bdcLocation))
-                {
-                    System.Diagnostics.Debug.WriteLine($"Creating output folder: {bdcLocation}");
-                    Directory.CreateDirectory(bdcLocation);
-                }
-
-                // Set geometry and time visibility strings
-                string visibleGeometry = geometryVisible ? "GEOMETRY_VISIBLE" : "GEOMETRY_NOT_VISIBLE";
-                string visibleTime = timeVisible ? "TIME_VISIBLE" : "TIME_NOT_VISIBLE";
-
-                // Connection type is always FOLDER for file-based connections
-                string connectionType = "FOLDER";
-
-                // Set shared mode
-                string sharedMode = isShared ? "SHARED" : "STANDALONE";
-
-                // Create parameters for the GP tool in exact order matching ArcGIS Pro 3.5:
-                // arcpy.gapro.CreateBDC(
-                //     bdc_location=r"C:\...\Connection",
-                //     bdc_name="OvertureMapsMFC",
-                //     connection_type="FOLDER",
-                //     data_source_folder=r"C:\...\Data\2025-04-23.0",
-                //     visible_geometry="GEOMETRY_VISIBLE",
-                //     visible_time="TIME_VISIBLE",
-                //     sharing_mode="SHARED"
-                // )
-                var parameters = Geoprocessing.MakeValueArray(
-                    bdcLocation,         // bdc_location
-                    bdcName,             // bdc_name
-                    connectionType,      // connection_type
-                    dataSourceFolder,    // data_source_folder
-                    visibleGeometry,     // visible_geometry
-                    visibleTime,         // visible_time
-                    sharedMode           // sharing_mode
-                );
-
-                // Log what we're doing
-                System.Diagnostics.Debug.WriteLine($"Creating MFC at {outputMfcPath}");
-                System.Diagnostics.Debug.WriteLine($"Source folder: {dataSourceFolder}");
-                System.Diagnostics.Debug.WriteLine($"Parameters: {bdcLocation}, {bdcName}, {connectionType}, {dataSourceFolder}, {visibleGeometry}, {visibleTime}, {sharedMode}");
-
-                // Try different geoprocessing tool names based on ArcGIS Pro version compatibility
-                var result = await QueuedTask.Run(() =>
-                {
-                    // Use only the official gapro.CreateBDC tool as documented in ArcGIS Pro 3.5
-                    System.Diagnostics.Debug.WriteLine("Executing gapro.CreateBDC");
-                    return Geoprocessing.ExecuteToolAsync(
-                        "gapro.CreateBDC",
-                        parameters,
-                        flags: ArcGIS.Desktop.Core.Geoprocessing.GPExecuteToolFlags.Default);
-                });
-
-                if (result.IsFailed)
-                {
-                    // Log the error messages from the result's Messages collection
-                    System.Diagnostics.Debug.WriteLine($"MFC creation failed");
-                    foreach (var msg in result.Messages)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"GP message: {msg.Text}");
-                    }
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine("MFC creation succeeded!");
-                }
-
-                return !result.IsFailed;
-            }
-            catch (Exception ex)
-            {
-                // Log the error
-                System.Diagnostics.Debug.WriteLine($"Error creating MFC: {ex.Message}");
-                System.Diagnostics.Debug.WriteLine($"Stack trace: {ex.StackTrace}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Sanitizes a string to be used as a file name by replacing invalid characters.
-        /// </summary>
-        /// <param name="name">The input string to sanitize.</param>
-        /// <returns>A sanitized string suitable for use as a file name.</returns>
-        public static string SanitizeFileName(string name)
-        {
-            if (string.IsNullOrEmpty(name))
-            {
-                return string.Empty;
-            }
-
-            string invalidChars = new string(Path.GetInvalidFileNameChars()) + new string(Path.GetInvalidPathChars());
-            string sanitizedName = name;
-
-            foreach (char c in invalidChars)
-            {
-                sanitizedName = sanitizedName.Replace(c.ToString(), "_");
-            }
-
-            // Additional common replacements if desired (e.g., spaces)
-            // sanitizedName = sanitizedName.Replace(" ", "_");
-
-            return sanitizedName;
-        }
-
-        /// <summary>
-        /// Refreshes an existing MFC to incorporate new or updated data
-        /// </summary>
-        /// <param name="mfcPath">Path to the existing MFC file</param>
-        /// <returns>True if the refresh was successful</returns>
-        public static async Task<bool> RefreshMfcAsync(string mfcPath)
-        {
-            try
-            {
-                // Create parameters for the GP tool
-                var parameters = Geoprocessing.MakeValueArray(mfcPath);
-
-                // Log what we're doing
-                System.Diagnostics.Debug.WriteLine($"Refreshing MFC at {mfcPath}");
-
-                // Execute the GP tool
-                var result = await QueuedTask.Run(() =>
-                    Geoprocessing.ExecuteToolAsync("RefreshMultifileFeatureConnection", parameters)
-                );
-
-                if (result.IsFailed)
-                {
-                    // Log the error messages from the result's Messages collection
-                    System.Diagnostics.Debug.WriteLine($"MFC refresh failed");
-                    foreach (var msg in result.Messages)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"GP message: {msg.Text}");
-                    }
+                    logAction($"No dataset subfolders found in {sourceDataFolder}. Cannot generate MFC.");
                     return false;
                 }
-                else
+
+                // Initialize DuckDB
+                // Connection string for an in-memory database
+                // Adding "duckdb_extensions" path for out-of-the-box experience on dev machine.
+                // string duckDbExtensionsFolder = Path.Combine(addinExecutingPath, "Extensions");
+                // string duckDbInitCommands = $"SET extension_directory='{duckDbExtensionsFolder.Replace('\\', '/')}'; LOAD spatial;";
+
+                // For bundled extensions, it's safer to handle potential path issues.
+                string extensionsPath = Path.Combine(addinExecutingPath, "Extensions");
+                string normalizedExtensionsPath = extensionsPath.Replace('\\', '/');
+
+
+                using (var duckDBConnection = new DuckDBConnection("DataSource=:memory:"))
                 {
-                    System.Diagnostics.Debug.WriteLine("MFC refresh succeeded!");
-                    return true;
+                    await duckDBConnection.OpenAsync();
+                    using (var cmd = duckDBConnection.CreateCommand())
+                    {
+                        // Try to load extensions
+                        try
+                        {
+                            cmd.CommandText = $"SET extension_directory='{normalizedExtensionsPath}'; LOAD spatial;";
+                            await cmd.ExecuteNonQueryAsync();
+                            logAction("DuckDB spatial extension loaded.");
+                        }
+                        catch (Exception extEx)
+                        {
+                            logAction($"Warning: Could not load DuckDB spatial extension from '{normalizedExtensionsPath}'. MFC generation might fail if Parquet files require it for inspection. Error: {extEx.Message}");
+                            // Attempting INSTALL as a fallback, though it might require internet/permissions
+                            try
+                            {
+                                cmd.CommandText = "INSTALL spatial; LOAD spatial;";
+                                await cmd.ExecuteNonQueryAsync();
+                                logAction("DuckDB spatial extension installed and loaded as fallback.");
+                            }
+                            catch (Exception installEx)
+                            {
+                                logAction($"Error: Failed to load/install DuckDB spatial extension. Error: {installEx.Message}. Please ensure 'spatial.duckdb_extension' is in '{extensionsPath}'.");
+                                return false;
+                            }
+                        }
+                    }
+
+                    foreach (var dirPath in datasetDirectories)
+                    {
+                        string datasetName = new DirectoryInfo(dirPath).Name;
+                        logAction($"Processing dataset: {datasetName}");
+
+                        var parquetFiles = Directory.GetFiles(dirPath, "*.parquet");
+                        if (!parquetFiles.Any())
+                        {
+                            logAction($"No .parquet files found in {dirPath} for dataset {datasetName}. Skipping.");
+                            continue;
+                        }
+
+                        string sampleParquetFile = parquetFiles.First().Replace('\\', '/'); // DuckDB prefers forward slashes
+                        logAction($"Using sample file for schema: {sampleParquetFile}");
+
+                        var dataset = new MfcDataset
+                        {
+                            Name = datasetName,
+                            Alias = datasetName, // Or make it more friendly if needed
+                            FieldsList = new List<MfcField>()
+                        };
+
+                        // Get Schema
+                        try
+                        {
+                            using (var cmd = duckDBConnection.CreateCommand())
+                            {
+                                // Ensure the Parquet path is correctly formatted for DuckDB
+                                cmd.CommandText = $"DESCRIBE SELECT * FROM read_parquet('{sampleParquetFile.Replace("'", "''")}') LIMIT 0;";
+                                using (var reader = await cmd.ExecuteReaderAsync())
+                                {
+                                    while (await reader.ReadAsync())
+                                    {
+                                        string colName = reader.GetString(0);
+                                        string duckDbType = reader.GetString(1).ToUpperInvariant();
+
+                                        string mfcType;
+                                        if (colName.Equals("geometry", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            mfcType = "Binary"; // Explicitly set geometry to Binary
+                                        }
+                                        else
+                                        {
+                                            mfcType = MapDuckDbTypeToMfcType(duckDbType, logAction);
+                                        }
+
+                                        dataset.FieldsList.Add(new MfcField
+                                        {
+                                            Name = colName,
+                                            Type = mfcType,
+                                            Visible = !colName.Equals("geometry", StringComparison.OrdinalIgnoreCase) // Geometry field not visible
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            logAction($"Error describing schema for {sampleParquetFile}: {ex.Message}");
+                            continue; // Skip this dataset
+                        }
+
+
+                        // Get Geometry Type
+                        string esriGeomType = "esriGeometryPoint"; // Default
+                        bool geomFound = false;
+                        if (dataset.FieldsList.Any(f => f.Name.Equals("geometry", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            try
+                            {
+                                using (var cmd = duckDBConnection.CreateCommand())
+                                {
+                                    cmd.CommandText = $"SELECT DISTINCT ST_GeometryType(geometry) FROM read_parquet('{sampleParquetFile.Replace("'", "''")}') WHERE geometry IS NOT NULL LIMIT 1;";
+                                    var duckGeomType = (await cmd.ExecuteScalarAsync())?.ToString();
+                                    if (!string.IsNullOrEmpty(duckGeomType))
+                                    {
+                                        esriGeomType = MapDuckDbGeomTypeToEsriGeomType(duckGeomType.ToUpperInvariant(), logAction);
+                                        geomFound = true;
+                                    }
+                                    else
+                                    {
+                                        logAction($"No geometry type found for {sampleParquetFile} via ST_GeometryType. Defaulting to Point.");
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                logAction($"Error getting geometry type for {sampleParquetFile}. Defaulting to Point. Error: {ex.Message}");
+                            }
+                        }
+                        else
+                        {
+                            logAction($"No 'geometry' column found for {sampleParquetFile}. Cannot determine geometry type.");
+                        }
+
+
+                        if (geomFound || dataset.FieldsList.Any(f => f.Name.Equals("geometry", StringComparison.OrdinalIgnoreCase))) // Proceed if geometry column exists even if type not detected
+                        {
+                            dataset.Geometry = new MfcGeometry
+                            {
+                                GeometryType = esriGeomType,
+                                SpatialReference = new MfcSpatialReference { Wkid = 4326 }, // Assume WGS84
+                                Fields = new List<MfcGeometryField>
+                                {
+                                    new MfcGeometryField { Name = "geometry", Formats = new List<string> { "WKB" } }
+                                }
+                            };
+                        }
+                        else
+                        {
+                            logAction($"Dataset {datasetName} has no geometry column or geometry type could not be determined. MFC will not have geometry section for it.");
+                        }
+                        mfcRoot.Datasets.Add(dataset);
+                    }
                 }
+
+                var options = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull // Or WhenWritingDefault if prefer
+                };
+                string jsonString = JsonSerializer.Serialize(mfcRoot, options);
+
+                await File.WriteAllTextAsync(outputMfcFilePath, jsonString);
+                logAction($"MFC file successfully generated at {outputMfcFilePath}");
+                return true;
             }
             catch (Exception ex)
             {
-                // Log the error
-                System.Diagnostics.Debug.WriteLine($"Error refreshing MFC: {ex.Message}");
+                logAction($"Error generating MFC file: {ex.Message}\n{ex.StackTrace}");
                 return false;
             }
         }
+
+        private static string MapDuckDbTypeToMfcType(string duckDbType, Action<string> logAction)
+        {
+            // Basic mapping, can be expanded
+            // Based on spec: Int8, Int16, Int32, Int64, Float32, Float64, String, Binary, Date
+            // DuckDB types: BIGINT, BOOLEAN, BLOB, DATE, DOUBLE, INTEGER, FLOAT, VARCHAR, TIMESTAMP, etc.
+            if (duckDbType.StartsWith("DECIMAL")) return "Float64"; // Or String if precision is critical
+            if (duckDbType.StartsWith("VARCHAR") || duckDbType.Contains("CHAR") || duckDbType == "TEXT") return "String";
+
+            switch (duckDbType)
+            {
+                case "BOOLEAN": return "String"; // MFC has no direct boolean field, represent as string "true"/"false" or 0/1 if preferred and mapped to Int
+                case "TINYINT": return "Int8"; // ArcGIS Pro shows as Short
+                case "SMALLINT": return "Int16"; // ArcGIS Pro shows as Short
+                case "INTEGER": return "Int32"; // ArcGIS Pro shows as Long
+                case "BIGINT": return "Int64"; // ArcGIS Pro shows as Double - this is per spec.
+                case "HUGEINT": return "String"; // Too large for standard types
+                case "FLOAT": return "Float32";
+                case "REAL": return "Float32";
+                case "DOUBLE": return "Float64";
+                case "DATE": return "Date";
+                case "TIMESTAMP": return "String"; // Or Int64 if epoch. MFC spec supports formatting for 'Date' type, but timestamp might be complex.
+                case "TIMESTAMPTZ": return "String";
+                case "TIME": return "String";
+                case "INTERVAL": return "String";
+                case "BLOB": return "Binary";
+                case "BYTEA": return "Binary";
+                // STRUCT, LIST, MAP - would need specific handling, for now map to string or skip
+                default:
+                    logAction($"Unmapped DuckDB type: {duckDbType}. Defaulting to String.");
+                    return "String";
+            }
+        }
+
+        private static string MapDuckDbGeomTypeToEsriGeomType(string duckDbGeomType, Action<string> logAction)
+        {
+            switch (duckDbGeomType)
+            {
+                case "POINT":
+                case "MULTIPOINT":
+                    return "esriGeometryPoint";
+                case "LINESTRING":
+                case "MULTILINESTRING":
+                    return "esriGeometryPolyline";
+                case "POLYGON":
+                case "MULTIPOLYGON":
+                    return "esriGeometryPolygon";
+                default:
+                    logAction($"Unmapped DuckDB geometry type: {duckDbGeomType}. Defaulting to esriGeometryPoint.");
+                    return "esriGeometryPoint";
+            }
+        }
+
+        // Removed the old CreateMfcAsync stub and RefreshMfcAsync method
     }
 }

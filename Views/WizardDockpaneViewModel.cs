@@ -22,6 +22,7 @@ using System.Text;
 using System.IO;
 using System.Windows.Forms;
 using System.Threading;
+using ArcGIS.Desktop.Core; // Added for Project.Current
 
 namespace DuckDBGeoparquet.Views
 {
@@ -104,6 +105,7 @@ namespace DuckDBGeoparquet.Views
         private DataProcessor _dataProcessor;
         private const string RELEASE_URL = "https://labs.overturemaps.org/data/releases.json";
         private const string S3_BASE_PATH = "s3://overturemaps-us-west-2/release";
+        private const string ADDIN_DATA_SUBFOLDER = "OvertureProAddinData"; // Define a subfolder name
 
         // Add CancellationTokenSource for cancelling operations
         private CancellationTokenSource _cts;
@@ -112,6 +114,36 @@ namespace DuckDBGeoparquet.Views
         {
             PropertyNameCaseInsensitive = true
         };
+
+        // Centralized logic for Default MFC Base Path
+        private static string DeterminedDefaultMfcBasePath
+        {
+            get
+            {
+                try
+                {
+                    var project = Project.Current;
+                    if (project != null && !string.IsNullOrEmpty(project.HomeFolderPath))
+                    {
+                        // Use the project's Home Folder Path
+                        return Path.Combine(project.HomeFolderPath, ADDIN_DATA_SUBFOLDER);
+                    }
+                    // Fallback if HomeFolderPath is not available but project path is (less ideal)
+                    else if (project != null && !string.IsNullOrEmpty(project.Path))
+                    {
+                        string projectDir = Path.GetDirectoryName(project.Path);
+                        if (!string.IsNullOrEmpty(projectDir))
+                            return Path.Combine(projectDir, ADDIN_DATA_SUBFOLDER);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Error getting project home/path for DefaultMfcBasePath: {ex.Message}");
+                }
+                // Fallback to MyDocuments if project path cannot be determined
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), ADDIN_DATA_SUBFOLDER);
+            }
+        }
 
         // Store original Overture S3 theme structure
         private readonly Dictionary<string, string> _overtureS3ThemeTypes = new()
@@ -155,14 +187,40 @@ namespace DuckDBGeoparquet.Views
             { "transportation", "Transportation networks including roads, rail, paths, and other ways." }
         };
 
+        // IMPORTANT: Review and adjust these estimates for accuracy.
+        // These are now based on specific "ActualType" rather than parent themes.
         private readonly Dictionary<string, int> ThemeFeatureEstimates = new()
         {
-            { "addresses", 500 },
-            { "base", 300 },
-            { "buildings", 800 },
-            { "divisions", 100 },
-            { "places", 250 },
-            { "transportation", 750 }
+            // Addresses
+            { "address", 500 }, // Previously under "addresses"
+
+            // Base Sub-types
+            { "land", 100 },
+            { "water", 50 },
+            { "land_use", 40 },
+            { "land_cover", 40 },
+            { "bathymetry", 20 },
+            { "infrastructure", 50 },
+            // Total for old "base" was 300, current sum is 300
+
+            // Buildings Sub-types
+            { "building", 700 },
+            { "building_part", 100 },
+            // Total for old "buildings" was 800, current sum is 800
+
+            // Divisions Sub-types
+            { "division", 30 },
+            { "division_boundary", 40 },
+            { "division_area", 30 },
+            // Total for old "divisions" was 100, current sum is 100
+
+            // Places
+            { "place", 250 }, // Previously under "places"
+
+            // Transportation Sub-types
+            { "connector", 150 },
+            { "segment", 600 }
+            // Total for old "transportation" was 750, current sum is 750
         };
 
         private CustomExtentTool _customExtentTool;
@@ -266,7 +324,7 @@ namespace DuckDBGeoparquet.Views
             LogOutputText = LogOutput.ToString(); // Initialize LogOutputText
 
             // Set default paths immediately, they might be updated by InitializeAsync if LatestRelease changes
-            var defaultBasePath = Services.MfcUtility.DefaultMfcBasePath;
+            var defaultBasePath = DeterminedDefaultMfcBasePath;
             DataOutputPath = Path.Combine(defaultBasePath, "Data", LatestRelease ?? "latest");
             MfcOutputPath = Path.Combine(defaultBasePath, "Connections");
             NotifyPropertyChanged(nameof(DataOutputPath)); // Notify for initial value
@@ -280,7 +338,7 @@ namespace DuckDBGeoparquet.Views
             _ = InitializeAsync(); // This will call InitializeThemes and update release-specific paths
         }
 
-        private async Task InitializeAsync()
+        protected override async Task InitializeAsync()
         {
             try
             {
@@ -294,7 +352,7 @@ namespace DuckDBGeoparquet.Views
                 InitializeThemes(); // Populate Themes collection
                 AddToLog("Async Initialization: Themes initialized");
 
-                var defaultBasePath = Services.MfcUtility.DefaultMfcBasePath;
+                var defaultBasePath = DeterminedDefaultMfcBasePath;
                 DataOutputPath = Path.Combine(defaultBasePath, "Data", LatestRelease ?? "latest");
                 NotifyPropertyChanged(nameof(DataOutputPath));
                 AddToLog($"Async Initialization: DataOutputPath updated to: {DataOutputPath}");
@@ -498,13 +556,6 @@ namespace DuckDBGeoparquet.Views
             set => SetProperty(ref _createMfc, value);
         }
 
-        private bool _useSpatialIndex = true;
-        public bool UseSpatialIndex
-        {
-            get => _useSpatialIndex;
-            set => SetProperty(ref _useSpatialIndex, value);
-        }
-
         private string _mfcOutputPath;
         public string MfcOutputPath
         {
@@ -592,8 +643,6 @@ namespace DuckDBGeoparquet.Views
         private void UpdateThemePreview()
         {
             string description = "Select a theme or sub-theme to see details.";
-            string features;
-            string size;
             string icon = "GlobeIcon"; // Default
 
             var itemForPreview = SelectedItemForPreview; // The item currently focused in TreeView
@@ -626,16 +675,16 @@ namespace DuckDBGeoparquet.Views
 
                 foreach (var selectedLeaf in allSelectedLeaves)
                 {
-                    // Find the original parent theme estimate
-                    if (ThemeFeatureEstimates.TryGetValue(selectedLeaf.ParentThemeForS3, out int parentEstimate))
+                    // Use the ActualType of the leaf item to get its specific estimate
+                    if (ThemeFeatureEstimates.TryGetValue(selectedLeaf.ActualType, out int itemEstimate))
                     {
-                        // Find the parent theme item to count its sub-items for pro-rata calculation
-                        var parentThemeItem = Themes.FirstOrDefault(p => p.ActualType == selectedLeaf.ParentThemeForS3);
-                        int numberOfSubTypesInParent = parentThemeItem != null && parentThemeItem.IsExpandable ? parentThemeItem.SubItems.Count : 1;
-                        if (numberOfSubTypesInParent == 0) numberOfSubTypesInParent = 1; // Avoid division by zero for leaf parents
-
-                        totalEstimatedFeatures += parentEstimate / numberOfSubTypesInParent; // Pro-rata
-                        totalSizeInKb += (parentEstimate / numberOfSubTypesInParent) * 2.5; // Assuming 2.5KB per feature
+                        totalEstimatedFeatures += itemEstimate;
+                        totalSizeInKb += itemEstimate * 2.5; // Assuming 2.5KB per feature
+                    }
+                    else
+                    {
+                        // Optional: Log if an estimate is missing for an actual type
+                        System.Diagnostics.Debug.WriteLine($"Warning: No feature estimate found for ActualType: {selectedLeaf.ActualType}");
                     }
                 }
                 EstimatedFeatures = $"{totalEstimatedFeatures} total per sq km (approx.)";
@@ -643,40 +692,52 @@ namespace DuckDBGeoparquet.Views
                     ? $"{totalSizeInKb / 1024:F1} MB total per sq km (approx.)"
                     : $"{totalSizeInKb:F0} KB total per sq km (approx.)";
 
-                if (allSelectedLeaves.Count == 1 && itemForPreview != null) // If only one item is selected, use its specific (pro-rata) estimate for display
+                if (allSelectedLeaves.Count == 1 && itemForPreview != null && itemForPreview == allSelectedLeaves.First()) // If only one item is selected, and it's the one being previewed
                 {
-                    if (ThemeFeatureEstimates.TryGetValue(itemForPreview.ParentThemeForS3, out int parentEst))
+                    // Use the ActualType of the itemForPreview to get its specific estimate
+                    if (ThemeFeatureEstimates.TryGetValue(itemForPreview.ActualType, out int itemFeatures))
                     {
-                        var parentThemeItem = Themes.FirstOrDefault(p => p.ActualType == itemForPreview.ParentThemeForS3);
-                        int numSubTypes = parentThemeItem != null && parentThemeItem.IsExpandable ? parentThemeItem.SubItems.Count : 1;
-                        if (numSubTypes == 0) numSubTypes = 1;
-
-                        int itemFeatures = parentEst / numSubTypes;
                         double itemSizeKb = itemFeatures * 2.5;
-                        // This overrides the "total" if only one is selected and it matches the preview item
                         EstimatedFeatures = $"{itemFeatures} per sq km (approx. for {itemForPreview.DisplayName})";
                         EstimatedSize = itemSizeKb > 1024
                             ? $"{itemSizeKb / 1024:F1} MB per sq km (approx. for {itemForPreview.DisplayName})"
                             : $"{itemSizeKb:F0} KB per sq km (approx. for {itemForPreview.DisplayName})";
                     }
+                    else
+                    {
+                        // Fallback if specific estimate is missing for the single selected item
+                        EstimatedFeatures = $"-- per sq km (approx. for {itemForPreview.DisplayName})";
+                        EstimatedSize = $"-- MB/KB per sq km (approx. for {itemForPreview.DisplayName})";
+                        System.Diagnostics.Debug.WriteLine($"Warning: No feature estimate for single selected ActualType: {itemForPreview.ActualType}");
+                    }
                 }
             }
-            else
+            else // No items are selected
             {
-                // If nothing is selected, but an item is focused for preview
-                if (itemForPreview != null && ThemeFeatureEstimates.TryGetValue(itemForPreview.ParentThemeForS3, out int parentEst))
+                // If nothing is selected, but an item is focused for preview, show its individual estimate
+                if (itemForPreview != null && itemForPreview.IsSelectable) // Check if the preview item is a selectable leaf
                 {
-                    var parentThemeItem = Themes.FirstOrDefault(p => p.ActualType == itemForPreview.ParentThemeForS3);
-                    int numSubTypes = parentThemeItem != null && parentThemeItem.IsExpandable ? parentThemeItem.SubItems.Count : 1;
-                    if (numSubTypes == 0) numSubTypes = 1;
-                    int itemFeat = parentEst / numSubTypes;
-                    double itemSzKb = itemFeat * 2.5;
-
-                    EstimatedFeatures = $"{itemFeat} per sq km (approx. for {itemForPreview.DisplayName})";
-                    EstimatedSize = itemSzKb > 1024
-                        ? $"{itemSzKb / 1024:F1} MB per sq km (approx. for {itemForPreview.DisplayName})"
-                        : $"{itemSzKb:F0} KB per sq km (approx. for {itemForPreview.DisplayName})";
-
+                    // Use the ActualType of the itemForPreview to get its specific estimate
+                    if (ThemeFeatureEstimates.TryGetValue(itemForPreview.ActualType, out int itemFeat))
+                    {
+                        double itemSzKb = itemFeat * 2.5;
+                        EstimatedFeatures = $"{itemFeat} per sq km (approx. for {itemForPreview.DisplayName})";
+                        EstimatedSize = itemSzKb > 1024
+                            ? $"{itemSzKb / 1024:F1} MB per sq km (approx. for {itemForPreview.DisplayName})"
+                            : $"{itemSzKb:F0} KB per sq km (approx. for {itemForPreview.DisplayName})";
+                    }
+                    else
+                    {
+                        // Fallback if specific estimate is missing for the focused item
+                        EstimatedFeatures = $"-- per sq km (approx. for {itemForPreview.DisplayName})";
+                        EstimatedSize = $"-- MB/KB per sq km (approx. for {itemForPreview.DisplayName})";
+                        System.Diagnostics.Debug.WriteLine($"Warning: No feature estimate for focused ActualType: {itemForPreview.ActualType}");
+                    }
+                }
+                else // Nothing selected and no specific leaf item focused for preview
+                {
+                    EstimatedFeatures = "--";
+                    EstimatedSize = "--";
                 }
             }
 
@@ -859,23 +920,20 @@ namespace DuckDBGeoparquet.Views
         {
             var dialog = new System.Windows.Forms.FolderBrowserDialog
             {
-                Description = "Select base folder for Overture MFC structure",
+                Description = "Select folder for MFC (.mfc) file",
                 UseDescriptionForTitle = true,
-                SelectedPath = MfcOutputPath ?? Services.MfcUtility.DefaultMfcBasePath
+                SelectedPath = MfcOutputPath ?? Path.Combine(DeterminedDefaultMfcBasePath, "Connections")
             };
 
             var result = dialog.ShowDialog();
             if (result == System.Windows.Forms.DialogResult.OK)
             {
-                // Set the MfcOutputPath to the selected base folder
-                // The Connection and Data subfolders will be created automatically during processing
+                // Set the MfcOutputPath to the folder where the .mfc file itself will be saved.
                 MfcOutputPath = dialog.SelectedPath;
 
                 // Display helpful information to the user
-                AddToLog($"Selected base folder: {MfcOutputPath}");
-                AddToLog("The following structure will be created:");
-                AddToLog($"- {Path.Combine(MfcOutputPath, "Connection")} (for the MFC file)");
-                AddToLog($"- {Path.Combine(MfcOutputPath, "Data", LatestRelease)} (for the data files)");
+                AddToLog($"MFC connection file will be saved in: {MfcOutputPath}");
+                AddToLog($"Ensure your GeoParquet data files are located in: {DataOutputPath}");
             }
         }
 
@@ -885,7 +943,7 @@ namespace DuckDBGeoparquet.Views
             {
                 Description = "Select folder for GeoParquet data files",
                 UseDescriptionForTitle = true,
-                SelectedPath = DataOutputPath ?? Path.Combine(Services.MfcUtility.DefaultMfcBasePath, "Data")
+                SelectedPath = DataOutputPath ?? Path.Combine(DeterminedDefaultMfcBasePath, "Data")
             };
 
             var result = dialog.ShowDialog();
@@ -902,7 +960,7 @@ namespace DuckDBGeoparquet.Views
             {
                 Description = "Select folder containing GeoParquet data files",
                 UseDescriptionForTitle = true,
-                SelectedPath = CustomDataFolderPath ?? DataOutputPath ?? Path.Combine(Services.MfcUtility.DefaultMfcBasePath, "Data")
+                SelectedPath = CustomDataFolderPath ?? DataOutputPath ?? Path.Combine(DeterminedDefaultMfcBasePath, "Data")
             };
 
             var result = dialog.ShowDialog();
@@ -1009,21 +1067,12 @@ namespace DuckDBGeoparquet.Views
                 {
                     foreach (var selectedItem in selectedLeafItems) // Check based on what will be loaded
                     {
-                        // Construct a potential path segment for this item's data
-                        // This check might need refinement based on how DataProcessor saves files.
-                        // For now, just checking the parent theme folder might be an approximation.
-                        var themeSpecificDataPath = Path.Combine(dataPath, selectedItem.ParentThemeForS3, selectedItem.ActualType); // More specific check
-                        if (Directory.Exists(themeSpecificDataPath) && Directory.EnumerateFiles(themeSpecificDataPath, "*.parquet").Any())
+                        // New path structure: DataOutputPath / {ActualS3Type} / *.parquet
+                        var actualTypeSpecificDataPath = Path.Combine(dataPath, selectedItem.ActualType);
+                        if (Directory.Exists(actualTypeSpecificDataPath) && Directory.EnumerateFiles(actualTypeSpecificDataPath, "*.parquet").Any())
                         {
                             existingDataFound = true;
-                            break;
-                        }
-                        // Fallback to checking parent theme level if above is too strict or structure varies
-                        var parentThemeFolder = Path.Combine(dataPath, selectedItem.ParentThemeForS3);
-                        if (Directory.Exists(parentThemeFolder) && Directory.EnumerateDirectories(parentThemeFolder).Any(dir => Path.GetFileName(dir) == selectedItem.ActualType))
-                        {
-                            existingDataFound = true;
-                            break;
+                            break; // Found data for at least one type, no need to check further
                         }
                     }
                 }
@@ -1110,7 +1159,7 @@ namespace DuckDBGeoparquet.Views
                     AddToLog($"Loading from S3 path: {s3Path}");
                     System.Diagnostics.Debug.WriteLine($"Loading from S3 path: {s3Path}");
 
-                    bool ingestSuccess = await _dataProcessor.IngestFileAsync(s3Path, extent);
+                    bool ingestSuccess = await _dataProcessor.IngestFileAsync(s3Path, extent, actualS3Type);
                     if (!ingestSuccess)
                     {
                         AddToLog($"Failed to ingest data from {s3Path}");
@@ -1135,7 +1184,7 @@ namespace DuckDBGeoparquet.Views
                         // ProgressValue update based on processedDataTypes / totalDataTypesToProcess
                     });
 
-                    await _dataProcessor.CreateFeatureLayerAsync(featureLayerName, LatestRelease, progressReporter, parentS3Theme, actualS3Type);
+                    await _dataProcessor.CreateFeatureLayerAsync(featureLayerName, progressReporter, parentS3Theme, actualS3Type, DataOutputPath);
 
                     processedDataTypes++;
                     ProgressValue = (processedDataTypes * 100.0) / totalDataTypesToProcess;
@@ -1336,19 +1385,19 @@ namespace DuckDBGeoparquet.Views
                 AddToLog($"MFC source folder: {dataFolder}");
                 AddToLog($"MFC output location: {connectionFolder}");
                 AddToLog($"MFC name: {mfcName}");
-                AddToLog($"Spatial indexing: {(UseSpatialIndex ? "Enabled" : "Disabled")}");
-                AddToLog($"Connection type: {(IsSharedMfc ? "Shared" : "Standalone")}");
 
                 ProgressValue = 30; // Show progress starting
 
                 try
                 {
-                    bool success = await Services.MfcUtility.CreateMfcAsync(
+                    // Get the add-in's execution path to help locate bundled DuckDB extensions
+                    string addinExecutionPath = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+
+                    bool success = await Services.MfcUtility.GenerateMfcFileAsync(
                         dataFolder,         // Source folder with the properly structured datasets
                         mfcFilePath,        // Full path to the output MFC file
-                        IsSharedMfc,        // Whether to create a shared connection
-                        true,               // Always keep geometry fields visible
-                        true                // Always keep time fields visible
+                        addinExecutionPath, // Path to the add-in's executing directory
+                        (logMessage) => AddToLog(logMessage) // Pass the AddToLog method for logging within the utility
                     );
 
                     // Check for cancellation
@@ -1581,7 +1630,7 @@ namespace DuckDBGeoparquet.Views
             CustomExtent = null;
 
             // Reset data and MFC options
-            var defaultBasePath = Services.MfcUtility.DefaultMfcBasePath;
+            var defaultBasePath = DeterminedDefaultMfcBasePath;
 
             // Reset data options
             DataOutputPath = Path.Combine(
@@ -1591,7 +1640,6 @@ namespace DuckDBGeoparquet.Views
             );
 
             // Reset MFC options
-            UseSpatialIndex = true;
             IsSharedMfc = true;
             MfcOutputPath = Path.Combine(
                 defaultBasePath,

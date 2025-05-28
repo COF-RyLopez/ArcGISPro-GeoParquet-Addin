@@ -30,9 +30,6 @@ namespace DuckDBGeoparquet.Services
         // Add static readonly field for the theme-type separator
         private static readonly string[] THEME_TYPE_SEPARATOR = [" - "];
 
-        // Property to hold the output folder for the session.
-        private string _outputFolder;
-
         // Add a class-level field to store the current extent
         private dynamic _currentExtent;
 
@@ -43,47 +40,6 @@ namespace DuckDBGeoparquet.Services
         public DataProcessor()
         {
             _connection = new DuckDBConnection("DataSource=:memory:");
-        }
-
-        /// <summary>
-        /// Gets (or creates) a single output folder per session.
-        /// The folder will be integrated with the MFC structure.
-        /// </summary>
-        /// <param name="releaseVersion">The release version string.</param>
-        /// <returns>The folder path.</returns>
-        private string GetOutputFolder(string releaseVersion)
-        {
-            if (string.IsNullOrEmpty(_outputFolder))
-            {
-                // Use the MFC folder structure for consistency
-                string mfcBasePath = MfcUtility.DefaultMfcBasePath;
-                string dataFolder = Path.Combine(mfcBasePath, "Data");
-                _outputFolder = Path.Combine(dataFolder, releaseVersion); // This is the base release folder
-
-                System.Diagnostics.Debug.WriteLine($"Base output folder for release set to: {_outputFolder}");
-
-                if (!Directory.Exists(dataFolder))
-                {
-                    Directory.CreateDirectory(dataFolder);
-                    System.Diagnostics.Debug.WriteLine($"Created Data folder: {dataFolder}");
-                }
-
-                if (!Directory.Exists(_outputFolder))
-                {
-                    Directory.CreateDirectory(_outputFolder);
-                    System.Diagnostics.Debug.WriteLine($"Created release folder: {_outputFolder}");
-                }
-
-                // For MFC compatibility in ArcGIS Pro 3.5, we also need to create the Connection folder
-                string connectionFolder = Path.Combine(mfcBasePath, "Connection");
-                if (!Directory.Exists(connectionFolder))
-                {
-                    Directory.CreateDirectory(connectionFolder);
-                    System.Diagnostics.Debug.WriteLine($"Created Connection folder: {connectionFolder}");
-                }
-            }
-            // The specific theme/type subfolder will be determined later when CreateFeatureLayerAsync is called
-            return _outputFolder;
         }
 
         public async Task InitializeDuckDBAsync()
@@ -174,16 +130,18 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        public async Task<bool> IngestFileAsync(string s3Path, dynamic extent = null)
+        public async Task<bool> IngestFileAsync(string s3Path, dynamic extent = null, string actualS3Type = null)
         {
             try
             {
                 // Store the extent for later use in CreateFeatureLayerAsync
                 _currentExtent = extent;
 
-                // Clear previous theme context, it will be set by CreateFeatureLayerAsync
+                // Store the actualS3Type for context
+                _currentActualS3Type = actualS3Type;
+
+                // Clear previous parent theme context, it will be set by CreateFeatureLayerAsync if needed
                 _currentParentS3Theme = null;
-                _currentActualS3Type = null;
 
                 // The following call to MakeEnvironmentArray was not directly used by a GP tool in this method.
                 // Overwrite for deletion is handled in DeleteParquetFileAsync if needed elsewhere.
@@ -612,32 +570,45 @@ namespace DuckDBGeoparquet.Services
         /// <param name="layerNameBase">Base name for the layer.</param>
         /// <param name="releaseVersion">The release version (used to name the output folder).</param>
         /// <param name="progress">Progress reporter.</param>
-        public async Task CreateFeatureLayerAsync(string layerNameBase, string releaseVersion, IProgress<string> progress = null, string parentS3Theme = null, string actualS3Type = null)
+        /// <param name="parentS3Theme">The S3 parent theme key (e.g., 'buildings').</param>
+        /// <param name="actualS3Type">The specific S3 data type (e.g., 'building', 'building_part').</param>
+        /// <param name="dataOutputPathRoot">The root directory where data for the current release is stored (e.g., C:\...\ProjectHome\OvertureProAddinData\Data\{ReleaseVersion})</param>
+        public async Task CreateFeatureLayerAsync(string layerNameBase, IProgress<string> progress, string parentS3Theme, string actualS3Type, string dataOutputPathRoot)
         {
-            System.Diagnostics.Debug.WriteLine($"CreateFeatureLayerAsync called for: {layerNameBase}, Release: {releaseVersion}, ParentS3Theme: {parentS3Theme}, ActualS3Type: {actualS3Type}");
+            System.Diagnostics.Debug.WriteLine($"CreateFeatureLayerAsync called for: {layerNameBase}, ParentS3Theme: {parentS3Theme}, ActualS3Type: {actualS3Type}, DataOutputPathRoot: {dataOutputPathRoot}");
             progress?.Report($"Starting layer creation for {layerNameBase}");
 
             if (string.IsNullOrEmpty(parentS3Theme) || string.IsNullOrEmpty(actualS3Type))
             {
                 progress?.Report("Error: Parent theme or actual type not provided. Cannot create feature layer.");
                 System.Diagnostics.Debug.WriteLine("Error: ParentS3Theme or ActualS3Type is null or empty. Aborting CreateFeatureLayerAsync.");
-                // Consider throwing an exception or returning a status
+                return;
+            }
+            if (string.IsNullOrEmpty(dataOutputPathRoot))
+            {
+                progress?.Report("Error: Data output path root not provided. Cannot create feature layer.");
+                System.Diagnostics.Debug.WriteLine("Error: dataOutputPathRoot is null or empty. Aborting CreateFeatureLayerAsync.");
                 return;
             }
 
-            // Store the theme context for this operation
+            // Store the theme context for this operation (might be used for layer naming or other non-path logic)
             _currentParentS3Theme = parentS3Theme;
             _currentActualS3Type = actualS3Type;
 
-            // Get the base output folder for the release
-            string baseReleaseFolder = GetOutputFolder(releaseVersion);
+            // Define the specific output folder for this actualS3Type directly under the dataOutputPathRoot
+            // Path structure: dataOutputPathRoot / actualS3Type / *.parquet
+            string themeTypeSpecificFolder = Path.Combine(dataOutputPathRoot, actualS3Type);
 
-            // Define the specific output folder for this theme/type
-            string themeTypeSpecificFolder = Path.Combine(baseReleaseFolder, parentS3Theme, actualS3Type);
+            // Ensure the directory structure exists up to the actualS3Type level
+            if (!Directory.Exists(dataOutputPathRoot))
+            {
+                System.Diagnostics.Debug.WriteLine($"Creating base data output path root: {dataOutputPathRoot}");
+                Directory.CreateDirectory(dataOutputPathRoot); // Create the ...\Data\{Release} folder if it doesn't exist
+            }
             if (!Directory.Exists(themeTypeSpecificFolder))
             {
                 System.Diagnostics.Debug.WriteLine($"Creating theme-specific output folder: {themeTypeSpecificFolder}");
-                Directory.CreateDirectory(themeTypeSpecificFolder);
+                Directory.CreateDirectory(themeTypeSpecificFolder); // Create the ...\Data\{Release}\actualS3Type folder
             }
 
             System.Diagnostics.Debug.WriteLine($"Theme-specific output folder set to: {themeTypeSpecificFolder}");
