@@ -28,17 +28,19 @@ namespace DuckDBGeoparquet.Views
     // Selectable theme item class for binding
     public class SelectableThemeItem : INotifyPropertyChanged
     {
-        private string _name;
+        private string _displayName;
         private bool _isSelected;
+        private string _actualType;
+        private string _parentThemeForS3;
 
-        public string Name
+        public string DisplayName
         {
-            get => _name;
+            get => _displayName;
             set
             {
-                if (_name != value)
+                if (_displayName != value)
                 {
-                    _name = value;
+                    _displayName = value;
                     OnPropertyChanged();
                 }
             }
@@ -49,7 +51,7 @@ namespace DuckDBGeoparquet.Views
             get => _isSelected;
             set
             {
-                if (_isSelected != value)
+                if (_isSelected != value && IsSelectable) // Only allow change if selectable
                 {
                     _isSelected = value;
                     OnPropertyChanged();
@@ -57,6 +59,22 @@ namespace DuckDBGeoparquet.Views
                 }
             }
         }
+
+        public string ActualType
+        {
+            get => _actualType;
+            set => _actualType = value;
+        }
+
+        public string ParentThemeForS3
+        {
+            get => _parentThemeForS3;
+            private set => _parentThemeForS3 = value;
+        }
+
+        public ObservableCollection<SelectableThemeItem> SubItems { get; }
+        public bool IsExpandable => SubItems.Any();
+        public bool IsSelectable { get; } // True if it's a leaf node
 
         public event EventHandler SelectionChanged;
         public event PropertyChangedEventHandler PropertyChanged;
@@ -66,17 +84,24 @@ namespace DuckDBGeoparquet.Views
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
 
-        public SelectableThemeItem(string name, bool isSelected = false)
+        public SelectableThemeItem(string displayName, string actualType, string parentThemeForS3, bool isLeafNode = true)
         {
-            _name = name;
-            _isSelected = isSelected;
+            DisplayName = displayName;
+            ActualType = actualType;
+            ParentThemeForS3 = parentThemeForS3;
+            SubItems = new ObservableCollection<SelectableThemeItem>();
+            IsSelectable = isLeafNode; // Leaf nodes are selectable
+            if (!isLeafNode)
+            {
+                _isSelected = false; // Non-selectable parents are never "selected" in their own right
+            }
         }
     }
 
     internal class WizardDockpaneViewModel : DockPane
     {
         private const string _dockPaneID = "DuckDBGeoparquet_Views_WizardDockpane";
-        private readonly DataProcessor _dataProcessor;
+        private DataProcessor _dataProcessor;
         private const string RELEASE_URL = "https://labs.overturemaps.org/data/releases.json";
         private const string S3_BASE_PATH = "s3://overturemaps-us-west-2/release";
 
@@ -88,14 +113,26 @@ namespace DuckDBGeoparquet.Views
             PropertyNameCaseInsensitive = true
         };
 
-        private readonly Dictionary<string, string> ThemeTypes = new()
+        // Store original Overture S3 theme structure
+        private readonly Dictionary<string, string> _overtureS3ThemeTypes = new()
         {
             { "addresses", "address" },
-            { "base", "land,water,land_use,land_cover,bathymetry,infrastructure" }, // base has multiple types
+            { "base", "land,water,land_use,land_cover,bathymetry,infrastructure" },
             { "buildings", "building,building_part" },
             { "divisions", "division,division_boundary,division_area" },
             { "places", "place" },
             { "transportation", "connector,segment" }
+        };
+
+        // Friendly display names for parent themes
+        private readonly Dictionary<string, string> _parentThemeDisplayNames = new()
+        {
+            { "addresses", "Addresses" },
+            { "base", "Base Layers" },
+            { "buildings", "Buildings" },
+            { "divisions", "Administrative Divisions" },
+            { "places", "Places of Interest" },
+            { "transportation", "Transportation Networks" }
         };
 
         private readonly Dictionary<string, string> ThemeIcons = new()
@@ -130,171 +167,152 @@ namespace DuckDBGeoparquet.Views
 
         private CustomExtentTool _customExtentTool;
 
-        protected WizardDockpaneViewModel()
+        // Property for the TreeView to bind its selected item for preview
+        private SelectableThemeItem _selectedItemForPreview;
+        public SelectableThemeItem SelectedItemForPreview
         {
-            System.Diagnostics.Debug.WriteLine("Initializing WizardDockpaneViewModel");
-
-            _dataProcessor = new();
-
-            LoadDataCommand = new RelayCommand(
-                async () => await LoadOvertureDataAsync(),
-                () => SelectedThemes.Count > 0
-            );
-
-            ShowThemeInfoCommand = new RelayCommand(
-                () => ShowThemeInfo(),
-                () => !string.IsNullOrEmpty(SelectedTheme)
-            );
-
-            SetCustomExtentCommand = new RelayCommand(
-                () => SetCustomExtent(),
-                () => UseCustomExtent
-            );
-
-            BrowseMfcLocationCommand = new RelayCommand(
-                () => BrowseMfcLocation()
-            );
-
-            BrowseDataLocationCommand = new RelayCommand(
-                () => BrowseDataLocation()
-            );
-
-            BrowseCustomDataFolderCommand = new RelayCommand(
-                () => BrowseCustomDataFolder()
-            );
-
-            CreateMfcCommand = new RelayCommand(
-                async () => await CreateMfcAsync(),
-                () => (UsePreviouslyLoadedData && !string.IsNullOrEmpty(_lastLoadedDataPath)) ||
-                      (UseCustomDataFolder && !string.IsNullOrEmpty(CustomDataFolderPath))
-            );
-
-            GoToCreateMfcTabCommand = new RelayCommand(
-                () => ShowCreateMfcTab(),
-                () => true // Always enabled
-            );
-
-            CancelCommand = new RelayCommand(
-                () =>
+            get => _selectedItemForPreview;
+            set
+            {
+                SetProperty(ref _selectedItemForPreview, value);
+                // Update preview panel when the focused item in TreeView changes
+                if (value != null)
                 {
-                    // Cancel any ongoing operations
-                    if (_cts != null && !_cts.IsCancellationRequested)
-                    {
-                        AddToLog("Operation cancelled by user");
-                        System.Diagnostics.Debug.WriteLine("Operation cancelled by user");
-                        _cts.Cancel();
-                    }
-
-                    // Reset the state of the add-in
-                    ResetState();
-                    AddToLog("Add-in state has been reset");
-
-                    // Close the dockpane - use the base class method
-                    try
-                    {
-                        // Use the Hide method to close the dockpane
-                        // In ArcGIS Pro 3.5, DockPane base class provides this method
-                        this.Hide();
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Error closing dockpane: {ex.Message}");
-                    }
+                    // Old SelectedTheme string is now derived from SelectedItemForPreview for compatibility
+                    SelectedTheme = value.ParentThemeForS3; // Or value.DisplayName, depending on usage
                 }
-            );
-
-            // Subscribe to static events
-            CustomExtentTool.ExtentCreatedStatic += OnExtentCreated;
-
-            // Register for DockPane closing
-            try
-            {
-                System.Diagnostics.Debug.WriteLine("Registering dockpane event handlers for cleanup");
-                // The ArcGIS Pro framework will handle the lifecycle and cleanup
+                UpdateThemePreview(); // Update description, estimates etc.
+                (ShowThemeInfoCommand as RelayCommand)?.RaiseCanExecuteChanged();
             }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Error setting up event handlers: {ex.Message}");
-            }
-
-            // Initialize properties
-            Themes = new ObservableCollection<SelectableThemeItem>
-            {
-                new SelectableThemeItem("addresses"),
-                new SelectableThemeItem("base"),
-                new SelectableThemeItem("buildings"),
-                new SelectableThemeItem("divisions"),
-                new SelectableThemeItem("places"),
-                new SelectableThemeItem("transportation")
-            };
-
-            // Subscribe to selection changed events for each theme item
-            foreach (var themeItem in Themes)
-            {
-                themeItem.SelectionChanged += OnThemeSelectionChanged;
-            }
-
-            LogOutput = new();
-            LogOutput.AppendLine("Initializing...");
-
-            System.Diagnostics.Debug.WriteLine("Starting async initialization");
-            _ = InitializeAsync();
-
-            // Set default paths
-            var defaultBasePath = Services.MfcUtility.DefaultMfcBasePath;
-
-            // Data output path is where the GeoParquet files will be stored
-            DataOutputPath = Path.Combine(
-                defaultBasePath,
-                "Data",
-                LatestRelease ?? "latest"
-            );
-
-            // MFC output path is where the MFC connection file will be stored
-            MfcOutputPath = Path.Combine(
-                defaultBasePath,
-                "Connections"
-            );
         }
 
-        private async new Task InitializeAsync()
+        // Properties for TreeView Preview
+        public int SelectedLeafItemCount => GetSelectedLeafItems().Count;
+        public List<SelectableThemeItem> AllSelectedLeafItemsForPreview => GetSelectedLeafItems();
+
+        // Public parameterless constructor for XAML Designer
+        public WizardDockpaneViewModel()
+        {
+            // This constructor is ONLY for the XAML designer.
+            // It should initialize properties to provide a design-time preview.
+            // Do NOT call full runtime initialization logic (like InitializeAsync).
+            if (System.ComponentModel.DesignerProperties.GetIsInDesignMode(new System.Windows.DependencyObject()))
+            {
+                Themes = new ObservableCollection<SelectableThemeItem>
+                {
+                    new SelectableThemeItem("Addresses (Design)", "addresses", "addresses", true),
+                    new SelectableThemeItem("Base (Design)", "base", "base", false)
+                    {
+                        SubItems =
+                        {
+                            new SelectableThemeItem("Land (Design)", "land", "base", true),
+                            new SelectableThemeItem("Water (Design)", "water", "base", true)
+                        }
+                    }
+                };
+                LatestRelease = "202X-XX-XX (Design)";
+                StatusText = "Design Mode Preview - Themes Loaded";
+                IsLoading = false;
+                DataOutputPath = "C:\\Design\\Path\\Data";
+                MfcOutputPath = "C:\\Design\\Path\\Connections";
+                CustomExtentDisplay = "No custom extent set (Design)";
+                ThemeDescription = "Select a theme (Design)";
+                EstimatedFeatures = "-- (Design)";
+                EstimatedSize = "-- (Design)";
+                LogOutput = new StringBuilder("Design mode log output.\nReady.");
+                LogOutputText = LogOutput.ToString();
+            }
+            else
+            {
+                // This case (public ctor at runtime) should ideally not happen if Pro uses the protected one.
+                // If it does, we must ensure full initialization.
+                System.Diagnostics.Debug.WriteLine("WARNING: Public parameterless constructor called at runtime. Performing full initialization.");
+                InitializeViewModelForRuntime();
+            }
+        }
+
+        // Protected constructor for ArcGIS Pro framework runtime instantiation
+        protected WizardDockpaneViewModel(bool dummyToSatisfyChainAndAvoidAmbiguity = false) // Parameter helps distinguish if needed, but can be parameterless if Pro expects that.
+        {
+            // This is the primary runtime constructor expected by ArcGIS Pro.
+            InitializeViewModelForRuntime();
+        }
+
+        private void InitializeViewModelForRuntime()
+        {
+            System.Diagnostics.Debug.WriteLine("InitializeViewModelForRuntime executing...");
+            _dataProcessor = new DataProcessor();
+
+            LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => GetSelectedLeafItems().Count > 0);
+            ShowThemeInfoCommand = new RelayCommand(() => ShowThemeInfo(), () => SelectedItemForPreview != null);
+            SetCustomExtentCommand = new RelayCommand(() => SetCustomExtent(), () => UseCustomExtent);
+            BrowseMfcLocationCommand = new RelayCommand(() => BrowseMfcLocation());
+            BrowseDataLocationCommand = new RelayCommand(() => BrowseDataLocation());
+            BrowseCustomDataFolderCommand = new RelayCommand(() => BrowseCustomDataFolder());
+            CreateMfcCommand = new RelayCommand(async () => await CreateMfcAsync(), () => (UsePreviouslyLoadedData && !string.IsNullOrEmpty(_lastLoadedDataPath)) || (UseCustomDataFolder && !string.IsNullOrEmpty(CustomDataFolderPath)));
+            GoToCreateMfcTabCommand = new RelayCommand(() => ShowCreateMfcTab(), () => true);
+            CancelCommand = new RelayCommand(() =>
+            {
+                if (_cts != null && !_cts.IsCancellationRequested) { _cts.Cancel(); AddToLog("Operation cancelled by user."); }
+                ResetState(); AddToLog("Add-in state has been reset.");
+                try { this.Hide(); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Error closing dockpane: {ex.Message}"); }
+            });
+
+            CustomExtentTool.ExtentCreatedStatic += OnExtentCreated;
+
+            Themes = new ObservableCollection<SelectableThemeItem>();
+            LogOutput = new StringBuilder();
+            LogOutput.AppendLine("Initializing WizardDockpaneViewModel...");
+            LogOutputText = LogOutput.ToString(); // Initialize LogOutputText
+
+            // Set default paths immediately, they might be updated by InitializeAsync if LatestRelease changes
+            var defaultBasePath = Services.MfcUtility.DefaultMfcBasePath;
+            DataOutputPath = Path.Combine(defaultBasePath, "Data", LatestRelease ?? "latest");
+            MfcOutputPath = Path.Combine(defaultBasePath, "Connections");
+            NotifyPropertyChanged(nameof(DataOutputPath)); // Notify for initial value
+            NotifyPropertyChanged(nameof(MfcOutputPath)); // Notify for initial value
+
+            IsLoading = true; // Set IsLoading to true before starting async init
+            StatusText = "Initializing..."; // Initial status
+            NotifyPropertyChanged(nameof(IsLoading));
+            NotifyPropertyChanged(nameof(StatusText));
+
+            _ = InitializeAsync(); // This will call InitializeThemes and update release-specific paths
+        }
+
+        private async Task InitializeAsync()
         {
             try
             {
-                AddToLog("Initializing DuckDB");
-                System.Diagnostics.Debug.WriteLine("Initializing DuckDB");
+                AddToLog("Async Initialization: Initializing DuckDB");
                 await _dataProcessor.InitializeDuckDBAsync();
-
-                AddToLog("Fetching latest release information");
-                System.Diagnostics.Debug.WriteLine("Fetching latest release");
+                AddToLog("Async Initialization: Fetching latest release information");
                 LatestRelease = await GetLatestRelease();
-
-                System.Diagnostics.Debug.WriteLine($"Latest release set to: {LatestRelease}");
                 NotifyPropertyChanged(nameof(LatestRelease));
+                AddToLog($"Async Initialization: Latest release set to: {LatestRelease}");
 
-                // Update DataOutputPath with the fetched release version
+                InitializeThemes(); // Populate Themes collection
+                AddToLog("Async Initialization: Themes initialized");
+
                 var defaultBasePath = Services.MfcUtility.DefaultMfcBasePath;
-                DataOutputPath = Path.Combine(
-                    defaultBasePath,
-                    "Data",
-                    LatestRelease ?? "latest"
-                );
+                DataOutputPath = Path.Combine(defaultBasePath, "Data", LatestRelease ?? "latest");
                 NotifyPropertyChanged(nameof(DataOutputPath));
+                AddToLog($"Async Initialization: DataOutputPath updated to: {DataOutputPath}");
 
                 StatusText = "Ready to load Overture Maps data";
-                AddToLog("Ready to load Overture Maps data");
+                AddToLog("Async Initialization: Ready to load Overture Maps data");
             }
             catch (Exception ex)
             {
-                var error = $"Initialization error: {ex.Message}";
-                System.Diagnostics.Debug.WriteLine($"Error during initialization: {ex}");
+                var error = $"Async Initialization error: {ex.Message}";
+                System.Diagnostics.Debug.WriteLine($"Error during async initialization: {ex}");
                 StatusText = error;
                 AddToLog($"ERROR: {error}");
             }
             finally
             {
-                // Set loading state to false when initialization is complete
                 IsLoading = false;
+                NotifyPropertyChanged(nameof(IsLoading));
             }
         }
 
@@ -311,13 +329,6 @@ namespace DuckDBGeoparquet.Views
         {
             get => _themes;
             private set => SetProperty(ref _themes, value);
-        }
-
-        private List<string> _selectedThemes = new();
-        public List<string> SelectedThemes
-        {
-            get => _selectedThemes;
-            set => SetProperty(ref _selectedThemes, value);
         }
 
         private string _selectedTheme;
@@ -552,6 +563,7 @@ namespace DuckDBGeoparquet.Views
 
         // Track the last loaded data path for MFC creation
         private string _lastLoadedDataPath;
+
         #endregion
 
         #region Commands
@@ -579,78 +591,136 @@ namespace DuckDBGeoparquet.Views
 
         private void UpdateThemePreview()
         {
-            // Use the single selection for preview purposes for the description
-            if (string.IsNullOrEmpty(SelectedTheme))
+            string description = "Select a theme or sub-theme to see details.";
+            string features;
+            string size;
+            string icon = "GlobeIcon"; // Default
+
+            var itemForPreview = SelectedItemForPreview; // The item currently focused in TreeView
+
+            if (itemForPreview != null)
             {
-                ThemeDescription = "Select one or more themes to load";
-                EstimatedFeatures = "--";
-                EstimatedSize = "--";
-                return;
+                // Get description and icon from the parent theme typically
+                string parentS3Key = itemForPreview.IsSelectable && itemForPreview.SubItems.Count == 0 && Themes.Any(t => t.ActualType == itemForPreview.ParentThemeForS3 && t.SubItems.Count == 0) ?
+                                     itemForPreview.ActualType : // If it's a leaf parent (like "places")
+                                     itemForPreview.ParentThemeForS3; // Otherwise, use the parent key
+
+                description = ThemeDescriptions.TryGetValue(parentS3Key, out var desc)
+                    ? desc
+                    : "No description available.";
+
+                if (itemForPreview.IsSelectable && itemForPreview.ParentThemeForS3 != itemForPreview.ActualType) // It's a sub-item
+                {
+                    description += "\nSub-theme: " + itemForPreview.DisplayName;
+                }
+
+                icon = ThemeIcons.TryGetValue(parentS3Key, out var iconName) ? iconName : "GlobeIcon";
             }
 
-            ThemeDescription = ThemeDescriptions.TryGetValue(SelectedTheme, out string description)
-                ? description
-                : "No description available";
-
-            // Calculate combined estimates for all selected themes
-            if (SelectedThemes.Count > 0)
+            // Calculate combined estimates for ALL selected leaf themes
+            var allSelectedLeaves = GetSelectedLeafItems();
+            if (allSelectedLeaves.Count > 0)
             {
                 int totalEstimatedFeatures = 0;
                 double totalSizeInKb = 0;
 
-                foreach (var theme in SelectedThemes)
+                foreach (var selectedLeaf in allSelectedLeaves)
                 {
-                    if (ThemeFeatureEstimates.TryGetValue(theme, out int estimate))
+                    // Find the original parent theme estimate
+                    if (ThemeFeatureEstimates.TryGetValue(selectedLeaf.ParentThemeForS3, out int parentEstimate))
                     {
-                        totalEstimatedFeatures += estimate;
-                        totalSizeInKb += estimate * 2.5; // Assuming each feature is about 2.5KB on average
+                        // Find the parent theme item to count its sub-items for pro-rata calculation
+                        var parentThemeItem = Themes.FirstOrDefault(p => p.ActualType == selectedLeaf.ParentThemeForS3);
+                        int numberOfSubTypesInParent = parentThemeItem != null && parentThemeItem.IsExpandable ? parentThemeItem.SubItems.Count : 1;
+                        if (numberOfSubTypesInParent == 0) numberOfSubTypesInParent = 1; // Avoid division by zero for leaf parents
+
+                        totalEstimatedFeatures += parentEstimate / numberOfSubTypesInParent; // Pro-rata
+                        totalSizeInKb += (parentEstimate / numberOfSubTypesInParent) * 2.5; // Assuming 2.5KB per feature
                     }
                 }
+                EstimatedFeatures = $"{totalEstimatedFeatures} total per sq km (approx.)";
+                EstimatedSize = totalSizeInKb > 1024
+                    ? $"{totalSizeInKb / 1024:F1} MB total per sq km (approx.)"
+                    : $"{totalSizeInKb:F0} KB total per sq km (approx.)";
 
-                // Format the estimates
-                if (SelectedThemes.Count > 1)
+                if (allSelectedLeaves.Count == 1 && itemForPreview != null) // If only one item is selected, use its specific (pro-rata) estimate for display
                 {
-                    EstimatedFeatures = $"{totalEstimatedFeatures} total per sq km (approx.)";
-                    EstimatedSize = totalSizeInKb > 1024
-                        ? $"{totalSizeInKb / 1024:F1} MB total per sq km (approx.)"
-                        : $"{totalSizeInKb:F0} KB total per sq km (approx.)";
-                }
-                else
-                {
-                    // For single selection, use the original format
-                    var estimate = ThemeFeatureEstimates[SelectedTheme];
-                    EstimatedFeatures = $"{estimate} per sq km (approx.)";
-                    double sizeInKb = estimate * 2.5;
-                    EstimatedSize = sizeInKb > 1024
-                        ? $"{sizeInKb / 1024:F1} MB per sq km (approx.)"
-                        : $"{sizeInKb:F0} KB per sq km (approx.)";
+                    if (ThemeFeatureEstimates.TryGetValue(itemForPreview.ParentThemeForS3, out int parentEst))
+                    {
+                        var parentThemeItem = Themes.FirstOrDefault(p => p.ActualType == itemForPreview.ParentThemeForS3);
+                        int numSubTypes = parentThemeItem != null && parentThemeItem.IsExpandable ? parentThemeItem.SubItems.Count : 1;
+                        if (numSubTypes == 0) numSubTypes = 1;
+
+                        int itemFeatures = parentEst / numSubTypes;
+                        double itemSizeKb = itemFeatures * 2.5;
+                        // This overrides the "total" if only one is selected and it matches the preview item
+                        EstimatedFeatures = $"{itemFeatures} per sq km (approx. for {itemForPreview.DisplayName})";
+                        EstimatedSize = itemSizeKb > 1024
+                            ? $"{itemSizeKb / 1024:F1} MB per sq km (approx. for {itemForPreview.DisplayName})"
+                            : $"{itemSizeKb:F0} KB per sq km (approx. for {itemForPreview.DisplayName})";
+                    }
                 }
             }
             else
             {
-                EstimatedFeatures = "--";
-                EstimatedSize = "--";
+                // If nothing is selected, but an item is focused for preview
+                if (itemForPreview != null && ThemeFeatureEstimates.TryGetValue(itemForPreview.ParentThemeForS3, out int parentEst))
+                {
+                    var parentThemeItem = Themes.FirstOrDefault(p => p.ActualType == itemForPreview.ParentThemeForS3);
+                    int numSubTypes = parentThemeItem != null && parentThemeItem.IsExpandable ? parentThemeItem.SubItems.Count : 1;
+                    if (numSubTypes == 0) numSubTypes = 1;
+                    int itemFeat = parentEst / numSubTypes;
+                    double itemSzKb = itemFeat * 2.5;
+
+                    EstimatedFeatures = $"{itemFeat} per sq km (approx. for {itemForPreview.DisplayName})";
+                    EstimatedSize = itemSzKb > 1024
+                        ? $"{itemSzKb / 1024:F1} MB per sq km (approx. for {itemForPreview.DisplayName})"
+                        : $"{itemSzKb:F0} KB per sq km (approx. for {itemForPreview.DisplayName})";
+
+                }
             }
+
+            ThemeDescription = description;
+            ThemeIconText = icon;
+            // EstimatedFeatures and EstimatedSize are set above
+            NotifyPropertyChanged(nameof(ThemeDescription));
+            NotifyPropertyChanged(nameof(EstimatedFeatures));
+            NotifyPropertyChanged(nameof(EstimatedSize));
+            NotifyPropertyChanged(nameof(ThemeIconText));
+            NotifyPropertyChanged(nameof(SelectedLeafItemCount));
+            NotifyPropertyChanged(nameof(AllSelectedLeafItemsForPreview));
         }
 
         private void ShowThemeInfo()
         {
-            if (string.IsNullOrEmpty(SelectedTheme)) return;
+            if (SelectedItemForPreview == null) return;
 
-            string description = ThemeDescriptions.TryGetValue(SelectedTheme, out string themeDesc)
+            var item = SelectedItemForPreview;
+            string parentS3Key = item.ParentThemeForS3;
+
+            string description = ThemeDescriptions.TryGetValue(parentS3Key, out string themeDesc)
                 ? themeDesc
                 : "No detailed information available.";
 
-            string types = ThemeTypes.TryGetValue(SelectedTheme, out string themeTypes)
-                ? $"Type(s): {themeTypes}"
+            string typesInfo = $"S3 Theme: {parentS3Key}";
+            if (item.IsSelectable && item.ParentThemeForS3 != item.ActualType) // It's a sub-item
+            {
+                description = $"Parent: {MakeFriendlyName(parentS3Key)}\nSub-theme: {item.DisplayName}\n\n{description}";
+                typesInfo += $", S3 Type: {item.ActualType}";
+            }
+            else // It's a parent item (either leaf or just for preview)
+            {
+                typesInfo += $", S3 Type(s): {_overtureS3ThemeTypes[parentS3Key]}";
+            }
+
+            var selectedLeafItems = GetSelectedLeafItems();
+            string selectedCount = selectedLeafItems.Count > 0 ?
+                $"\n\nYou have selected {selectedLeafItems.Count} specific data type(s) in total."
                 : "";
 
-            string selectedCount = _selectedThemes.Count > 0 ?
-                $"\n\nYou have selected {_selectedThemes.Count} theme(s) in total." : "";
-
             ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
-                $"{description}\n\n{types}{selectedCount}",
-                $"About {SelectedTheme} theme",
+                $"{description}\n\n{typesInfo}{selectedCount}",
+                $"About '{item.DisplayName}'",
                 System.Windows.MessageBoxButton.OK,
                 System.Windows.MessageBoxImage.Information);
         }
@@ -887,9 +957,10 @@ namespace DuckDBGeoparquet.Views
         {
             try
             {
-                if (SelectedThemes.Count == 0)
+                var selectedLeafItems = GetSelectedLeafItems();
+                if (selectedLeafItems.Count == 0)
                 {
-                    AddToLog("No themes selected.");
+                    AddToLog("No themes or sub-themes selected.");
                     return;
                 }
 
@@ -901,8 +972,8 @@ namespace DuckDBGeoparquet.Views
                 // Switch to status tab
                 SelectedTabIndex = 1;
 
-                StatusText = $"Loading {SelectedThemes.Count} themes...";
-                AddToLog($"Starting to load multiple themes from release {LatestRelease}");
+                StatusText = $"Loading {selectedLeafItems.Count} selected data types...";
+                AddToLog($"Starting to load {selectedLeafItems.Count} data type(s) from release {LatestRelease}");
 
                 // Get map extent
                 Envelope extent = null;
@@ -936,11 +1007,20 @@ namespace DuckDBGeoparquet.Views
                 // Check if the folder exists and has theme folders that match selected themes
                 if (Directory.Exists(dataPath))
                 {
-                    foreach (var theme in SelectedThemes)
+                    foreach (var selectedItem in selectedLeafItems) // Check based on what will be loaded
                     {
-                        // Look for folders matching the theme pattern
-                        var matchingFolders = Directory.GetDirectories(dataPath, $"{theme}_*");
-                        if (matchingFolders.Length > 0)
+                        // Construct a potential path segment for this item's data
+                        // This check might need refinement based on how DataProcessor saves files.
+                        // For now, just checking the parent theme folder might be an approximation.
+                        var themeSpecificDataPath = Path.Combine(dataPath, selectedItem.ParentThemeForS3, selectedItem.ActualType); // More specific check
+                        if (Directory.Exists(themeSpecificDataPath) && Directory.EnumerateFiles(themeSpecificDataPath, "*.parquet").Any())
+                        {
+                            existingDataFound = true;
+                            break;
+                        }
+                        // Fallback to checking parent theme level if above is too strict or structure varies
+                        var parentThemeFolder = Path.Combine(dataPath, selectedItem.ParentThemeForS3);
+                        if (Directory.Exists(parentThemeFolder) && Directory.EnumerateDirectories(parentThemeFolder).Any(dir => Path.GetFileName(dir) == selectedItem.ActualType))
                         {
                             existingDataFound = true;
                             break;
@@ -967,22 +1047,13 @@ namespace DuckDBGeoparquet.Views
                     AddToLog("User confirmed replacing existing data");
                 }
 
-                int totalThemeTypes = 0;
-                // Calculate total number of theme types to process for progress reporting
-                foreach (var theme in SelectedThemes)
-                {
-                    if (ThemeTypes.TryGetValue(theme, out string themeTypes))
-                    {
-                        string[] types = themeTypes.Split(',');
-                        totalThemeTypes += types.Length;
-                    }
-                }
+                int totalDataTypesToProcess = selectedLeafItems.Count;
+                int processedDataTypes = 0;
 
-                int processedTypes = 0;
-                // Process each selected theme
-                foreach (var theme in SelectedThemes)
+                // Process each selected leaf item (sub-theme or leaf parent theme)
+                foreach (var itemToLoad in selectedLeafItems)
                 {
-                    // Check for cancellation between themes
+                    // Check for cancellation between items
                     if (cancellationToken.IsCancellationRequested)
                     {
                         StatusText = "Operation cancelled";
@@ -990,109 +1061,87 @@ namespace DuckDBGeoparquet.Views
                         return;
                     }
 
-                    StatusText = $"Processing theme: {theme}";
-                    AddToLog($"Processing theme: {theme}");
+                    string parentS3Theme = itemToLoad.ParentThemeForS3;
+                    string actualS3Type = itemToLoad.ActualType;
+                    string itemDisplayName = itemToLoad.DisplayName; // For logging and layer naming
 
-                    // Process each type within the current theme
-                    if (ThemeTypes.TryGetValue(theme, out string themeTypes))
+                    StatusText = $"Processing: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}";
+                    AddToLog($"Processing: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}");
+
+                    // ---- Remove existing layer for this specific data type ----
+                    string layerNameToRemove = $"{MakeFriendlyName(parentS3Theme)} - {itemDisplayName}";
+                    AddToLog($"Checking for existing layer: {layerNameToRemove}");
+
+                    await QueuedTask.Run(() =>
                     {
-                        string[] types = themeTypes.Split(',');
-
-                        foreach (var type in types)
+                        var activeMap = MapView.Active?.Map;
+                        if (activeMap != null)
                         {
-                            // Check for cancellation between types
-                            if (cancellationToken.IsCancellationRequested)
+                            var layersToRemove = activeMap.GetLayersAsFlattenedList()
+                                .Where(l => l.Name.Equals(layerNameToRemove, StringComparison.OrdinalIgnoreCase))
+                                .ToList();
+
+                            if (layersToRemove.Any())
                             {
-                                StatusText = "Operation cancelled";
-                                AddToLog("Operation was cancelled");
-                                return;
+                                AddToLog($"Found {layersToRemove.Count} existing layer(s) named '{layerNameToRemove}'. Removing them.");
+                                activeMap.RemoveLayers(layersToRemove);
                             }
-
-                            // ---- NEW CODE START: Remove existing layer ----
-                            string layerNameToRemove = $"{theme} - {type.Trim()}";
-                            AddToLog($"Checking for existing layer: {layerNameToRemove}");
-
-                            await QueuedTask.Run(() =>
+                            else
                             {
-                                var activeMap = MapView.Active?.Map;
-                                if (activeMap != null)
-                                {
-                                    // Find layers with the exact name (case-insensitive)
-                                    var layersToRemove = activeMap.GetLayersAsFlattenedList()
-                                        .Where(l => l.Name.Equals(layerNameToRemove, StringComparison.OrdinalIgnoreCase))
-                                        .ToList();
-
-                                    if (layersToRemove.Any())
-                                    {
-                                        AddToLog($"Found {layersToRemove.Count} existing layer(s) named '{layerNameToRemove}'. Removing them.");
-                                        activeMap.RemoveLayers(layersToRemove);
-                                    }
-                                    else
-                                    {
-                                        AddToLog($"No existing layer named '{layerNameToRemove}' found.");
-                                    }
-                                }
-                                else
-                                {
-                                    AddToLog("No active map to remove layers from.");
-                                }
-                            });
-                            // ---- NEW CODE END ----
-
-                            AddToLog($"Processing theme type: {type.Trim()}");
-                            System.Diagnostics.Debug.WriteLine($"Theme type: {type.Trim()}");
-
-                            // Ensure proper path construction with trimmed release
-                            string trimmedRelease = LatestRelease?.Trim() ?? "";
-                            string s3Path = trimmedRelease.Length > 0
-                                ? $"{S3_BASE_PATH}/{trimmedRelease}/theme={theme}/type={type.Trim()}/*.parquet"
-                                : $"{S3_BASE_PATH}/theme={theme}/type={type.Trim()}/*.parquet";
-
-                            StatusText = $"Loading from path: {s3Path}";
-                            AddToLog($"Loading from path: {s3Path}");
-                            System.Diagnostics.Debug.WriteLine($"Loading from path: {s3Path}");
-
-                            // Pass cancellation token to IngestFileAsync
-                            bool ingestSuccess = await _dataProcessor.IngestFileAsync(s3Path, extent);
-                            if (!ingestSuccess)
-                            {
-                                AddToLog($"Failed to ingest data from {s3Path}");
-                                StatusText = $"Error loading data from {s3Path}";
-                                continue;
+                                AddToLog($"No existing layer named '{layerNameToRemove}' found.");
                             }
-
-                            // Check for cancellation
-                            if (cancellationToken.IsCancellationRequested)
-                            {
-                                StatusText = "Operation cancelled";
-                                AddToLog("Operation was cancelled");
-                                return;
-                            }
-
-                            // Create a feature layer for the loaded data
-                            string layerName = $"{theme} - {type.Trim()}";
-                            var progress = new Progress<string>(status =>
-                            {
-                                StatusText = status;
-                                AddToLog(status);
-                                if (status.StartsWith("Processing: "))
-                                {
-                                    var percent = status.Split('%')[0].Split(':')[1].Trim();
-                                    if (double.TryParse(percent, out double value))
-                                    {
-                                        // Scale the progress to the overall progress across all themes
-                                        processedTypes++;
-                                        ProgressValue = (processedTypes * 100.0) / totalThemeTypes;
-                                    }
-                                }
-                            });
-
-                            await _dataProcessor.CreateFeatureLayerAsync(layerName, LatestRelease, progress);
-
-                            StatusText = $"Successfully loaded {theme}/{type} data from release {LatestRelease}";
-                            AddToLog($"Successfully loaded {theme}/{type} data");
                         }
+                        else
+                        {
+                            AddToLog("No active map to remove layers from.");
+                        }
+                    });
+                    // ---- End Remove existing layer ----
+
+                    AddToLog($"Data type for S3: theme='{parentS3Theme}', type='{actualS3Type}'");
+                    System.Diagnostics.Debug.WriteLine($"Data type for S3: theme='{parentS3Theme}', type='{actualS3Type}'");
+
+                    string trimmedRelease = LatestRelease?.Trim() ?? "";
+                    string s3Path = trimmedRelease.Length > 0
+                ? $"{S3_BASE_PATH}/{trimmedRelease}/theme={parentS3Theme}/type={actualS3Type}/*.parquet"
+                : $"{S3_BASE_PATH}/theme={parentS3Theme}/type={actualS3Type}/*.parquet";
+
+                    StatusText = $"Loading from S3 path: {s3Path}";
+                    AddToLog($"Loading from S3 path: {s3Path}");
+                    System.Diagnostics.Debug.WriteLine($"Loading from S3 path: {s3Path}");
+
+                    bool ingestSuccess = await _dataProcessor.IngestFileAsync(s3Path, extent);
+                    if (!ingestSuccess)
+                    {
+                        AddToLog($"Failed to ingest data from {s3Path}");
+                        StatusText = $"Error loading data from {s3Path}";
+                        continue; // Skip to next item
                     }
+
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        StatusText = "Operation cancelled";
+                        AddToLog("Operation was cancelled");
+                        return;
+                    }
+
+                    // Create a feature layer for the loaded data
+                    // Layer name: Parent Theme Display Name - Item Display Name
+                    string featureLayerName = layerNameToRemove; // Reuse the calculated name
+                    var progressReporter = new Progress<string>(status =>
+                    {
+                        StatusText = status;
+                        AddToLog(status);
+                        // ProgressValue update based on processedDataTypes / totalDataTypesToProcess
+                    });
+
+                    await _dataProcessor.CreateFeatureLayerAsync(featureLayerName, LatestRelease, progressReporter, parentS3Theme, actualS3Type);
+
+                    processedDataTypes++;
+                    ProgressValue = (processedDataTypes * 100.0) / totalDataTypesToProcess;
+
+                    StatusText = $"Successfully loaded {itemDisplayName} for {MakeFriendlyName(parentS3Theme)}";
+                    AddToLog($"Successfully loaded {itemDisplayName} for {MakeFriendlyName(parentS3Theme)}");
                 }
 
                 // Check for cancellation
@@ -1416,13 +1465,13 @@ namespace DuckDBGeoparquet.Views
 
         public bool IsThemeSelected(string theme)
         {
-            var themeItem = Themes.FirstOrDefault(t => t.Name == theme);
+            var themeItem = Themes.FirstOrDefault(t => t.DisplayName == theme);
             return themeItem != null && themeItem.IsSelected;
         }
 
         public void ToggleThemeSelection(string theme)
         {
-            var themeItem = Themes.FirstOrDefault(t => t.Name == theme);
+            var themeItem = Themes.FirstOrDefault(t => t.DisplayName == theme);
             if (themeItem != null)
             {
                 themeItem.IsSelected = !themeItem.IsSelected;
@@ -1434,9 +1483,9 @@ namespace DuckDBGeoparquet.Views
         private void CheckInitialThemeSelection()
         {
             // Update the preview based on the first selected theme (if any)
-            if (_selectedThemes.Count > 0)
+            if (Themes.Any())
             {
-                SelectedTheme = _selectedThemes[0];
+                SelectedTheme = Themes[0].DisplayName;
             }
         }
 
@@ -1461,31 +1510,39 @@ namespace DuckDBGeoparquet.Views
             CleanupResources();
         }
 
+        // This event handler is for the original flat list of themes. 
+        // It's superseded by OnLeafThemeSelectionChanged for hierarchical themes.
+        // Consider removing or refactoring if only hierarchical selection is used.
         private void OnThemeSelectionChanged(object sender, EventArgs e)
         {
             // Update the SelectedThemes list based on the currently selected theme items
-            _selectedThemes.Clear();
-            foreach (var themeItem in Themes)
-            {
-                if (themeItem.IsSelected)
-                {
-                    _selectedThemes.Add(themeItem.Name);
-                }
-            }
+            // _selectedThemes.Clear(); // No longer used
+            // foreach (var themeItem in Themes)
+            // {
+            //     if (themeItem.IsSelected)
+            //     {
+            //         _selectedThemes.Add(themeItem.DisplayName); // No longer used
+            //     }
+            // }
 
-            NotifyPropertyChanged(nameof(SelectedThemes));
+            // NotifyPropertyChanged(nameof(SelectedThemes)); // No longer used
             UpdateThemePreview();
             (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
 
             // If a theme was selected, set it as the current preview theme
             if (sender is SelectableThemeItem selectedItem && selectedItem.IsSelected)
             {
-                SelectedTheme = selectedItem.Name;
+                SelectedTheme = selectedItem.DisplayName; // This might still be useful for a general preview
+                                                          // but SelectedItemForPreview is now primary for TreeView focus
             }
-            else if (_selectedThemes.Count > 0)
+            // else if (_selectedThemes.Count > 0) // No longer used
+            // {
+            //     // If we just deselected an item but others are still selected, show the first selected theme
+            //     SelectedTheme = _selectedThemes[0]; // No longer used
+            // }
+            else if (GetSelectedLeafItems().Count > 0) // CA1860 .Any() to .Count > 0 // If deselected, but other leaves are selected
             {
-                // If we just deselected an item but others are still selected, show the first selected theme
-                SelectedTheme = _selectedThemes[0];
+                SelectedTheme = GetSelectedLeafItems().First().ParentThemeForS3; // Or another suitable property
             }
             else
             {
@@ -1500,14 +1557,19 @@ namespace DuckDBGeoparquet.Views
             foreach (var themeItem in Themes)
             {
                 // Temporarily unsubscribe to avoid multiple event triggers
-                themeItem.SelectionChanged -= OnThemeSelectionChanged;
+                if (themeItem.IsSelectable) themeItem.SelectionChanged -= OnLeafThemeSelectionChanged; // Only if it's a leaf
+                else foreach (var subItem in themeItem.SubItems) subItem.SelectionChanged -= OnLeafThemeSelectionChanged;
+
                 themeItem.IsSelected = false;
-                themeItem.SelectionChanged += OnThemeSelectionChanged;
+                foreach (var subItem in themeItem.SubItems) subItem.IsSelected = false;
+
+                if (themeItem.IsSelectable) themeItem.SelectionChanged += OnLeafThemeSelectionChanged; // Only if it's a leaf
+                else foreach (var subItem in themeItem.SubItems) subItem.SelectionChanged += OnLeafThemeSelectionChanged;
             }
 
-            // Clear selected themes list
-            _selectedThemes.Clear();
-            NotifyPropertyChanged(nameof(SelectedThemes));
+            // Clear selected themes list - no longer needed
+            // _selectedThemes.Clear();
+            // NotifyPropertyChanged(nameof(SelectedThemes));
 
             // Reset other properties
             SelectedTheme = null;
@@ -1566,6 +1628,103 @@ namespace DuckDBGeoparquet.Views
             SelectedTabIndex = 2;
             StatusText = "Ready to create Multifile Feature Connection";
             AddToLog("Create MFC tab activated");
+        }
+
+        private static string MakeFriendlyName(string s3TypeName) // CA1822 Made static
+        {
+            if (string.IsNullOrEmpty(s3TypeName)) return s3TypeName;
+            // Replace underscores with spaces and capitalize words
+            var parts = s3TypeName.Split(['_'], StringSplitOptions.RemoveEmptyEntries); // IDE0300 / CA1861 Simplified array
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (parts[i].Length > 0)
+                    parts[i] = char.ToUpper(parts[i][0]) + (parts[i].Length > 1 ? parts[i][1..] : ""); // IDE0057 Substring simplified
+            }
+            return string.Join(" ", parts);
+        }
+
+        private void InitializeThemes()
+        {
+            var themesCollection = new ObservableCollection<SelectableThemeItem>();
+            foreach (var kvp in _overtureS3ThemeTypes)
+            {
+                string s3ParentThemeKey = kvp.Key; // e.g., "base", "buildings"
+                string s3SubTypesString = kvp.Value;
+                string[] s3SubTypes = s3SubTypesString.Split(',');
+
+                string parentDisplayName = _parentThemeDisplayNames.TryGetValue(s3ParentThemeKey, out var dn) ? dn : MakeFriendlyName(s3ParentThemeKey);
+
+                // Parent item: DisplayName, ActualType (itself, for grouping), ParentS3Theme (itself)
+                // A parent is a leaf (and thus selectable) if it has no distinct sub-types.
+                bool parentIsLeaf = s3SubTypes.Length == 1 && s3SubTypes[0] == s3ParentThemeKey;
+                // or s3SubTypes.Length == 0 (though current data always has types)
+
+                var parentItem = new SelectableThemeItem(parentDisplayName, s3ParentThemeKey, s3ParentThemeKey, parentIsLeaf);
+
+                if (!parentIsLeaf && s3SubTypes.Length > 0)
+                {
+                    foreach (var s3SubType in s3SubTypes)
+                    {
+                        string subTypeTrimmed = s3SubType.Trim();
+                        string subItemDisplayName = MakeFriendlyName(subTypeTrimmed);
+                        // Sub-item: DisplayName, ActualType=s3SubType, ParentS3Theme=s3ParentThemeKey. Sub-items are always leaves.
+                        var subItem = new SelectableThemeItem(subItemDisplayName, subTypeTrimmed, s3ParentThemeKey, true);
+                        subItem.SelectionChanged += OnLeafThemeSelectionChanged; // Event for selection logic
+                        parentItem.SubItems.Add(subItem);
+                    }
+                }
+                else // Parent is a leaf node
+                {
+                    // Ensure its ActualType is correctly set if it was determined to be a leaf
+                    if (s3SubTypes.Any()) parentItem.ActualType = s3SubTypes[0].Trim();
+                    parentItem.SelectionChanged += OnLeafThemeSelectionChanged;
+                }
+                themesCollection.Add(parentItem);
+            }
+            Themes = themesCollection; // Assign to the public property
+            NotifyPropertyChanged(nameof(Themes));
+        }
+
+        private List<SelectableThemeItem> GetSelectedLeafItems()
+        {
+            var selectedLeaves = new List<SelectableThemeItem>();
+            if (Themes == null) return selectedLeaves;
+
+            foreach (var parentItem in Themes)
+            {
+                if (parentItem.IsSelectable && parentItem.IsSelected) // Parent is a leaf and selected
+                {
+                    selectedLeaves.Add(parentItem);
+                }
+                else if (parentItem.SubItems.Count > 0) // CA1860 .Any() to .Count > 0 // Parent has sub-items
+                {
+                    foreach (var subItem in parentItem.SubItems)
+                    {
+                        // SubItems are always selectable if they exist and are leaves
+                        if (subItem.IsSelected)
+                        {
+                            selectedLeaves.Add(subItem);
+                        }
+                    }
+                }
+            }
+            return selectedLeaves;
+        }
+
+        // This method is now the primary handler for selection changes on leaf items
+        private void OnLeafThemeSelectionChanged(object sender, EventArgs e)
+        {
+            if (sender is SelectableThemeItem selectedLeafItem)
+            {
+                // Set this item for preview purposes, even if it's being deselected
+                // The preview panel will update based on this item's state and overall selections
+                SelectedItemForPreview = selectedLeafItem;
+            }
+            // Update combined estimates and other UI elements that depend on the full selection set
+            UpdateThemePreview();
+            (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            NotifyPropertyChanged(nameof(SelectedLeafItemCount));
+            NotifyPropertyChanged(nameof(AllSelectedLeafItemsForPreview));
         }
     }
 }

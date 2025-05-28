@@ -28,13 +28,17 @@ namespace DuckDBGeoparquet.Services
         private const string GEOMETRY_COLUMN = "geometry";
 
         // Add static readonly field for the theme-type separator
-        private static readonly string[] THEME_TYPE_SEPARATOR = { " - " };
+        private static readonly string[] THEME_TYPE_SEPARATOR = [" - "];
 
         // Property to hold the output folder for the session.
         private string _outputFolder;
 
         // Add a class-level field to store the current extent
         private dynamic _currentExtent;
+
+        // Fields to store theme context for file path generation
+        private string _currentParentS3Theme;
+        private string _currentActualS3Type;
 
         public DataProcessor()
         {
@@ -54,9 +58,9 @@ namespace DuckDBGeoparquet.Services
                 // Use the MFC folder structure for consistency
                 string mfcBasePath = MfcUtility.DefaultMfcBasePath;
                 string dataFolder = Path.Combine(mfcBasePath, "Data");
-                _outputFolder = Path.Combine(dataFolder, releaseVersion);
+                _outputFolder = Path.Combine(dataFolder, releaseVersion); // This is the base release folder
 
-                System.Diagnostics.Debug.WriteLine($"Creating output folder structure at {_outputFolder}");
+                System.Diagnostics.Debug.WriteLine($"Base output folder for release set to: {_outputFolder}");
 
                 if (!Directory.Exists(dataFolder))
                 {
@@ -78,6 +82,7 @@ namespace DuckDBGeoparquet.Services
                     System.Diagnostics.Debug.WriteLine($"Created Connection folder: {connectionFolder}");
                 }
             }
+            // The specific theme/type subfolder will be determined later when CreateFeatureLayerAsync is called
             return _outputFolder;
         }
 
@@ -175,6 +180,10 @@ namespace DuckDBGeoparquet.Services
             {
                 // Store the extent for later use in CreateFeatureLayerAsync
                 _currentExtent = extent;
+
+                // Clear previous theme context, it will be set by CreateFeatureLayerAsync
+                _currentParentS3Theme = null;
+                _currentActualS3Type = null;
 
                 // The following call to MakeEnvironmentArray was not directly used by a GP tool in this method.
                 // Overwrite for deletion is handled in DeleteParquetFileAsync if needed elsewhere.
@@ -293,7 +302,7 @@ namespace DuckDBGeoparquet.Services
                 System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Normalized target path: {normalizedTargetPath}");
 
                 // Helper to get the actual file path from a potential dataset path
-                Func<string, string> getActualFilePath = (string dataSourcePath) =>
+                string GetActualFilePath(string dataSourcePath)
                 {
                     if (string.IsNullOrEmpty(dataSourcePath)) return null;
                     string lowerPath = dataSourcePath.ToLowerInvariant();
@@ -303,11 +312,12 @@ namespace DuckDBGeoparquet.Services
                         int parquetIndex = lowerPath.IndexOf(".parquet");
                         if (parquetIndex > -1)
                         {
-                            return Path.GetFullPath(dataSourcePath.Substring(0, parquetIndex + ".parquet".Length)).ToLowerInvariant();
+                            return Path.GetFullPath(dataSourcePath[..(parquetIndex + ".parquet".Length)]).ToLowerInvariant();
                         }
                     }
                     return Path.GetFullPath(dataSourcePath).ToLowerInvariant(); // Default to the full path
-                };
+                }
+                ;
 
                 // Check layers
                 foreach (var layer in allLayers)
@@ -324,7 +334,7 @@ namespace DuckDBGeoparquet.Services
                                 if (fcPathUri != null && fcPathUri.IsFile)
                                 {
                                     string rawLayerDataSourcePath = fcPathUri.LocalPath;
-                                    string actualLayerFilePath = getActualFilePath(rawLayerDataSourcePath);
+                                    string actualLayerFilePath = GetActualFilePath(rawLayerDataSourcePath);
                                     System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Layer '{featureLayer.Name}' path from FeatureClass.GetPath(): {rawLayerDataSourcePath}, Resolved to: {actualLayerFilePath}");
                                     if (actualLayerFilePath == normalizedTargetPath)
                                     {
@@ -359,7 +369,7 @@ namespace DuckDBGeoparquet.Services
                                         else if (!string.IsNullOrEmpty(connString)) { try { dsPathViaConnectorRaw = Path.GetFullPath(connString); } catch { } }
                                         System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Layer '{featureLayer.Name}' (Connector Fallback) path via ConnStr: {dsPathViaConnectorRaw}");
                                     }
-                                    string actualDsPathViaConnector = getActualFilePath(dsPathViaConnectorRaw);
+                                    string actualDsPathViaConnector = GetActualFilePath(dsPathViaConnectorRaw);
                                     if (!string.IsNullOrEmpty(actualDsPathViaConnector) && actualDsPathViaConnector == normalizedTargetPath)
                                     {
                                         membersToRemove.Add(featureLayer);
@@ -390,7 +400,7 @@ namespace DuckDBGeoparquet.Services
                                 if (tblPathUri != null && tblPathUri.IsFile)
                                 {
                                     string rawTableDataSourcePath = tblPathUri.LocalPath;
-                                    string actualTableFilePath = getActualFilePath(rawTableDataSourcePath);
+                                    string actualTableFilePath = GetActualFilePath(rawTableDataSourcePath);
                                     System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Table '{standaloneTable.Name}' path from Table.GetPath(): {rawTableDataSourcePath}, Resolved to: {actualTableFilePath}");
                                     if (actualTableFilePath == normalizedTargetPath)
                                     {
@@ -425,7 +435,7 @@ namespace DuckDBGeoparquet.Services
                                         else if (!string.IsNullOrEmpty(connString)) { try { dsPathViaConnectorRaw = Path.GetFullPath(connString); } catch { } }
                                         System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Table '{standaloneTable.Name}' (Connector Fallback) path via ConnStr: {dsPathViaConnectorRaw}");
                                     }
-                                    string actualDsPathViaConnector = getActualFilePath(dsPathViaConnectorRaw);
+                                    string actualDsPathViaConnector = GetActualFilePath(dsPathViaConnectorRaw);
                                     if (!string.IsNullOrEmpty(actualDsPathViaConnector) && actualDsPathViaConnector == normalizedTargetPath)
                                     {
                                         membersToRemove.Add(standaloneTable);
@@ -602,284 +612,164 @@ namespace DuckDBGeoparquet.Services
         /// <param name="layerNameBase">Base name for the layer.</param>
         /// <param name="releaseVersion">The release version (used to name the output folder).</param>
         /// <param name="progress">Progress reporter.</param>
-        public async Task CreateFeatureLayerAsync(string layerNameBase, string releaseVersion, IProgress<string> progress = null)
+        public async Task CreateFeatureLayerAsync(string layerNameBase, string releaseVersion, IProgress<string> progress = null, string parentS3Theme = null, string actualS3Type = null)
         {
-            string outputFolder = GetOutputFolder(releaseVersion);
+            System.Diagnostics.Debug.WriteLine($"CreateFeatureLayerAsync called for: {layerNameBase}, Release: {releaseVersion}, ParentS3Theme: {parentS3Theme}, ActualS3Type: {actualS3Type}");
+            progress?.Report($"Starting layer creation for {layerNameBase}");
+
+            if (string.IsNullOrEmpty(parentS3Theme) || string.IsNullOrEmpty(actualS3Type))
+            {
+                progress?.Report("Error: Parent theme or actual type not provided. Cannot create feature layer.");
+                System.Diagnostics.Debug.WriteLine("Error: ParentS3Theme or ActualS3Type is null or empty. Aborting CreateFeatureLayerAsync.");
+                // Consider throwing an exception or returning a status
+                return;
+            }
+
+            // Store the theme context for this operation
+            _currentParentS3Theme = parentS3Theme;
+            _currentActualS3Type = actualS3Type;
+
+            // Get the base output folder for the release
+            string baseReleaseFolder = GetOutputFolder(releaseVersion);
+
+            // Define the specific output folder for this theme/type
+            string themeTypeSpecificFolder = Path.Combine(baseReleaseFolder, parentS3Theme, actualS3Type);
+            if (!Directory.Exists(themeTypeSpecificFolder))
+            {
+                System.Diagnostics.Debug.WriteLine($"Creating theme-specific output folder: {themeTypeSpecificFolder}");
+                Directory.CreateDirectory(themeTypeSpecificFolder);
+            }
+
+            System.Diagnostics.Debug.WriteLine($"Theme-specific output folder set to: {themeTypeSpecificFolder}");
+
             try
             {
-                await QueuedTask.Run(async () =>
-                {
-                    progress?.Report("Initializing...");
-                    var map = MapView.Active?.Map
-                        ?? throw new Exception("No active map found");
+                // Now pass this specific folder to ExportByGeometryType
+                await ExportByGeometryType(layerNameBase, themeTypeSpecificFolder, progress);
 
-                    // The following call to MakeEnvironmentArray was not directly used by a GP tool in this method's immediate scope.
-                    // Overwrite for file deletion is handled correctly within DeleteParquetFileAsync, which is called by ExportByGeometryType.
-                    // DuckDB's COPY TO handles its own file overwriting during export.
-                    /*
-                    try
-                    {
-                        Geoprocessing.MakeEnvironmentArray(overwriteoutput: true);
-                        System.Diagnostics.Debug.WriteLine("Set geoprocessing environment to allow overwriting");
-                        progress?.Report("Environment configured to allow file overwriting");
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Warning: Could not set geoprocessing environment: {ex.Message}");
-                    }
-                    */
-
-                    // Check if we have an extent filter (for info purposes)
-                    if (_currentExtent != null)
-                    {
-                        progress?.Report($"Creating data filtered to current map extent");
-                    }
-                    else
-                    {
-                        progress?.Report("Creating data (no extent filter applied)");
-                    }
-
-                    // With ArcGIS Pro 3.5's improved GeoParquet support, we can now use the original
-                    // complex structure without extensive flattening
-                    progress?.Report("Building query...");
-
-                    // Export by geometry type for all datasets
-                    await ExportByGeometryType(layerNameBase, releaseVersion, outputFolder, progress);
-                    progress?.Report($"All {layerNameBase} features added to map.");
-                });
+                progress?.Report($"Feature layer creation process completed for {layerNameBase}.");
+                System.Diagnostics.Debug.WriteLine($"Feature layer creation process completed for {layerNameBase}");
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Detailed error: {ex}");
-                throw new Exception($"Failed to create feature layer: {ex.Message}", ex);
+                progress?.Report($"Error creating feature layer {layerNameBase}: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error in CreateFeatureLayerAsync for {layerNameBase}: {ex.Message}");
+                // Handle or rethrow the exception as appropriate
+                throw;
+            }
+            finally
+            {
+                // Clear theme context after operation
+                _currentParentS3Theme = null;
+                _currentActualS3Type = null;
             }
         }
 
-        private async Task ExportByGeometryType(string layerNameBase, string releaseVersion, string outputFolder, IProgress<string> progress = null)
+        private async Task ExportByGeometryType(string layerNameBase, string themeTypeSpecificOutputFolder, IProgress<string> progress = null)
         {
+            System.Diagnostics.Debug.WriteLine($"ExportByGeometryType for {layerNameBase}, OutputFolder: {themeTypeSpecificOutputFolder}");
+            progress?.Report($"Processing geometry types for {layerNameBase}");
+
             using var command = _connection.CreateCommand();
-            command.CommandText = "SELECT DISTINCT ST_GeometryType(geometry) FROM current_table";
-            var geomTypes = new List<string>();
+            command.CommandText = "SELECT DISTINCT ST_GeometryType(geometry) as geom_type FROM current_table WHERE geometry IS NOT NULL";
 
-            using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
+            var geometryTypes = new List<string>();
+            try
             {
-                geomTypes.Add(reader.GetString(0));
-            }
-
-            string[] parts = layerNameBase.Split(THEME_TYPE_SEPARATOR, StringSplitOptions.None);
-            string theme = parts[0].Trim().ToLowerInvariant();
-            string type = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : theme;
-
-            string datasetFolder = Path.Combine(outputFolder, $"{theme}_{type}");
-
-            // Proactive cleanup of layers from the dataset folder
-            if (Directory.Exists(datasetFolder))
-            {
-                System.Diagnostics.Debug.WriteLine($"ExportByGeometryType: Proactively cleaning layers from folder: {datasetFolder}");
-                progress?.Report($"Cleaning existing layers for {theme}/{type}...");
-                var existingParquetFiles = Directory.GetFiles(datasetFolder, "*.parquet", SearchOption.TopDirectoryOnly);
-                if (existingParquetFiles.Length > 0)
+                using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
+                while (await reader.ReadAsync())
                 {
-                    foreach (var existingFile in existingParquetFiles)
+                    var geomType = reader.GetString(0);
+                    if (!string.IsNullOrEmpty(geomType))
                     {
-                        System.Diagnostics.Debug.WriteLine($"ExportByGeometryType: Proactively removing layers for existing file: {existingFile}");
-                        await RemoveLayersUsingFileAsync(existingFile); // This runs on MCT
+                        geometryTypes.Add(geomType);
+                        System.Diagnostics.Debug.WriteLine($"Found geometry type: {geomType}");
                     }
-
-                    System.Diagnostics.Debug.WriteLine($"ExportByGeometryType: Proactive layer removal complete for {datasetFolder}. Waiting for locks to release.");
-                    await Task.Delay(1500); // Increased delay after proactive removal
-                    GC.Collect();
-                    GC.WaitForPendingFinalizers();
-                    await Task.Delay(750); // Short additional delay after GC
-                    System.Diagnostics.Debug.WriteLine($"ExportByGeometryType: Post-GC delay complete for {datasetFolder}.");
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine($"ExportByGeometryType: No existing .parquet files found in {datasetFolder} for proactive cleanup.");
                 }
             }
-
-            // Additional delay and GC after all proactive cleanup for the current datasetFolder is complete
-            System.Diagnostics.Debug.WriteLine($"ExportByGeometryType: Additional delay and GC after proactive cleanup of {datasetFolder} before processing geometry types.");
-            await Task.Delay(2000); // 2-second delay
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            await Task.Delay(500); // Short additional delay after GC
-            System.Diagnostics.Debug.WriteLine($"ExportByGeometryType: Post-additional GC delay for {datasetFolder}.");
-
-            if (!Directory.Exists(datasetFolder))
+            catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Creating dataset folder: {datasetFolder}");
-                Directory.CreateDirectory(datasetFolder);
+                progress?.Report($"Error reading geometry types: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error reading geometry types: {ex.Message}");
+                throw; // Re-throw to be caught by CreateFeatureLayerAsync
             }
 
-            foreach (var geomType in geomTypes)
+            if (geometryTypes.Count == 0)
             {
-                progress?.Report($"Processing {geomType} features for {theme}/{type}...");
+                progress?.Report("No geometries found in the current dataset. Skipping layer creation.");
+                System.Diagnostics.Debug.WriteLine("No geometry types found. Skipping export.");
+                return;
+            }
 
-                string filteredQuery = $@"
-                    SELECT 
-                        *,
-                        ST_Transform({GEOMETRY_COLUMN}, '{DEFAULT_SRS}', '{DEFAULT_SRS}') AS {GEOMETRY_COLUMN}
-                    FROM current_table
-                    WHERE ST_GeometryType(geometry) = '{geomType}'";
+            int typeIndex = 0;
+            foreach (var geomType in geometryTypes)
+            {
+                typeIndex++;
+                progress?.Report($"Processing {layerNameBase}: {geomType} ({typeIndex}/{geometryTypes.Count})");
+                System.Diagnostics.Debug.WriteLine($"Processing {layerNameBase}: {geomType}");
 
-                string geometryDescription = GetDescriptiveGeometryType(geomType);
-                string fileName = $"{theme}_{type}_{geometryDescription}.parquet";
+                string descriptiveGeomType = GetDescriptiveGeometryType(geomType);
+                string finalLayerName = geometryTypes.Count > 1 ? $"{layerNameBase} ({descriptiveGeomType})" : layerNameBase;
+                string outputFileName = $"{MfcUtility.SanitizeFileName(finalLayerName)}.parquet";
 
-                string finalParquetPath = Path.Combine(datasetFolder, fileName);
-                string tempFileName = $"temp_{Guid.NewGuid()}_{fileName}";
-                string tempParquetPath = Path.Combine(datasetFolder, tempFileName);
+                // Ensure output path uses the theme/type specific folder
+                string outputPath = Path.Combine(themeTypeSpecificOutputFolder, outputFileName);
+                System.Diagnostics.Debug.WriteLine($"Output path for {geomType}: {outputPath}");
 
-                if (!Directory.Exists(datasetFolder))
+                // Ensure the specific output directory exists (it should from CreateFeatureLayerAsync, but double check)
+                string specificDir = Path.GetDirectoryName(outputPath);
+                if (!Directory.Exists(specificDir))
                 {
-                    System.Diagnostics.Debug.WriteLine($"Creating dataset folder: {datasetFolder}");
-                    Directory.CreateDirectory(datasetFolder);
+                    System.Diagnostics.Debug.WriteLine($"Creating specific directory for Parquet export: {specificDir}");
+                    Directory.CreateDirectory(specificDir);
                 }
 
-                bool exportToTempSuccess = false;
-                Exception lastExportToTempException = null;
-                progress?.Report($"Exporting data for {fileName} to temporary file...");
-                for (int exportAttempt = 0; exportAttempt < 3 && !exportToTempSuccess; exportAttempt++)
+                // Check if the Parquet file already exists
+                if (File.Exists(outputPath))
                 {
-                    try
-                    {
-                        // Use tempFileName for the layer name hint during temp export if needed by ExportToGeoParquet
-                        await ExportToGeoParquet(filteredQuery, tempParquetPath, tempFileName);
-                        exportToTempSuccess = true;
-                        System.Diagnostics.Debug.WriteLine($"Successfully exported to temporary file: {tempParquetPath}");
-                    }
-                    catch (Exception ex)
-                    {
-                        lastExportToTempException = ex;
-                        System.Diagnostics.Debug.WriteLine($"Temporary export attempt {exportAttempt + 1} for {fileName} failed: {ex.Message}");
-                        if (File.Exists(tempParquetPath)) try { File.Delete(tempParquetPath); } catch (Exception iex) { System.Diagnostics.Debug.WriteLine($"Failed to delete incomplete temp file {tempParquetPath}: {iex.Message}"); }
-                        await Task.Delay(1000 * (exportAttempt + 1));
-                    }
+                    progress?.Report($"File {outputFileName} already exists. Deleting before export.");
+                    System.Diagnostics.Debug.WriteLine($"File {outputPath} already exists. Deleting.");
+                    await DeleteParquetFileAsync(outputPath);
                 }
 
-                if (!exportToTempSuccess)
-                {
-                    progress?.Report($"Failed to create temporary data for {fileName}. Last error: {lastExportToTempException?.Message}");
-                    System.Diagnostics.Debug.WriteLine($"All temporary export attempts for {fileName} failed. Last error: {lastExportToTempException?.Message}");
-                    continue;
-                }
+                string query = $"SELECT * EXCLUDE geometry, ST_AsWKB(geometry) as geometry FROM current_table WHERE ST_GeometryType(geometry) = '{geomType}'";
 
-                if (File.Exists(finalParquetPath))
+                try
                 {
-                    progress?.Report($"Attempting to replace existing file: {fileName}...");
-                    System.Diagnostics.Debug.WriteLine($"Attempting to delete final target '{finalParquetPath}' before rename.");
-                    await DeleteParquetFileAsync(finalParquetPath);
+                    await ExportToGeoParquet(query, outputPath, finalLayerName, progress);
+                    await AddLayerToMapAsync(outputPath, finalLayerName, progress);
                 }
-
-                bool renameSuccess = false;
-                if (File.Exists(tempParquetPath))
+                catch (Exception ex)
                 {
-                    if (!File.Exists(finalParquetPath))
-                    {
-                        try
-                        {
-                            File.Move(tempParquetPath, finalParquetPath);
-                            renameSuccess = true;
-                            System.Diagnostics.Debug.WriteLine($"Successfully moved temporary file to final path: {finalParquetPath}");
-                        }
-                        catch (Exception ex)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"Failed to move temporary file {tempParquetPath} to {finalParquetPath}: {ex.Message}");
-                            if (File.Exists(tempParquetPath)) try { File.Delete(tempParquetPath); } catch (Exception iex) { System.Diagnostics.Debug.WriteLine($"Failed to delete orphaned temp file {tempParquetPath} after move failed: {iex.Message}"); }
-                        }
-                    }
-                    else
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Final target file {finalParquetPath} still exists after delete attempts. Cannot rename temporary file. Cleaning up temp file.");
-                        if (File.Exists(tempParquetPath)) try { File.Delete(tempParquetPath); } catch (Exception iex) { System.Diagnostics.Debug.WriteLine($"Failed to delete orphaned temp file {tempParquetPath} because final target still exists: {iex.Message}"); }
-                    }
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine($"Temporary file {tempParquetPath} does not exist, cannot rename. This might indicate an issue with the temp export.");
-                }
-
-                if (renameSuccess && File.Exists(finalParquetPath))
-                {
-                    var fileInfo = new FileInfo(finalParquetPath);
-                    if (fileInfo.Length > 0)
-                    {
-                        progress?.Report($"Adding {fileName} to map...");
-                        await QueuedTask.Run(() =>
-                        {
-                            var map = MapView.Active?.Map;
-                            if (map != null)
-                            {
-                                var newLayer = LayerFactory.Instance.CreateLayer(new Uri(finalParquetPath), map);
-
-                                if (newLayer is FeatureLayer featureLayerForCacheSettings)
-                                {
-                                    try
-                                    {
-                                        var layerDef = featureLayerForCacheSettings.GetDefinition() as CIMFeatureLayer;
-                                        if (layerDef != null)
-                                        {
-                                            System.Diagnostics.Debug.WriteLine($"Setting cache options for layer: {featureLayerForCacheSettings.Name}");
-                                            layerDef.DisplayCacheType = ArcGIS.Core.CIM.DisplayCacheType.None;
-                                            layerDef.FeatureCacheType = ArcGIS.Core.CIM.FeatureCacheType.None;
-                                            featureLayerForCacheSettings.SetDefinition(layerDef);
-                                            System.Diagnostics.Debug.WriteLine($"Successfully set DisplayCacheType and FeatureCacheType to None for {featureLayerForCacheSettings.Name}.");
-                                        }
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        System.Diagnostics.Debug.WriteLine($"Warning: Failed to set cache options for layer {featureLayerForCacheSettings.Name}: {ex.Message}");
-                                    }
-                                }
-
-                                if (newLayer is FeatureLayer featureLayer && type.Contains("address"))
-                                {
-                                    try
-                                    {
-                                        var layerDef = featureLayer.GetDefinition() as CIMFeatureLayer;
-                                        if (layerDef?.FeatureReduction != null)
-                                        {
-                                            layerDef.FeatureReduction.Enabled = false;
-                                            featureLayer.SetDefinition(layerDef);
-                                            System.Diagnostics.Debug.WriteLine($"Disabled binning for address layer: {featureLayer.Name}");
-                                        }
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        System.Diagnostics.Debug.WriteLine($"Failed to disable binning: {ex.Message}");
-                                    }
-                                }
-                            }
-                        });
-                    }
-                    else
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Final parquet file {finalParquetPath} is empty or does not exist after rename. Layer not added.");
-                        progress?.Report($"Error: Final data file for {fileName} is invalid.");
-                    }
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine($"Failed to prepare final file {finalParquetPath}. Layer not added for {fileName}.");
-                    progress?.Report($"Failed to update data on map for {fileName}.");
+                    progress?.Report($"Error exporting or adding layer for {geomType}: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Error during export/add for {geomType} of {layerNameBase}: {ex.Message}");
+                    // Decide if we should continue with other geometry types or rethrow
+                    // For now, log and continue to attempt other types
                 }
             }
+            progress?.Report($"Finished processing all geometry types for {layerNameBase}.");
         }
 
-        private async Task ExportToGeoParquet(string query, string outputPath, string _layerName)
+        private async Task ExportToGeoParquet(string query, string outputPath, string _layerName, IProgress<string> progress = null)
         {
+            progress?.Report($"Exporting data for {_layerName} to {Path.GetFileName(outputPath)}");
+            System.Diagnostics.Debug.WriteLine($"Exporting {_layerName} to {outputPath}");
+            System.Diagnostics.Debug.WriteLine($"Export query: {query}");
+
             try
             {
                 using var command = _connection.CreateCommand();
                 command.CommandText = BuildGeoParquetCopyCommand(query, outputPath);
-                System.Diagnostics.Debug.WriteLine($"Export command for {_layerName}: {command.CommandText}");
-                await command.ExecuteNonQueryAsync();
+
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+                progress?.Report($"Successfully exported data for {_layerName}.");
+                System.Diagnostics.Debug.WriteLine($"Successfully exported to {outputPath}");
             }
             catch (Exception ex)
             {
-                throw new Exception($"Failed to export GeoParquet for layer {_layerName}", ex);
+                progress?.Report($"Error exporting to GeoParquet for {_layerName}: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error in ExportToGeoParquet for {_layerName} to {outputPath}: {ex.Message}");
+                throw; // Re-throw to be caught by ExportByGeometryType
             }
         }
 
@@ -912,6 +802,97 @@ namespace DuckDBGeoparquet.Services
         {
             _connection?.Dispose();
             GC.SuppressFinalize(this);
+        }
+
+        private async Task AddLayerToMapAsync(string parquetFilePath, string layerName, IProgress<string> progress = null)
+        {
+            progress?.Report($"Adding layer {layerName} to map from {Path.GetFileName(parquetFilePath)}");
+            System.Diagnostics.Debug.WriteLine($"Attempting to add layer: {layerName} from path: {parquetFilePath}");
+
+            await QueuedTask.Run(() =>
+            {
+                var map = MapView.Active?.Map;
+                if (map == null)
+                {
+                    progress?.Report("Error: No active map found to add layer.");
+                    System.Diagnostics.Debug.WriteLine("AddLayerToMapAsync: No active map found.");
+                    return;
+                }
+
+                if (!File.Exists(parquetFilePath))
+                {
+                    progress?.Report($"Error: Parquet file not found at {parquetFilePath}");
+                    System.Diagnostics.Debug.WriteLine($"AddLayerToMapAsync: Parquet file not found at {parquetFilePath}");
+                    return;
+                }
+
+                try
+                {
+                    // Create a URI for the Parquet file
+                    Uri dataUri = new(parquetFilePath);
+
+                    // Create the layer using LayerFactory
+                    Layer newLayer = LayerFactory.Instance.CreateLayer(dataUri, map, layerName: layerName);
+
+                    if (newLayer == null)
+                    {
+                        progress?.Report($"Error: Could not create layer for {layerName}.");
+                        System.Diagnostics.Debug.WriteLine($"AddLayerToMapAsync: LayerFactory returned null for {parquetFilePath}");
+                        return;
+                    }
+
+                    // Attempt to set cache settings to None for performance with potentially large/dynamic datasets
+                    if (newLayer is FeatureLayer featureLayerForCacheSettings)
+                    {
+                        try
+                        {
+                            var layerDef = featureLayerForCacheSettings.GetDefinition() as CIMFeatureLayer;
+                            if (layerDef != null)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"Setting cache options for layer: {featureLayerForCacheSettings.Name}");
+                                layerDef.DisplayCacheType = ArcGIS.Core.CIM.DisplayCacheType.None;
+                                layerDef.FeatureCacheType = ArcGIS.Core.CIM.FeatureCacheType.None;
+                                featureLayerForCacheSettings.SetDefinition(layerDef);
+                                System.Diagnostics.Debug.WriteLine($"Successfully set DisplayCacheType and FeatureCacheType to None for {featureLayerForCacheSettings.Name}.");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Warning: Failed to set cache options for layer {featureLayerForCacheSettings.Name}: {ex.Message}");
+                        }
+                    }
+
+                    // Specific handling for address layers to disable feature reduction/binning by default
+                    if (newLayer is FeatureLayer featureLayer && (layerName.ToLower().Contains("address") || (_currentActualS3Type != null && _currentActualS3Type.ToLower().Contains("address"))))
+                    {
+                        try
+                        {
+                            var layerDef = featureLayer.GetDefinition() as CIMFeatureLayer;
+                            if (layerDef?.FeatureReduction != null)
+                            {
+                                layerDef.FeatureReduction.Enabled = false;
+                                featureLayer.SetDefinition(layerDef);
+                                System.Diagnostics.Debug.WriteLine($"Disabled feature reduction (binning) for address layer: {featureLayer.Name}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Warning: Failed to disable feature reduction for address layer {featureLayer.Name}: {ex.Message}");
+                        }
+                    }
+
+                    progress?.Report($"Successfully added layer: {newLayer.Name}");
+                    System.Diagnostics.Debug.WriteLine($"AddLayerToMapAsync: Successfully added layer {newLayer.Name} to map {map.Name}");
+                }
+                catch (Exception ex)
+                {
+                    progress?.Report($"Error adding layer {layerName} to map: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"AddLayerToMapAsync: Error adding layer {layerName} from {parquetFilePath}: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Stack trace: {ex.StackTrace}");
+                    // Optionally, show a message box to the user if critical
+                    // ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show($"Failed to add layer {layerName}:\n{ex.Message}", "Layer Error", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+                }
+            });
         }
     }
 }

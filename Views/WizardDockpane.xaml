@@ -5,8 +5,11 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:extensions="clr-namespace:ArcGIS.Desktop.Extensions;assembly=ArcGIS.Desktop.Extensions"
              xmlns:ui="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
+             xmlns:local="clr-namespace:DuckDBGeoparquet.Views"
+             xmlns:i="http://schemas.microsoft.com/xaml/behaviors"
              mc:Ignorable="d" 
-             d:DesignHeight="600" d:DesignWidth="400">
+             d:DesignHeight="600" d:DesignWidth="400"
+             d:DataContext="{d:DesignInstance local:WizardDockpaneViewModel, IsDesignTimeCreatable=True}">
     <UserControl.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
@@ -32,20 +35,43 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="16,12,16,12" Orientation="Vertical" >
                         <!-- 1. Choose Themes -->
-                        <TextBlock Text="1. Choose Themes" Margin="0,0,0,4"/>
+                        <TextBlock Text="1. Choose Themes" Margin="0,4,0,4"/>
                         <Border 
                                 BorderBrush="{DynamicResource Esri_BorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="2"
                                 Padding="8"
                                 Margin="0,0,0,12">
-                            <ListBox Style="{DynamicResource Esri_ListBox}" MaxHeight="150" ItemsSource="{Binding Themes}" BorderThickness="0" Background="Transparent">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <CheckBox Content="{Binding Name}" IsChecked="{Binding IsSelected, Mode=TwoWay}" Style="{DynamicResource Esri_CheckBox}" Margin="0,2,0,2"/>
+                            <ItemsControl ItemsSource="{Binding Themes}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type local:SelectableThemeItem}">
+                                        <Expander Style="{DynamicResource Esri_ExpanderPlus}" Header="{Binding DisplayName}" IsExpanded="False" Margin="0,2" Background="{DynamicResource Esri_BorderBrush}">
+                                            <Expander.HeaderTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <CheckBox IsChecked="{Binding DataContext.IsSelected, RelativeSource={RelativeSource AncestorType=Expander}, Mode=TwoWay}"
+                                                                  Visibility="{Binding DataContext.IsSelectable, RelativeSource={RelativeSource AncestorType=Expander}, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                                  VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                                        <TextBlock Text="{Binding}" VerticalAlignment="Center"/>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </Expander.HeaderTemplate>
+                                            <ItemsControl ItemsSource="{Binding SubItems}" Margin="20,5,0,5">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type local:SelectableThemeItem}">
+                                                        <CheckBox Content="{Binding DisplayName}" 
+                                                                  IsChecked="{Binding IsSelected, Mode=TwoWay}" 
+                                                                  Style="{DynamicResource Esri_CheckBox}" 
+                                                                  Margin="0,2,0,2"
+                                                                  Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"
+                                                                  />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </Expander>
                                     </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                         </Border>
                         <!-- 2. Select Area -->
                         <TextBlock Text="2. Select Area" Margin="0,0,0,4"/>
@@ -57,13 +83,13 @@
                                 Margin="0,0,0,12">
                             <StackPanel>
                                 <TextBlock Text="Data Extent:" Margin="0,0,0,4"/>
-                                <RadioButton Content="Current Map Extent" IsChecked="{Binding UseCurrentMapExtent}" Margin="0,2,0,0"/>
+                                <RadioButton Content="Current Map Extent" IsChecked="{Binding UseCurrentMapExtent}" Margin="0,2,0,0" />
                                 <RadioButton Content="Custom Extent" IsChecked="{Binding UseCustomExtent}"  Margin="0,2,0,0"/>
                                 <Button Content="Set Custom Extent..." HorizontalAlignment="Left" Margin="16,4,0,0" Command="{Binding SetCustomExtentCommand}" Style="{DynamicResource Esri_Button}" IsEnabled="{Binding UseCustomExtent}"/>
                                 <Border  BorderBrush="{DynamicResource Esri_BorderBrush}" BorderThickness="1" Padding="6" Margin="16,4,0,0" Visibility="{Binding HasCustomExtent, Converter={StaticResource BooleanToVisibilityConverter}}">
                                     <StackPanel>
-                                        <TextBlock Text="Custom Extent Coordinates:"   FontWeight="SemiBold" Margin="0,0,0,2"/>
-                                        <TextBlock Text="{Binding CustomExtentDisplay}"  TextWrapping="Wrap"/>
+                                        <TextBlock Text="Custom Extent Coordinates:"   FontWeight="SemiBold" Margin="0,0,0,2" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
+                                        <TextBlock Text="{Binding CustomExtentDisplay}"  TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
                                     </StackPanel>
                                 </Border>
                             </StackPanel>
@@ -86,8 +112,8 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="Data Output Location:" VerticalAlignment="Center" Margin="0,0,8,0" />
-                                    <TextBox Grid.Column="1" Text="{Binding DataOutputPath}" VerticalAlignment="Center" IsReadOnly="True" Margin="0,0,4,0"/>
+                                    <TextBlock Grid.Column="0" Text="Data Output Location:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBox Grid.Column="1" Text="{Binding DataOutputPath}" VerticalAlignment="Center" IsReadOnly="True" Margin="0,0,4,0" Style="{DynamicResource Esri_TextBox}"/>
                                     <Button Grid.Column="2" Content="Browse..." Style="{DynamicResource Esri_Button}" Command="{Binding BrowseDataLocationCommand}" Width="70"/>
                                 </Grid>
                             </StackPanel>
@@ -103,16 +129,16 @@
                             <StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                     <Image Width="24" Height="24" Margin="0,0,8,0" VerticalAlignment="Center" Source="{StaticResource OvertureIcon}"/>
-                                    <TextBlock Text="Selected Themes:"  VerticalAlignment="Center" Margin="0,0,4,0"/>
-                                    <TextBlock Text="{Binding SelectedThemes.Count}" Style="{DynamicResource Esri_TextBlockH4}" Foreground="{DynamicResource Esri_TextCaptionActiveBrush}" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Selected Data Types:"  VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                    <TextBlock Text="{Binding SelectedLeafItemCount}" Style="{DynamicResource Esri_TextBlockH4}" Foreground="{DynamicResource Esri_TextCaptionActiveBrush}" VerticalAlignment="Center"/>
                                 </StackPanel>
-                                <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}" BorderBrush="{DynamicResource Esri_BorderBrush}" BorderThickness="1" Padding="8" Margin="0,0,0,8" Visibility="{Binding SelectedThemes.Count, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}" BorderBrush="{DynamicResource Esri_BorderBrush}" BorderThickness="1" Padding="8" Margin="0,0,0,8" Visibility="{Binding SelectedLeafItemCount, Converter={StaticResource BooleanToVisibilityConverter}, FallbackValue=Collapsed}">
                                     <StackPanel>
-                                        <TextBlock Text="Selected Themes:"  Foreground="{DynamicResource Esri_TextStyleSubduedBrush}" Margin="0,0,0,4"/>
-                                        <ItemsControl ItemsSource="{Binding SelectedThemes}">
+                                        <TextBlock Text="Selected Data Types:"  Foreground="{DynamicResource Esri_TextStyleSubduedBrush}" Margin="0,0,0,4"/>
+                                        <ItemsControl ItemsSource="{Binding AllSelectedLeafItemsForPreview}">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <TextBlock Text="{Binding}" Style="{DynamicResource Esri_TextBlockRegular}" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}" Margin="8,0,0,2"/>
+                                                    <TextBlock Text="{Binding DisplayName}" Style="{DynamicResource Esri_TextBlockRegular}" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}" Margin="8,0,0,2"/>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
@@ -152,9 +178,9 @@
                 </ScrollViewer>
             </TabItem>
             <!-- Status Tab -->
-            <TabItem Header="Status" >
+            <TabItem Header="Status">
                 <StackPanel Margin="16,12,16,12">
-                    <TextBlock Text="Operation Progress" Margin="0,0,0,4"/>
+                    <TextBlock Text="Operation Progress" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,4"/>
                     <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
                             BorderBrush="{DynamicResource Esri_BorderBrush}"
                             BorderThickness="1"
@@ -163,7 +189,7 @@
                             Margin="0,0,0,12">
                         <StackPanel>
                             <TextBlock Text="{Binding StatusText}" Style="{DynamicResource Esri_TextBlockRegular}" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}" TextWrapping="Wrap" Margin="0,0,0,4"/>
-                            <ProgressBar Value="{Binding ProgressValue}" Height="20" Margin="0,4,0,0" />
+                            <ProgressBar Value="{Binding ProgressValue}" Height="20" Margin="0,4,0,0" Style="{DynamicResource Esri_ProgressBar}"/>
                         </StackPanel>
                     </Border>
                     <TextBlock Text="Log Output" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,4"/>
@@ -186,7 +212,7 @@
                 </StackPanel>
             </TabItem>
             <!-- Create MFC Tab -->
-            <TabItem Header="Create MFC" Style="{DynamicResource Esri_TabItem}">
+            <TabItem Header="Create MFC">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="16,12,16,12" Orientation="Vertical">
                         <TextBlock Text="Create Multifile Feature Connection" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,12"/>
@@ -197,7 +223,7 @@
                                 CornerRadius="2"
                                 Padding="8"
                                 Margin="0,0,0,12">
-                            <TextBlock TextWrapping="Wrap">
+                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
                                 A Multifile Feature Connection (MFC) allows ArcGIS Pro to work efficiently with multiple GeoParquet files as a single dataset. This makes it easier to visualize and analyze the Overture Maps data.
                                 <LineBreak/><LineBreak/>
                                 Note: Creating an MFC can take some time as it indexes all of your data files.
@@ -218,8 +244,8 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="MFC Output Location:" VerticalAlignment="Center" Margin="0,0,8,0" />
-                                    <TextBox Grid.Column="1" Text="{Binding MfcOutputPath}" VerticalAlignment="Center" IsReadOnly="True" Margin="0,0,4,0"/>
+                                    <TextBlock Grid.Column="0" Text="MFC Output Location:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBox Grid.Column="1" Text="{Binding MfcOutputPath}" VerticalAlignment="Center" IsReadOnly="True" Margin="0,0,4,0" Style="{DynamicResource Esri_TextBox}"/>
                                     <Button Grid.Column="2" Content="Browse..." Style="{DynamicResource Esri_Button}" Command="{Binding BrowseMfcLocationCommand}" Width="70"/>
                                 </Grid>
                                 <TextBlock Text="MFC Options:" Margin="0,8,0,4"/>
@@ -245,8 +271,8 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="Data Folder:" VerticalAlignment="Center" Margin="0,0,8,0" />
-                                    <TextBox Grid.Column="1" Text="{Binding CustomDataFolderPath}" VerticalAlignment="Center" IsReadOnly="True" Margin="0,0,4,0"/>
+                                    <TextBlock Grid.Column="0" Text="Data Folder:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBox Grid.Column="1" Text="{Binding CustomDataFolderPath}" VerticalAlignment="Center" IsReadOnly="True" Margin="0,0,4,0" Style="{DynamicResource Esri_TextBox}"/>
                                     <Button Grid.Column="2" Content="Browse..." Style="{DynamicResource Esri_Button}" Command="{Binding BrowseCustomDataFolderCommand}" Width="70"/>
                                 </Grid>
                             </StackPanel>

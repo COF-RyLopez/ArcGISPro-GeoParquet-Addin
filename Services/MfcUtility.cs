@@ -233,6 +233,32 @@ namespace DuckDBGeoparquet.Services
         }
 
         /// <summary>
+        /// Sanitizes a string to be used as a file name by replacing invalid characters.
+        /// </summary>
+        /// <param name="name">The input string to sanitize.</param>
+        /// <returns>A sanitized string suitable for use as a file name.</returns>
+        public static string SanitizeFileName(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                return string.Empty;
+            }
+
+            string invalidChars = new string(Path.GetInvalidFileNameChars()) + new string(Path.GetInvalidPathChars());
+            string sanitizedName = name;
+
+            foreach (char c in invalidChars)
+            {
+                sanitizedName = sanitizedName.Replace(c.ToString(), "_");
+            }
+
+            // Additional common replacements if desired (e.g., spaces)
+            // sanitizedName = sanitizedName.Replace(" ", "_");
+
+            return sanitizedName;
+        }
+
+        /// <summary>
         /// Refreshes an existing MFC to incorporate new or updated data
         /// </summary>
         /// <param name="mfcPath">Path to the existing MFC file</param>

@@ -124,16 +124,6 @@
 			<CopyLocal>False</CopyLocal>
 			<Private>False</Private>
 		</Reference>
-		<Reference Include="ArcGIS.Desktop.Docking.Wpf">
-			<HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Desktop.Docking.Wpf.dll</HintPath>
-			<CopyLocal>False</CopyLocal>
-			<Private>False</Private>
-		</Reference>
-		<Reference Include="ArcGIS.Desktop.Editors.Wpf">
-			<HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Desktop.Editors.Wpf.dll</HintPath>
-			<CopyLocal>False</CopyLocal>
-			<Private>False</Private>
-		</Reference>
 	</ItemGroup>
 	<Import Project="C:\Program Files\ArcGIS\Pro\bin\Esri.ProApp.SDK.Desktop.targets" Condition="Exists('C:\Program Files\ArcGIS\Pro\bin\Esri.ProApp.SDK.Desktop.targets') AND !Exists('Esri.ArcGISPro.Extensions.targets')" />
 </Project>

@@ -11,30 +11,15 @@ namespace DuckDBGeoparquet.Views
         }
 
         /// <summary>
-        /// Event handler for theme checkboxes to toggle theme selection
+        /// Handles the TreeViewItem's Selected event to update the ViewModel's preview item.
         /// </summary>
-        private void ThemeCheckBox_CheckedChanged(object sender, RoutedEventArgs e)
+        private void OnTreeViewItemSelected(object sender, RoutedEventArgs e)
         {
-            if (DataContext is WizardDockpaneViewModel viewModel)
+            if (DataContext is WizardDockpaneViewModel viewModel && e.OriginalSource is TreeViewItem treeViewItem)
             {
-                if (sender is CheckBox checkBox && checkBox.Tag != null)
+                if (treeViewItem.DataContext is SelectableThemeItem selectedThemeItem)
                 {
-                    string theme = checkBox.Tag.ToString();
-                    viewModel.ToggleThemeSelection(theme);
-
-                    // Also update the preview by setting SelectedTheme to the most recently selected theme
-                    if (checkBox.IsChecked == true)
-                    {
-                        viewModel.SelectedTheme = theme;
-                    }
-                    else if (viewModel.SelectedThemes.Count > 0)
-                    {
-                        viewModel.SelectedTheme = viewModel.SelectedThemes[0];
-                    }
-                    else
-                    {
-                        viewModel.SelectedTheme = null;
-                    }
+                    viewModel.SelectedItemForPreview = selectedThemeItem;
                 }
             }
         }
