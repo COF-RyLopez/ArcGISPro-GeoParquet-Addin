@@ -42,35 +42,41 @@
                                 CornerRadius="2"
                                 Padding="8"
                                 Margin="0,0,0,12">
-                            <ItemsControl ItemsSource="{Binding Themes}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate DataType="{x:Type local:SelectableThemeItem}">
-                                        <Expander Style="{DynamicResource Esri_Expander}" Header="{Binding DisplayName}" IsExpanded="False" Margin="0,2">
-                                            <Expander.HeaderTemplate>
-                                                <DataTemplate>
-                                                    <StackPanel Orientation="Horizontal">
-                                                        <CheckBox IsChecked="{Binding DataContext.IsSelected, RelativeSource={RelativeSource AncestorType=Expander}, Mode=TwoWay}"
-                                                                  Visibility="{Binding DataContext.IsSelectable, RelativeSource={RelativeSource AncestorType=Expander}, Converter={StaticResource BooleanToVisibilityConverter}}"
-                                                                  VerticalAlignment="Center" Margin="0,0,5,0"/>
-                                                        <TextBlock Text="{Binding}" VerticalAlignment="Center"/>
-                                                    </StackPanel>
-                                                </DataTemplate>
-                                            </Expander.HeaderTemplate>
-                                            <ItemsControl ItemsSource="{Binding SubItems}" Margin="20,5,0,5">
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate DataType="{x:Type local:SelectableThemeItem}">
-                                                        <CheckBox Content="{Binding DisplayName}" 
-                                                                  IsChecked="{Binding IsSelected, Mode=TwoWay}" 
-                                                                  Style="{DynamicResource Esri_CheckBox}" 
-                                                                  Margin="0,2,0,2"
-                                                                  />
+                            <StackPanel>
+                                <CheckBox Content="Select All Themes" 
+                                          IsChecked="{Binding IsSelectAllChecked, Mode=TwoWay}" 
+                                          Margin="0,0,0,8"
+                                          Style="{DynamicResource Esri_CheckBox}"/>
+                                <ItemsControl ItemsSource="{Binding Themes}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type local:SelectableThemeItem}">
+                                            <Expander Style="{DynamicResource Esri_Expander}" Header="{Binding DisplayName}" IsExpanded="False" Margin="0,2">
+                                                <Expander.HeaderTemplate>
+                                                    <DataTemplate>
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <CheckBox IsChecked="{Binding DataContext.IsSelected, RelativeSource={RelativeSource AncestorType=Expander}, Mode=TwoWay}"
+                                                                      Visibility="{Binding DataContext.IsSelectable, RelativeSource={RelativeSource AncestorType=Expander}, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                                      VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                                            <TextBlock Text="{Binding}" VerticalAlignment="Center"/>
+                                                        </StackPanel>
                                                     </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-                                        </Expander>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                                                </Expander.HeaderTemplate>
+                                                <ItemsControl ItemsSource="{Binding SubItems}" Margin="20,5,0,5">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate DataType="{x:Type local:SelectableThemeItem}">
+                                                            <CheckBox Content="{Binding DisplayName}" 
+                                                                      IsChecked="{Binding IsSelected, Mode=TwoWay}" 
+                                                                      Style="{DynamicResource Esri_CheckBox}" 
+                                                                      Margin="0,2,0,2"
+                                                                      />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </Expander>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
                         </Border>
                         <!-- 2. Select Area -->
                         <TextBlock Text="2. Select Area" Margin="0,0,0,4"/>

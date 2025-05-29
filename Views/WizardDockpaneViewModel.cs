@@ -315,6 +315,10 @@ namespace DuckDBGeoparquet.Views
                 ResetState(); AddToLog("Add-in state has been reset.");
                 try { this.Hide(); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Error closing dockpane: {ex.Message}"); }
             });
+            SelectAllCommand = new RelayCommand(
+                () => IsSelectAllChecked = !IsSelectAllChecked, // Action: Toggle the IsSelectAllChecked property
+                () => Themes != null && Themes.Any(t => t.IsSelectable || t.SubItems.Any()) // CanExecute: If there are any selectable themes
+            );
 
             CustomExtentTool.ExtentCreatedStatic += OnExtentCreated;
 
@@ -334,6 +338,7 @@ namespace DuckDBGeoparquet.Views
             StatusText = "Initializing..."; // Initial status
             NotifyPropertyChanged(nameof(IsLoading));
             NotifyPropertyChanged(nameof(StatusText));
+            _isSelectAllChecked = false; // Initialize Select All state
 
             _ = InitializeAsync(); // This will call InitializeThemes and update release-specific paths
         }
@@ -615,6 +620,24 @@ namespace DuckDBGeoparquet.Views
         // Track the last loaded data path for MFC creation
         private string _lastLoadedDataPath;
 
+        private bool _isSelectAllChecked;
+        public bool IsSelectAllChecked
+        {
+            get => _isSelectAllChecked;
+            set
+            {
+                if (_isSelectAllChecked != value)
+                {
+                    // SetProperty will update the backing field and notify the UI.
+                    SetProperty(ref _isSelectAllChecked, value, nameof(IsSelectAllChecked));
+                    // Execute the logic to select/deselect all items based on the new value.
+                    ExecuteSelectAllInternal(value);
+                }
+            }
+        }
+
+        private bool _isUpdatingSelectionInternally = false;
+
         #endregion
 
         #region Commands
@@ -627,6 +650,7 @@ namespace DuckDBGeoparquet.Views
         public ICommand CreateMfcCommand { get; private set; }
         public ICommand GoToCreateMfcTabCommand { get; private set; }
         public ICommand CancelCommand { get; private set; }
+        public ICommand SelectAllCommand { get; private set; }
         #endregion
 
         #region Helper Methods
@@ -750,6 +774,7 @@ namespace DuckDBGeoparquet.Views
             NotifyPropertyChanged(nameof(ThemeIconText));
             NotifyPropertyChanged(nameof(SelectedLeafItemCount));
             NotifyPropertyChanged(nameof(AllSelectedLeafItemsForPreview));
+            UpdateIsSelectAllCheckedStatus(); // Ensure "Select All" checkbox reflects current state
         }
 
         private void ShowThemeInfo()
@@ -1697,6 +1722,8 @@ namespace DuckDBGeoparquet.Views
             // Reset other properties
             SelectedTheme = null;
             SelectedTabIndex = 0; // Switch back to the first tab
+            _isSelectAllChecked = false; // Explicitly reset, though UpdateIsSelectAllCheckedStatus will also do it.
+            NotifyPropertyChanged(nameof(IsSelectAllChecked));
 
             // Reset extent options
             UseCurrentMapExtent = true;
@@ -1740,7 +1767,9 @@ namespace DuckDBGeoparquet.Views
             (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
             (ShowThemeInfoCommand as RelayCommand)?.RaiseCanExecuteChanged();
             (SetCustomExtentCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (SelectAllCommand as RelayCommand)?.RaiseCanExecuteChanged();
 
+            UpdateIsSelectAllCheckedStatus(); // Ensure Select All checkbox is correctly updated
             System.Diagnostics.Debug.WriteLine("Add-in state has been reset");
         }
 
@@ -1805,6 +1834,8 @@ namespace DuckDBGeoparquet.Views
             }
             Themes = themesCollection; // Assign to the public property
             NotifyPropertyChanged(nameof(Themes));
+            UpdateIsSelectAllCheckedStatus(); // Set initial state of SelectAll checkbox
+            (SelectAllCommand as RelayCommand)?.RaiseCanExecuteChanged(); // Update command state
         }
 
         private List<SelectableThemeItem> GetSelectedLeafItems()
@@ -1836,6 +1867,8 @@ namespace DuckDBGeoparquet.Views
         // This method is now the primary handler for selection changes on leaf items
         private void OnLeafThemeSelectionChanged(object sender, EventArgs e)
         {
+            if (_isUpdatingSelectionInternally) return; // Skip if a bulk update is in progress
+
             if (sender is SelectableThemeItem selectedLeafItem)
             {
                 // Set this item for preview purposes, even if it's being deselected
@@ -1843,10 +1876,90 @@ namespace DuckDBGeoparquet.Views
                 SelectedItemForPreview = selectedLeafItem;
             }
             // Update combined estimates and other UI elements that depend on the full selection set
-            UpdateThemePreview();
+            UpdateThemePreview(); // This eventually calls UpdateIsSelectAllCheckedStatus
             (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
             NotifyPropertyChanged(nameof(SelectedLeafItemCount));
             NotifyPropertyChanged(nameof(AllSelectedLeafItemsForPreview));
+            // UpdateIsSelectAllCheckedStatus(); // Explicitly call to ensure status is current
+        }
+
+        private void ExecuteSelectAllInternal(bool select)
+        {
+            if (Themes == null) return;
+
+            _isUpdatingSelectionInternally = true;
+            try
+            {
+                foreach (var themeItem in Themes)
+                {
+                    if (themeItem.IsSelectable) // Parent is a leaf
+                    {
+                        themeItem.IsSelected = select; // This will trigger its SelectionChanged
+                    }
+                    // Also iterate through sub-items
+                    foreach (var subItem in themeItem.SubItems)
+                    {
+                        // SubItems are always selectable leaves
+                        subItem.IsSelected = select; // This will trigger its SelectionChanged
+                    }
+                }
+            }
+            finally
+            {
+                _isUpdatingSelectionInternally = false;
+            }
+
+            // After bulk update, the individual OnLeafThemeSelectionChanged handlers were skipped.
+            // We need to manually trigger updates for dependent properties and the overall "Select All" state.
+            UpdateThemePreview(); // Refreshes previews, and calls UpdateIsSelectAllCheckedStatus
+            (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            NotifyPropertyChanged(nameof(SelectedLeafItemCount));
+            NotifyPropertyChanged(nameof(AllSelectedLeafItemsForPreview));
+            // UpdateIsSelectAllCheckedStatus(); // Called by UpdateThemePreview indirectly, but call directly for safety
+        }
+
+        private void UpdateIsSelectAllCheckedStatus()
+        {
+            if (Themes == null || !Themes.Any())
+            {
+                // Use SetProperty to ensure UI is notified if it changes.
+                SetProperty(ref _isSelectAllChecked, false, nameof(IsSelectAllChecked));
+                return;
+            }
+
+            bool allSelected = true;
+            bool anySelectableLeafExists = false;
+
+            foreach (var themeItem in Themes)
+            {
+                if (themeItem.IsSelectable) // Parent is a leaf
+                {
+                    anySelectableLeafExists = true;
+                    if (!themeItem.IsSelected)
+                    {
+                        allSelected = false;
+                        break;
+                    }
+                }
+                else if (themeItem.SubItems.Any()) // Parent has sub-items
+                {
+                    foreach (var subItem in themeItem.SubItems)
+                    {
+                        // SubItems are always selectable (leaves)
+                        anySelectableLeafExists = true;
+                        if (!subItem.IsSelected)
+                        {
+                            allSelected = false;
+                            break;
+                        }
+                    }
+                }
+                if (!allSelected) break;
+            }
+
+            // If no selectable items exist, "Select All" should be false.
+            // If selectable items exist, "Select All" is true only if all of them are selected.
+            SetProperty(ref _isSelectAllChecked, anySelectableLeafExists && allSelected, nameof(IsSelectAllChecked));
         }
     }
 }
