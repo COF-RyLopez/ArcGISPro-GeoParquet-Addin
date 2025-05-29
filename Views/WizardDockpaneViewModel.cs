@@ -30,9 +30,13 @@ namespace DuckDBGeoparquet.Views
     public class SelectableThemeItem : INotifyPropertyChanged
     {
         private string _displayName;
-        private bool _isSelected;
+        private bool? _isSelected; // Changed to nullable bool
         private string _actualType;
         private string _parentThemeForS3;
+        private bool _isExpanded;
+        private bool _isUpdatingSubItems = false; // Flag to prevent loops when parent updates children
+
+        public SelectableThemeItem Parent { get; internal set; } // Property to hold the parent
 
         public string DisplayName
         {
@@ -47,16 +51,64 @@ namespace DuckDBGeoparquet.Views
             }
         }
 
-        public bool IsSelected
+        public bool? IsSelected // Changed to nullable bool
         {
             get => _isSelected;
-            set
+            set // 'value' here is what the XAML CheckBox binding is trying to set
             {
-                if (_isSelected != value && IsSelectable) // Only allow change if selectable
+                bool? determinedNewState = value; // Start with what the UI is suggesting
+
+                if (IsExpandable) // Special handling for parent node clicks
                 {
-                    _isSelected = value;
+                    // If the parent was fully checked (IsSelected == true internally),
+                    // and the user clicks it, the default WPF cycle for a tristate checkbox
+                    // (when bound with TargetNullValue) would send 'null' as the new 'value' from the UI.
+                    // We want this specific interaction to mean "uncheck all children".
+                    if (_isSelected == true && value == null)
+                    {
+                        determinedNewState = false;
+                    }
+                    // If it was false or indeterminate, and user clicks, WPF sends 'true' (from false/indeterminate) or 'false' (from indeterminate).
+                    // In these cases, 'value' represents the desired state (true to select all, false to deselect all from indeterminate).
+                    // So, determinedNewState will either be 'false' (if user unchecks a fully checked parent)
+                    // or 'value' (which would be true if user checks an unchecked/indeterminate parent, or false if user deselects from indeterminate).
+                }
+
+                if (_isSelected != determinedNewState)
+                {
+                    _isSelected = determinedNewState;
+
+                    // If this is a parent item, propagate the selection to children
+                    // Only propagate if the new state is definitively true or false
+                    if (IsExpandable && _isSelected.HasValue && !_isUpdatingSubItems)
+                    {
+                        _isUpdatingSubItems = true;
+                        foreach (var subItem in SubItems)
+                        {
+                            subItem.IsSelected = _isSelected; // Propagate the true/false state
+                        }
+                        _isUpdatingSubItems = false;
+                    }
+
+                    // Handle Expansion/Collapse for this parent item based on its new IsSelected state
+                    if (IsExpandable)
+                    {
+                        if (_isSelected == true)
+                        {
+                            IsExpanded = true;  // Expand if parent is fully selected
+                        }
+                        else if (_isSelected == false)
+                        {
+                            IsExpanded = false; // Collapse if parent is fully unselected
+                        }
+                        // If _isSelected is null (indeterminate), do not change IsExpanded state from this selection logic.
+                    }
+
                     OnPropertyChanged();
-                    SelectionChanged?.Invoke(this, EventArgs.Empty);
+                    SelectionChanged?.Invoke(this, EventArgs.Empty); // Notify subscribers (like ViewModel for leaves)
+
+                    // If this item has a parent, notify the parent to update its state
+                    Parent?.UpdateSelectionStateFromChildren();
                 }
             }
         }
@@ -77,6 +129,19 @@ namespace DuckDBGeoparquet.Views
         public bool IsExpandable => SubItems.Any();
         public bool IsSelectable { get; } // True if it's a leaf node
 
+        public bool IsExpanded // New property definition
+        {
+            get => _isExpanded;
+            set
+            {
+                if (_isExpanded != value && IsExpandable) // Only allow change if expandable
+                {
+                    _isExpanded = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
         public event EventHandler SelectionChanged;
         public event PropertyChangedEventHandler PropertyChanged;
 
@@ -91,11 +156,48 @@ namespace DuckDBGeoparquet.Views
             ActualType = actualType;
             ParentThemeForS3 = parentThemeForS3;
             SubItems = new ObservableCollection<SelectableThemeItem>();
-            IsSelectable = isLeafNode; // Leaf nodes are selectable
-            if (!isLeafNode)
+            IsSelectable = isLeafNode; // Leaf nodes are selectable (actual data types)
+            _isSelected = false; // Default to false (not indeterminate)
+            _isExpanded = false; // Default to not expanded
+            // If it's a parent (not a leaf node but has potential for sub-items), 
+            // its IsSelected state will be determined by its children later.
+        }
+
+        internal void UpdateSelectionStateFromChildren()
+        {
+            if (!IsExpandable || _isUpdatingSubItems) // Only parents update from children; avoid loops
+                return;
+
+            bool? newSelectionState = CalculateSelectionStateFromChildren();
+
+            if (_isSelected != newSelectionState)
             {
-                _isSelected = false; // Non-selectable parents are never "selected" in their own right
+                _isSelected = newSelectionState;
+                OnPropertyChanged(nameof(IsSelected));
+                // We might not want to invoke SelectionChanged here for parents if it triggers data load logic
+                // The ViewModel should primarily listen to SelectionChanged from actual data leaves (IsSelectable = true)
             }
+        }
+
+        private bool? CalculateSelectionStateFromChildren()
+        {
+            if (!SubItems.Any())
+                return false; // No children, so parent is effectively unselected (or could be true if it's a leaf parent itself)
+                              // For a non-leaf parent, if it has no children, it should probably be 'false'.
+                              // This case might not occur if SubItems are always populated for expandable parents.
+
+            bool allTrue = true;
+            bool allFalse = true;
+
+            foreach (var subItem in SubItems)
+            {
+                if (subItem.IsSelected != true) allTrue = false;
+                if (subItem.IsSelected != false) allFalse = false;
+            }
+
+            if (allTrue) return true;
+            if (allFalse) return false;
+            return null; // Indeterminate
         }
     }
 
@@ -938,21 +1040,36 @@ namespace DuckDBGeoparquet.Views
             NotifyPropertyChanged(nameof(HasCustomExtent));
 
             // Make sure custom extent radio is selected
-            UseCustomExtent = true;
-            UseCurrentMapExtent = false;
+            UseCustomExtent = true; // This will also set UseCurrentMapExtent = false via its setter
 
-            // First ensure we're completely back to the default tool
+            // Ensure tool is deactivated and provide feedback
             QueuedTask.Run(async () => {
                 try
                 {
-                    // Make absolutely sure we return to the default explore tool first
+                    var mapView = MapView.Active;
+                    if (mapView != null)
+                    {
+                        mapView.CancelDrawing();
+                        System.Diagnostics.Debug.WriteLine("MapView.CancelDrawing() called.");
+                    }
+
+                    // Deactivate the custom drawing tool and return to the default explore tool
+                    // First, explicitly deactivate the current tool (which should be our CustomExtentTool)
+                    await FrameworkApplication.SetCurrentToolAsync(null);
+                    System.Diagnostics.Debug.WriteLine("Current tool explicitly deactivated (set to null).");
+
+                    // Then, activate the default explore tool
                     await FrameworkApplication.SetCurrentToolAsync("esri_mapping_exploreTool");
-                    System.Diagnostics.Debug.WriteLine("Ensuring return to default tool before showing feedback");
+                    System.Diagnostics.Debug.WriteLine("Default explore tool activated.");
 
-                    // Give the UI thread a moment to update and remove the sketch cursor
-                    await Task.Delay(200);
+                    // Give the UI thread a moment for the cursor to update etc.
+                    await Task.Delay(300); // Increased delay slightly just in case
 
-                    // Then show the message box
+                    // Now that the tool is reset, log the next steps and show confirmation
+                    AddToLog("Custom extent successfully set and drawing tool deactivated.");
+                    AddToLog("Custom extent will be used for data loading."); // User's referenced log
+                    AddToLog("You may now select data themes and click 'Load Data'.");
+
                     ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
                         $"Custom extent set successfully:\nMin X,Y: {extent.XMin:F4}, {extent.YMin:F4}\nMax X,Y: {extent.XMax:F4}, {extent.YMax:F4}",
                         "Custom Extent Set",
@@ -961,17 +1078,14 @@ namespace DuckDBGeoparquet.Views
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"Error showing custom extent feedback: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Error during tool deactivation or showing custom extent feedback: {ex.Message}");
+                    AddToLog($"Error after setting extent: {ex.Message}");
                 }
             });
 
-            // Update the UI to reflect the custom extent is set
-            AddToLog("Custom extent will be used for data loading");
-            AddToLog("You may now select data themes and click 'Load Data'");
-
-            // Force property change notifications
-            NotifyPropertyChanged(nameof(UseCustomExtent));
-            NotifyPropertyChanged(nameof(UseCurrentMapExtent));
+            // The NotifyPropertyChanged calls for UseCustomExtent and UseCurrentMapExtent
+            // are handled by their respective property setters when 'UseCustomExtent = true;' is executed.
+            // Thus, the explicit calls previously here are redundant.
         }
 
         private void BrowseMfcLocation()
@@ -1614,7 +1728,7 @@ namespace DuckDBGeoparquet.Views
         public bool IsThemeSelected(string theme)
         {
             var themeItem = Themes.FirstOrDefault(t => t.DisplayName == theme);
-            return themeItem != null && themeItem.IsSelected;
+            return themeItem != null && themeItem.IsSelected == true; // Corrected: bool? to bool comparison
         }
 
         public void ToggleThemeSelection(string theme)
@@ -1678,7 +1792,7 @@ namespace DuckDBGeoparquet.Views
             (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
 
             // If a theme was selected, set it as the current preview theme
-            if (sender is SelectableThemeItem selectedItem && selectedItem.IsSelected)
+            if (sender is SelectableThemeItem selectedItem && selectedItem.IsSelected == true) // Corrected: bool? to bool comparison
             {
                 SelectedTheme = selectedItem.DisplayName; // This might still be useful for a general preview
                                                           // but SelectedItemForPreview is now primary for TreeView focus
@@ -1820,7 +1934,8 @@ namespace DuckDBGeoparquet.Views
                         string subItemDisplayName = MakeFriendlyName(subTypeTrimmed);
                         // Sub-item: DisplayName, ActualType=s3SubType, ParentS3Theme=s3ParentThemeKey. Sub-items are always leaves.
                         var subItem = new SelectableThemeItem(subItemDisplayName, subTypeTrimmed, s3ParentThemeKey, true);
-                        subItem.SelectionChanged += OnLeafThemeSelectionChanged; // Event for selection logic
+                        subItem.Parent = parentItem; // Set the parent property for the sub-item
+                        subItem.SelectionChanged += OnLeafThemeSelectionChanged; // ViewModel listens to leaves
                         parentItem.SubItems.Add(subItem);
                     }
                 }
@@ -1828,7 +1943,7 @@ namespace DuckDBGeoparquet.Views
                 {
                     // Ensure its ActualType is correctly set if it was determined to be a leaf
                     if (s3SubTypes.Any()) parentItem.ActualType = s3SubTypes[0].Trim();
-                    parentItem.SelectionChanged += OnLeafThemeSelectionChanged;
+                    parentItem.SelectionChanged += OnLeafThemeSelectionChanged; // ViewModel listens to leaves
                 }
                 themesCollection.Add(parentItem);
             }
@@ -1843,25 +1958,40 @@ namespace DuckDBGeoparquet.Views
             var selectedLeaves = new List<SelectableThemeItem>();
             if (Themes == null) return selectedLeaves;
 
+            Action<SelectableThemeItem> collectSelectedLeaves = null;
+            collectSelectedLeaves = (item) =>
+            {
+                if (item.IsSelectable && item.IsSelected == true) // Only add if explicitly true
+                {
+                    selectedLeaves.Add(item);
+                }
+                foreach (var subItem in item.SubItems)
+                {
+                    collectSelectedLeaves(subItem); // Recurse for sub-items (though current structure is one level deep)
+                }
+            };
+
             foreach (var parentItem in Themes)
             {
-                if (parentItem.IsSelectable && parentItem.IsSelected) // Parent is a leaf and selected
+                // If the parent item itself is selectable (a leaf parent like "Places")
+                if (parentItem.IsSelectable && parentItem.IsSelected == true)
                 {
                     selectedLeaves.Add(parentItem);
                 }
-                else if (parentItem.SubItems.Count > 0) // CA1860 .Any() to .Count > 0 // Parent has sub-items
+                // Otherwise, or in addition if it has sub-items (which it shouldn't if it's IsSelectable=true as a leaf)
+                // Check its sub-items (which are always leaves and IsSelectable=true)
+                else if (parentItem.SubItems.Count > 0)
                 {
                     foreach (var subItem in parentItem.SubItems)
                     {
-                        // SubItems are always selectable if they exist and are leaves
-                        if (subItem.IsSelected)
+                        if (subItem.IsSelected == true) // SubItems are leaves
                         {
                             selectedLeaves.Add(subItem);
                         }
                     }
                 }
             }
-            return selectedLeaves;
+            return selectedLeaves.Distinct().ToList(); // Ensure distinct items if logic paths overlap
         }
 
         // This method is now the primary handler for selection changes on leaf items
@@ -1894,13 +2024,18 @@ namespace DuckDBGeoparquet.Views
                 {
                     if (themeItem.IsSelectable) // Parent is a leaf
                     {
-                        themeItem.IsSelected = select; // This will trigger its SelectionChanged
+                        themeItem.IsSelected = select;
                     }
-                    // Also iterate through sub-items
-                    foreach (var subItem in themeItem.SubItems)
+                    else if (themeItem.SubItems.Any()) // Parent has sub-items, set its state (will propagate)
                     {
-                        // SubItems are always selectable leaves
-                        subItem.IsSelected = select; // This will trigger its SelectionChanged
+                        themeItem.IsSelected = select; // This will trigger propagation to children
+                    }
+                    // No need to iterate sub-items here anymore, parent IsSelected setter handles it.
+
+                    // Expand/Collapse parent themes based on 'select' state
+                    if (themeItem.IsExpandable)
+                    {
+                        themeItem.IsExpanded = select; // Set to true if select is true, false if select is false
                     }
                 }
             }
@@ -1927,39 +2062,47 @@ namespace DuckDBGeoparquet.Views
                 return;
             }
 
-            bool allSelected = true;
+            bool allDataTypesSelected = true;
             bool anySelectableLeafExists = false;
+
+            // We need to check all actual data types (leaf nodes)
+            List<SelectableThemeItem> allLeafItems = GetAllLeafDataItems();
+
+            if (!allLeafItems.Any())
+            {
+                SetProperty(ref _isSelectAllChecked, false, nameof(IsSelectAllChecked));
+                return;
+            }
+
+            foreach (var leafItem in allLeafItems)
+            {
+                anySelectableLeafExists = true; // We know it exists if allLeafItems is not empty
+                if (leafItem.IsSelected != true) // Check for explicitly true
+                {
+                    allDataTypesSelected = false;
+                    break;
+                }
+            }
+
+            SetProperty(ref _isSelectAllChecked, anySelectableLeafExists && allDataTypesSelected, nameof(IsSelectAllChecked));
+        }
+
+        // Helper to get all actual data type items (leaves)
+        private List<SelectableThemeItem> GetAllLeafDataItems()
+        {
+            var leafItems = new List<SelectableThemeItem>();
+            if (Themes == null) return leafItems;
 
             foreach (var themeItem in Themes)
             {
-                if (themeItem.IsSelectable) // Parent is a leaf
+                if (themeItem.IsSelectable) // It's a leaf parent (e.g., Places)
                 {
-                    anySelectableLeafExists = true;
-                    if (!themeItem.IsSelected)
-                    {
-                        allSelected = false;
-                        break;
-                    }
+                    leafItems.Add(themeItem);
                 }
-                else if (themeItem.SubItems.Any()) // Parent has sub-items
-                {
-                    foreach (var subItem in themeItem.SubItems)
-                    {
-                        // SubItems are always selectable (leaves)
-                        anySelectableLeafExists = true;
-                        if (!subItem.IsSelected)
-                        {
-                            allSelected = false;
-                            break;
-                        }
-                    }
-                }
-                if (!allSelected) break;
+                // Add all sub-items, as they are always leaves/actual data types
+                leafItems.AddRange(themeItem.SubItems);
             }
-
-            // If no selectable items exist, "Select All" should be false.
-            // If selectable items exist, "Select All" is true only if all of them are selected.
-            SetProperty(ref _isSelectAllChecked, anySelectableLeafExists && allSelected, nameof(IsSelectAllChecked));
+            return leafItems.Distinct().ToList(); // Ensure distinct if structure could somehow allow duplicates
         }
     }
 }

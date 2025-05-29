@@ -46,16 +46,17 @@
                                 <CheckBox Content="Select All Themes" 
                                           IsChecked="{Binding IsSelectAllChecked, Mode=TwoWay}" 
                                           Margin="0,0,0,8"
-                                          Style="{DynamicResource Esri_CheckBox}"/>
+                                          />
                                 <ItemsControl ItemsSource="{Binding Themes}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="{x:Type local:SelectableThemeItem}">
-                                            <Expander Style="{DynamicResource Esri_Expander}" Header="{Binding DisplayName}" IsExpanded="False" Margin="0,2">
+                                            <Expander Style="{DynamicResource Esri_Expander}" Header="{Binding DisplayName}" IsExpanded="{Binding IsExpanded, Mode=TwoWay}" Margin="0,2">
                                                 <Expander.HeaderTemplate>
                                                     <DataTemplate>
                                                         <StackPanel Orientation="Horizontal">
-                                                            <CheckBox IsChecked="{Binding DataContext.IsSelected, RelativeSource={RelativeSource AncestorType=Expander}, Mode=TwoWay}"
-                                                                      Visibility="{Binding DataContext.IsSelectable, RelativeSource={RelativeSource AncestorType=Expander}, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                            <CheckBox IsChecked="{Binding DataContext.IsSelected, RelativeSource={RelativeSource AncestorType=Expander}, Mode=TwoWay, TargetNullValue={x:Null}}"
+                                                                      IsThreeState="True" 
+                                                                      Visibility="{Binding DataContext.IsExpandable, RelativeSource={RelativeSource AncestorType=Expander}, Converter={StaticResource BooleanToVisibilityConverter}}"
                                                                       VerticalAlignment="Center" Margin="0,0,5,0"/>
                                                             <TextBlock Text="{Binding}" VerticalAlignment="Center"/>
                                                         </StackPanel>

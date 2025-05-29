@@ -79,19 +79,20 @@ namespace DuckDBGeoparquet.Views
                         System.Diagnostics.Debug.WriteLine("WARNING: ExtentCreatedStatic event has no subscribers!");
                     }
 
-                    // Return to the previous tool and make sure we've fully deactivated
-                    await FrameworkApplication.SetCurrentToolAsync("esri_mapping_exploreTool");
-                    System.Diagnostics.Debug.WriteLine("Returned to default tool");
+                    // The ViewModel (WizardDockpaneViewModel) is now responsible for deactivating the tool
+                    // after this event is processed. Remove tool deactivation from here.
+                    // await FrameworkApplication.SetCurrentToolAsync("esri_mapping_exploreTool");
+                    // System.Diagnostics.Debug.WriteLine("Returned to default tool");
 
                     // Force a UI update to make sure the cursor changes back
-                    await QueuedTask.Run(() => {
-                        // Just a quick operation to ensure we're on the main thread
-                        var activeView = MapView.Active;
-                        if (activeView != null)
-                        {
-                            System.Diagnostics.Debug.WriteLine("Forcing cursor update on active map view");
-                        }
-                    });
+                    // await QueuedTask.Run(() => {
+                    //     // Just a quick operation to ensure we're on the main thread
+                    //     var activeView = MapView.Active;
+                    //     if (activeView != null)
+                    //     {
+                    //        System.Diagnostics.Debug.WriteLine("Forcing cursor update on active map view");
+                    //     }
+                    // });
                 }
                 else
                 {
