@@ -868,10 +868,43 @@ namespace DuckDBGeoparquet.Views
         {
             // Add more detailed logging
             System.Diagnostics.Debug.WriteLine($"Custom extent created: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
-            AddToLog($"CUSTOM EXTENT SET SUCCESSFULLY: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
 
-            // Store the extent - this will trigger the property change handlers
-            CustomExtent = extent;
+            Envelope extentInWGS84 = extent;
+            if (extent.SpatialReference == null || extent.SpatialReference.Wkid != 4326)
+            {
+                AddToLog("Custom extent is not in WGS84. Projecting...");
+                System.Diagnostics.Debug.WriteLine($"Original SR WKID: {extent.SpatialReference?.Wkid}");
+                SpatialReference wgs84 = SpatialReferenceBuilder.CreateSpatialReference(4326);
+                try
+                {
+                    extentInWGS84 = GeometryEngine.Instance.Project(extent, wgs84) as Envelope;
+                    if (extentInWGS84 != null)
+                    {
+                        AddToLog($"Successfully projected custom extent to WGS84: {extentInWGS84.XMin:F6}, {extentInWGS84.YMin:F6}, {extentInWGS84.XMax:F6}, {extentInWGS84.YMax:F6}");
+                        System.Diagnostics.Debug.WriteLine($"Projected extent: {extentInWGS84.XMin}, {extentInWGS84.YMin}, {extentInWGS84.XMax}, {extentInWGS84.YMax}");
+                    }
+                    else
+                    {
+                        AddToLog("ERROR: Projection to WGS84 resulted in a null envelope. Using original extent.");
+                        System.Diagnostics.Debug.WriteLine("ERROR: Projection to WGS84 resulted in a null envelope.");
+                        extentInWGS84 = extent; // Fallback to original if projection fails
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AddToLog($"ERROR: Failed to project custom extent to WGS84: {ex.Message}. Using original extent.");
+                    System.Diagnostics.Debug.WriteLine($"ERROR projecting extent: {ex.Message}");
+                    extentInWGS84 = extent; // Fallback to original on error
+                }
+            }
+            else
+            {
+                AddToLog("Custom extent is already in WGS84 or has no spatial reference, assuming WGS84.");
+                System.Diagnostics.Debug.WriteLine("Custom extent is already WGS84 or no SR defined.");
+            }
+
+            // Store the extent (potentially projected) - this will trigger the property change handlers
+            CustomExtent = extentInWGS84;
 
             // Explicitly set these properties to ensure UI updates
             HasCustomExtent = true;
@@ -1037,16 +1070,56 @@ namespace DuckDBGeoparquet.Views
                 Envelope extent = null;
                 await QueuedTask.Run(() =>
                 {
+                    SpatialReference wgs84 = SpatialReferenceBuilder.CreateSpatialReference(4326); // WGS84
+
                     if (UseCurrentMapExtent && MapView.Active != null)
                     {
-                        extent = MapView.Active.Extent;
-                        AddToLog($"Map extent: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
-                        System.Diagnostics.Debug.WriteLine($"Map extent: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
+                        Envelope mapExtent = MapView.Active.Extent;
+                        if (mapExtent != null)
+                        {
+                            if (mapExtent.SpatialReference == null || mapExtent.SpatialReference.Wkid != 4326)
+                            {
+                                AddToLog($"Map extent SR is {mapExtent.SpatialReference?.Wkid.ToString() ?? "null"}, projecting to WGS84 (4326).");
+                                try
+                                {
+                                    extent = GeometryEngine.Instance.Project(mapExtent, wgs84) as Envelope;
+                                    if (extent == null)
+                                    {
+                                        AddToLog("Warning: Map extent projection to WGS84 resulted in null. Original extent might be invalid or projection failed.");
+                                        // Attempt to use original extent if projection fails catastrophically, though it might lead to issues.
+                                        // Or, decide to stop if projection is critical. For now, logging and using original as fallback.
+                                        extent = mapExtent; // Fallback to original, though this might be problematic.
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    AddToLog($"Error projecting map extent: {ex.Message}. Using original extent values, which might be incorrect for filtering.");
+                                    System.Diagnostics.Debug.WriteLine($"Error projecting map extent: {ex.Message}");
+                                    extent = mapExtent; // Fallback
+                                }
+                            }
+                            else
+                            {
+                                AddToLog("Map extent is already in WGS84.");
+                                extent = mapExtent;
+                            }
+                            AddToLog($"Using WGS84 extent from map: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
+                            System.Diagnostics.Debug.WriteLine($"WGS84 extent from map: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
+                        }
+                        else
+                        {
+                            AddToLog("Map extent is null.");
+                        }
                     }
-                    else if (UseCustomExtent && CustomExtent != null)
+                    else if (UseCustomExtent && CustomExtent != null) // CustomExtent should already be in WGS84
                     {
-                        extent = CustomExtent;
-                        AddToLog($"Using custom extent: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
+                        extent = CustomExtent; // Assumes CustomExtent is now always WGS84
+                        AddToLog($"Using custom WGS84 extent: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
+                        System.Diagnostics.Debug.WriteLine($"Using custom WGS84 extent: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
+                    }
+                    else
+                    {
+                        AddToLog("No extent specified or available for filtering.");
                     }
                 });
 
@@ -1235,6 +1308,7 @@ namespace DuckDBGeoparquet.Views
                     AddToLog($"Data for extent: {extent.XMin:F2}, {extent.YMin:F2}, {extent.XMax:F2}, {extent.YMax:F2}");
                     AddToLog("When you load data for a different extent, the existing data will be replaced.");
                     AddToLog("This ensures a clean folder structure for MFC creation.");
+                    AddToLog("Rename the output folder OvertureProAddinData if you don't want to overwrite");
                 }
                 AddToLog("----------------");
                 ProgressValue = 100;
