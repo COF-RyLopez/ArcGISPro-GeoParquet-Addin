@@ -834,21 +834,39 @@ namespace DuckDBGeoparquet.Services
                     }
 
                     // Specific handling for address layers to disable feature reduction/binning by default
-                    if (newLayer is FeatureLayer featureLayer && (layerName.ToLower().Contains("address") || (_currentActualS3Type != null && _currentActualS3Type.ToLower().Contains("address"))))
+                    if (newLayer is FeatureLayer featureLayer) // Apply to all FeatureLayers
                     {
                         try
                         {
-                            var layerDef = featureLayer.GetDefinition() as CIMFeatureLayer;
-                            if (layerDef?.FeatureReduction != null)
+                            CIMFeatureLayer layerDef = featureLayer.GetDefinition() as CIMFeatureLayer;
+                            if (layerDef != null)
                             {
-                                layerDef.FeatureReduction.Enabled = false;
-                                featureLayer.SetDefinition(layerDef);
-                                System.Diagnostics.Debug.WriteLine($"Disabled feature reduction (binning) for address layer: {featureLayer.Name}");
+                                // Specifically check for CIMBinningFeatureReduction
+                                if (layerDef.FeatureReduction is CIMBinningFeatureReduction binningReduction)
+                                {
+                                    if (binningReduction.Enabled) // Only disable if it's currently enabled
+                                    {
+                                        binningReduction.Enabled = false;
+                                        featureLayer.SetDefinition(layerDef); // Apply the change
+                                        System.Diagnostics.Debug.WriteLine($"Disabled feature binning for layer: {featureLayer.Name}");
+                                    }
+                                    else
+                                    {
+                                        System.Diagnostics.Debug.WriteLine($"Feature binning already disabled for layer: {featureLayer.Name}");
+                                    }
+                                }
+                                else if (layerDef.FeatureReduction != null)
+                                {
+                                    // Log if other types of feature reduction are present but not modified
+                                    System.Diagnostics.Debug.WriteLine($"Layer {featureLayer.Name} has feature reduction of type '{layerDef.FeatureReduction.GetType().Name}', not binning. No changes made to feature reduction.");
+                                }
+                                // If layerDef.FeatureReduction is null, no feature reduction is configured, so nothing to do.
                             }
                         }
                         catch (Exception ex)
                         {
-                            System.Diagnostics.Debug.WriteLine($"Warning: Failed to disable feature reduction for address layer {featureLayer.Name}: {ex.Message}");
+                            // Log any errors during the process
+                            System.Diagnostics.Debug.WriteLine($"Warning: Failed to access or modify feature reduction for layer {featureLayer.Name}: {ex.Message}");
                         }
                     }
 
