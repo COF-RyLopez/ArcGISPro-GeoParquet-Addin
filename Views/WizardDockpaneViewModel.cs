@@ -155,7 +155,7 @@ namespace DuckDBGeoparquet.Views
             DisplayName = displayName;
             ActualType = actualType;
             ParentThemeForS3 = parentThemeForS3;
-            SubItems = new ObservableCollection<SelectableThemeItem>();
+            SubItems = [];
             IsSelectable = isLeafNode; // Leaf nodes are selectable (actual data types)
             _isSelected = false; // Default to false (not indeterminate)
             _isExpanded = false; // Default to not expanded
@@ -392,11 +392,14 @@ namespace DuckDBGeoparquet.Views
         }
 
         // Protected constructor for ArcGIS Pro framework runtime instantiation
-        protected WizardDockpaneViewModel(bool dummyToSatisfyChainAndAvoidAmbiguity = false) // Parameter helps distinguish if needed, but can be parameterless if Pro expects that.
+        // Removing this constructor as the public one handles both design-time and runtime.
+        /*
+        protected WizardDockpaneViewModel() 
         {
             // This is the primary runtime constructor expected by ArcGIS Pro.
             InitializeViewModelForRuntime();
         }
+        */
 
         private void InitializeViewModelForRuntime()
         {

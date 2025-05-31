@@ -5,12 +5,9 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows;
 using ArcGIS.Core.CIM;
 using ArcGIS.Core.Data;
-using ArcGIS.Desktop.Core;
 using ArcGIS.Desktop.Core.Geoprocessing;
-using ArcGIS.Desktop.Framework.Dialogs;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
 using ArcGIS.Desktop.Mapping;
 using DuckDB.NET.Data;
@@ -260,7 +257,7 @@ namespace DuckDBGeoparquet.Services
                 System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Normalized target path: {normalizedTargetPath}");
 
                 // Helper to get the actual file path from a potential dataset path
-                string GetActualFilePath(string dataSourcePath)
+                static string GetActualFilePath(string dataSourcePath)
                 {
                     if (string.IsNullOrEmpty(dataSourcePath)) return null;
                     string lowerPath = dataSourcePath.ToLowerInvariant();
@@ -528,9 +525,9 @@ namespace DuckDBGeoparquet.Services
                         }
                     }
 
-                    if (!deleted && lastFileDeleteException != null)
+                    if (!deleted && (Exception)null != null)
                     {
-                        System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: All direct file delete attempts failed. Last error: {lastFileDeleteException.Message}");
+                        System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: All direct file delete attempts failed. Last error: {((Exception)null).Message}");
                         // No longer throwing here, will fall through to the final message box if still not deleted.
                     }
                 }
@@ -775,7 +772,7 @@ namespace DuckDBGeoparquet.Services
             GC.SuppressFinalize(this);
         }
 
-        private async Task AddLayerToMapAsync(string parquetFilePath, string layerName, IProgress<string> progress = null)
+        private static async Task AddLayerToMapAsync(string parquetFilePath, string layerName, IProgress<string> progress = null)
         {
             progress?.Report($"Adding layer {layerName} to map from {Path.GetFileName(parquetFilePath)}");
             System.Diagnostics.Debug.WriteLine($"Attempting to add layer: {layerName} from path: {parquetFilePath}");
@@ -817,8 +814,7 @@ namespace DuckDBGeoparquet.Services
                     {
                         try
                         {
-                            var layerDef = featureLayerForCacheSettings.GetDefinition() as CIMFeatureLayer;
-                            if (layerDef != null)
+                            if (featureLayerForCacheSettings.GetDefinition() is CIMFeatureLayer layerDef)
                             {
                                 System.Diagnostics.Debug.WriteLine($"Setting cache options for layer: {featureLayerForCacheSettings.Name}");
                                 layerDef.DisplayCacheType = ArcGIS.Core.CIM.DisplayCacheType.None;
@@ -838,8 +834,7 @@ namespace DuckDBGeoparquet.Services
                     {
                         try
                         {
-                            CIMFeatureLayer layerDef = featureLayer.GetDefinition() as CIMFeatureLayer;
-                            if (layerDef != null)
+                            if (featureLayer.GetDefinition() is CIMFeatureLayer layerDef)
                             {
                                 // Specifically check for CIMBinningFeatureReduction
                                 if (layerDef.FeatureReduction is CIMBinningFeatureReduction binningReduction)

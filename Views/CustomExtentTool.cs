@@ -39,7 +39,7 @@ namespace DuckDBGeoparquet.Views
             return base.OnToolActivateAsync(active);
         }
 
-        protected override async Task<bool> OnSketchCompleteAsync(Geometry geometry)
+        protected override Task<bool> OnSketchCompleteAsync(Geometry geometry)
         {
             // Log the completion
             System.Diagnostics.Debug.WriteLine("OnSketchCompleteAsync called with geometry type: " +
@@ -105,7 +105,7 @@ namespace DuckDBGeoparquet.Views
                 System.Diagnostics.Debug.WriteLine($"Stack trace: {ex.StackTrace}");
             }
 
-            return true;
+            return Task.FromResult(true);
         }
     }
 }
