@@ -14,6 +14,17 @@ using DuckDB.NET.Data;
 
 namespace DuckDBGeoparquet.Services
 {
+    // Structure to hold layer information for bulk creation
+    public class LayerCreationInfo
+    {
+        public string FilePath { get; set; }
+        public string LayerName { get; set; }
+        public string GeometryType { get; set; }
+        public int StackingPriority { get; set; }
+        public string ParentTheme { get; set; }
+        public string ActualType { get; set; }
+    }
+
     public class DataProcessor : IDisposable
     {
         private readonly DuckDBConnection _connection;
@@ -34,9 +45,13 @@ namespace DuckDBGeoparquet.Services
         private string _currentParentS3Theme;
         private string _currentActualS3Type;
 
+        // Collection to store layer information for bulk creation
+        private readonly List<LayerCreationInfo> _pendingLayers;
+
         public DataProcessor()
         {
             _connection = new DuckDBConnection("DataSource=:memory:");
+            _pendingLayers = new List<LayerCreationInfo>();
         }
 
         public async Task InitializeDuckDBAsync()
@@ -127,10 +142,12 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        public async Task<bool> IngestFileAsync(string s3Path, dynamic extent = null, string actualS3Type = null)
+        public async Task<bool> IngestFileAsync(string s3Path, dynamic extent = null, string actualS3Type = null, IProgress<string> progress = null)
         {
             try
             {
+                progress?.Report($"Connecting to S3: {actualS3Type ?? "data"}...");
+
                 // Store the extent for later use in CreateFeatureLayerAsync
                 _currentExtent = extent;
 
@@ -155,6 +172,8 @@ namespace DuckDBGeoparquet.Services
                 });
                 */
 
+                progress?.Report($"Reading schema from S3...");
+
                 using var command = _connection.CreateCommand();
                 command.CommandText = $@"
                     CREATE OR REPLACE TABLE temp AS 
@@ -170,6 +189,8 @@ namespace DuckDBGeoparquet.Services
                     System.Diagnostics.Debug.WriteLine($"Column: {reader["column_name"]}, Type: {reader["column_type"]}");
                 }
 
+                progress?.Report($"Loading data from S3 (this may take a moment)...");
+
                 string spatialFilter = "";
                 if (extent != null)
                 {
@@ -178,6 +199,7 @@ namespace DuckDBGeoparquet.Services
                           AND bbox.ymin >= {extent.YMin}
                           AND bbox.xmax <= {extent.XMax}
                           AND bbox.ymax <= {extent.YMax}";
+                    progress?.Report($"Applying spatial filter for current map extent...");
                 }
 
                 string query = $@"
@@ -191,6 +213,7 @@ namespace DuckDBGeoparquet.Services
 
                 command.CommandText = "SELECT COUNT(*) FROM current_table";
                 var count = await command.ExecuteScalarAsync(CancellationToken.None);
+                progress?.Report($"Successfully loaded {count:N0} rows from S3");
                 System.Diagnostics.Debug.WriteLine($"Loaded {count} rows");
 
                 command.CommandText = "DESCRIBE current_table";
@@ -636,7 +659,7 @@ namespace DuckDBGeoparquet.Services
         private async Task ExportByGeometryType(string layerNameBase, string themeTypeSpecificOutputFolder, IProgress<string> progress = null)
         {
             System.Diagnostics.Debug.WriteLine($"ExportByGeometryType for {layerNameBase}, OutputFolder: {themeTypeSpecificOutputFolder}");
-            progress?.Report($"Processing geometry types for {layerNameBase}");
+            progress?.Report($"Processing geometry types for {layerNameBase} with optimal layer stacking");
 
             using var command = _connection.CreateCommand();
             command.CommandText = "SELECT DISTINCT ST_GeometryType(geometry) as geom_type FROM current_table WHERE geometry IS NOT NULL";
@@ -662,6 +685,21 @@ namespace DuckDBGeoparquet.Services
                 throw; // Re-throw to be caught by CreateFeatureLayerAsync
             }
 
+            // Sort geometry types for optimal layer stacking order (bottom to top)
+            // Polygons on bottom, lines in middle, points on top
+            var geometryTypeOrder = new Dictionary<string, int>
+            {
+                { "POLYGON", 1 }, { "MULTIPOLYGON", 1 },           // Bottom layer
+                { "LINESTRING", 2 }, { "MULTILINESTRING", 2 },     // Middle layer  
+                { "POINT", 3 }, { "MULTIPOINT", 3 }                // Top layer
+            };
+
+            geometryTypes = geometryTypes
+                .OrderBy(geomType => geometryTypeOrder.TryGetValue(geomType, out int order) ? order : 99)
+                .ToList();
+
+            System.Diagnostics.Debug.WriteLine($"Geometry types will be processed in optimal stacking order: {string.Join(", ", geometryTypes)}");
+
             if (geometryTypes.Count == 0)
             {
                 progress?.Report("No geometries found in the current dataset. Skipping layer creation.");
@@ -673,7 +711,10 @@ namespace DuckDBGeoparquet.Services
             foreach (var geomType in geometryTypes)
             {
                 typeIndex++;
-                progress?.Report($"Processing {layerNameBase}: {geomType} ({typeIndex}/{geometryTypes.Count})");
+                string stackingNote = geometryTypeOrder.TryGetValue(geomType, out int order)
+                    ? $" (layer {order} of 3)"
+                    : "";
+                progress?.Report($"Processing {layerNameBase}: {geomType}{stackingNote} ({typeIndex}/{geometryTypes.Count})");
                 System.Diagnostics.Debug.WriteLine($"Processing {layerNameBase}: {geomType}");
 
                 string descriptiveGeomType = GetDescriptiveGeometryType(geomType);
@@ -692,25 +733,33 @@ namespace DuckDBGeoparquet.Services
                     Directory.CreateDirectory(specificDir);
                 }
 
-                // Check if the Parquet file already exists
-                if (File.Exists(outputPath))
-                {
-                    progress?.Report($"File {outputFileName} already exists. Deleting before export.");
-                    System.Diagnostics.Debug.WriteLine($"File {outputPath} already exists. Deleting.");
-                    await DeleteParquetFileAsync(outputPath);
-                }
+                // Note: Individual file deletion is no longer needed here since we now delete
+                // entire folders upfront when the user confirms replacing existing data
 
                 string query = $"SELECT * EXCLUDE geometry, ST_AsWKB(geometry) as geometry FROM current_table WHERE ST_GeometryType(geometry) = '{geomType}'";
 
                 try
                 {
                     await ExportToGeoParquet(query, outputPath, finalLayerName, progress);
-                    await AddLayerToMapAsync(outputPath, finalLayerName, progress);
+
+                    // Instead of immediately adding to map, collect layer info for bulk creation
+                    var layerInfo = new LayerCreationInfo
+                    {
+                        FilePath = outputPath,
+                        LayerName = finalLayerName,
+                        GeometryType = geomType,
+                        StackingPriority = geometryTypeOrder.TryGetValue(geomType, out int priority) ? priority : 99,
+                        ParentTheme = _currentParentS3Theme,
+                        ActualType = _currentActualS3Type
+                    };
+                    _pendingLayers.Add(layerInfo);
+
+                    progress?.Report($"Prepared layer {finalLayerName} for optimal stacking");
                 }
                 catch (Exception ex)
                 {
-                    progress?.Report($"Error exporting or adding layer for {geomType}: {ex.Message}");
-                    System.Diagnostics.Debug.WriteLine($"Error during export/add for {geomType} of {layerNameBase}: {ex.Message}");
+                    progress?.Report($"Error exporting layer for {geomType}: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Error during export for {geomType} of {layerNameBase}: {ex.Message}");
                     // Decide if we should continue with other geometry types or rethrow
                     // For now, log and continue to attempt other types
                 }
@@ -766,9 +815,191 @@ namespace DuckDBGeoparquet.Services
             _ => geomType.ToLowerInvariant()
         };
 
+        /// <summary>
+        /// Adds all pending layers to the map in optimal stacking order (polygons → lines → points)
+        /// </summary>
+        public async Task AddAllLayersToMapAsync(IProgress<string> progress = null)
+        {
+            if (!_pendingLayers.Any())
+            {
+                progress?.Report("No layers to add to map.");
+                return;
+            }
+
+            // Sort all layers by stacking priority (higher priority = higher in Contents panel = drawn on top)
+            // We want: Points on top (drawn last), Lines in middle, Polygons on bottom (drawn first)
+            var sortedLayers = _pendingLayers
+                .OrderByDescending(layer => layer.StackingPriority) // Higher priority first
+                .ThenBy(layer => layer.ParentTheme) // Secondary sort by theme for consistency
+                .ThenBy(layer => layer.ActualType)  // Tertiary sort by actual type
+                .ToList();
+
+            progress?.Report($"Preparing to add {sortedLayers.Count} layers with optimal stacking order...");
+            System.Diagnostics.Debug.WriteLine($"Adding {sortedLayers.Count} layers in optimal stacking order (points → lines → polygons):");
+
+            foreach (var layer in sortedLayers)
+            {
+                System.Diagnostics.Debug.WriteLine($"  {layer.LayerName} ({layer.GeometryType}, priority {layer.StackingPriority})");
+            }
+
+            // Group layers by geometry type for progress reporting
+            var pointLayers = sortedLayers.Where(l => l.StackingPriority == 3).ToList();
+            var lineLayers = sortedLayers.Where(l => l.StackingPriority == 2).ToList();
+            var polygonLayers = sortedLayers.Where(l => l.StackingPriority == 1).ToList();
+
+            progress?.Report($"Layer summary: {pointLayers.Count} point layers, {lineLayers.Count} line layers, {polygonLayers.Count} polygon layers");
+
+            try
+            {
+                progress?.Report("Starting bulk layer creation process...");
+
+                await QueuedTask.Run(() =>
+                {
+                    var map = MapView.Active?.Map;
+                    if (map == null)
+                    {
+                        progress?.Report("Error: No active map found to add layers.");
+                        System.Diagnostics.Debug.WriteLine("AddAllLayersToMapAsync: No active map found.");
+                        return;
+                    }
+
+                    progress?.Report("Validating layer files...");
+
+                    // Use BulkMapMemberCreationParams for optimal performance
+                    var uris = new List<Uri>();
+                    var layerNames = new List<string>();
+                    int validFiles = 0;
+
+                    foreach (var layerInfo in sortedLayers)
+                    {
+                        if (File.Exists(layerInfo.FilePath))
+                        {
+                            uris.Add(new Uri(layerInfo.FilePath));
+                            layerNames.Add(layerInfo.LayerName);
+                            validFiles++;
+                        }
+                        else
+                        {
+                            progress?.Report($"Warning: File not found for {layerInfo.LayerName}");
+                            System.Diagnostics.Debug.WriteLine($"Warning: File not found for layer {layerInfo.LayerName}: {layerInfo.FilePath}");
+                        }
+                    }
+
+                    progress?.Report($"Validated {validFiles} layer files. Creating layers...");
+
+                    if (uris.Any())
+                    {
+                        progress?.Report("Executing bulk layer creation (this may take a moment)...");
+
+                        // Create layers using LayerFactory with URI enumeration for optimal performance
+                        var layers = LayerFactory.Instance.CreateLayers(uris, map);
+
+                        progress?.Report($"Bulk creation completed. Applying settings to {layers.Count} layers...");
+
+                        // Apply custom names and settings to the created layers
+                        for (int i = 0; i < layers.Count && i < layerNames.Count; i++)
+                        {
+                            if (layers[i] != null)
+                            {
+                                layers[i].SetName(layerNames[i]);
+
+                                // Apply cache and feature reduction settings
+                                if (layers[i] is FeatureLayer featureLayer)
+                                {
+                                    ApplyLayerSettings(featureLayer);
+                                }
+
+                                // Report progress every few layers to keep UI responsive
+                                if (i % 3 == 0 || i == layers.Count - 1)
+                                {
+                                    progress?.Report($"Configured layer {i + 1} of {layers.Count}: {layerNames[i]}");
+                                }
+                                System.Diagnostics.Debug.WriteLine($"Successfully added layer: {layerNames[i]}");
+                            }
+                        }
+
+                        progress?.Report($"✅ Successfully added {layers.Count} layers with optimal stacking order!");
+                        System.Diagnostics.Debug.WriteLine($"Bulk layer creation completed. Added {layers.Count} layers.");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                progress?.Report($"Error during bulk layer creation: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error in AddAllLayersToMapAsync: {ex.Message}");
+
+                // Fallback to individual layer creation if bulk creation fails
+                progress?.Report("Falling back to individual layer creation...");
+                await FallbackToIndividualLayerCreation(sortedLayers, progress);
+            }
+            finally
+            {
+                // Clear pending layers after processing
+                _pendingLayers.Clear();
+            }
+        }
+
+        /// <summary>
+        /// Fallback method for individual layer creation if bulk creation fails
+        /// </summary>
+        private async Task FallbackToIndividualLayerCreation(List<LayerCreationInfo> layers, IProgress<string> progress)
+        {
+            foreach (var layerInfo in layers)
+            {
+                try
+                {
+                    await AddLayerToMapAsync(layerInfo.FilePath, layerInfo.LayerName, progress);
+                }
+                catch (Exception ex)
+                {
+                    progress?.Report($"Error adding layer {layerInfo.LayerName}: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Error in fallback layer creation for {layerInfo.LayerName}: {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Applies consistent settings to feature layers (cache, feature reduction, etc.)
+        /// </summary>
+        private static void ApplyLayerSettings(FeatureLayer featureLayer)
+        {
+            try
+            {
+                if (featureLayer.GetDefinition() is CIMFeatureLayer layerDef)
+                {
+                    // Set cache settings for performance
+                    layerDef.DisplayCacheType = ArcGIS.Core.CIM.DisplayCacheType.None;
+                    layerDef.FeatureCacheType = ArcGIS.Core.CIM.FeatureCacheType.None;
+
+                    // Disable feature binning/reduction for better data visibility
+                    if (layerDef.FeatureReduction is CIMBinningFeatureReduction binningReduction && binningReduction.Enabled)
+                    {
+                        binningReduction.Enabled = false;
+                        System.Diagnostics.Debug.WriteLine($"Disabled feature binning for layer: {featureLayer.Name}");
+                    }
+
+                    featureLayer.SetDefinition(layerDef);
+                    System.Diagnostics.Debug.WriteLine($"Applied settings to layer: {featureLayer.Name}");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Warning: Failed to apply settings to layer {featureLayer.Name}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Clears any pending layers (useful for cleanup or reset operations)
+        /// </summary>
+        public void ClearPendingLayers()
+        {
+            _pendingLayers.Clear();
+        }
+
         public void Dispose()
         {
             _connection?.Dispose();
+            _pendingLayers?.Clear();
             GC.SuppressFinalize(this);
         }
 
