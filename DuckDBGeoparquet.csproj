@@ -26,7 +26,6 @@
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Include="DuckDB.NET.Data.Full" Version="1.2.0" />
-		<PackageReference Include="Esri.ArcGISRuntime" Version="200.6.0" />
 	</ItemGroup>
 	<ItemGroup>
 		<Reference Include="ArcGIS.Core">
@@ -116,6 +115,11 @@
 		</Reference>
 		<Reference Include="ArcGIS.Desktop.Charts.Wpf">
 			<HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Desktop.Charts.Wpf.dll</HintPath>
+			<CopyLocal>False</CopyLocal>
+			<Private>False</Private>
+		</Reference>
+		<Reference Include="ArcGIS.Desktop.Docking.Wpf">
+			<HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Desktop.Docking.Wpf.dll</HintPath>
 			<CopyLocal>False</CopyLocal>
 			<Private>False</Private>
 		</Reference>

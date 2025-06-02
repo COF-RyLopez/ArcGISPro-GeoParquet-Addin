@@ -122,6 +122,8 @@
                                     <TextBox Grid.Column="1" Text="{Binding DataOutputPath}" VerticalAlignment="Center" IsReadOnly="True" Margin="0,0,4,0" Style="{DynamicResource Esri_TextBox}"/>
                                     <Button Grid.Column="2" Content="Browse..." Style="{DynamicResource Esri_Button}" Command="{Binding BrowseDataLocationCommand}" Width="70"/>
                                 </Grid>
+                                <CheckBox IsChecked="{Binding ApplyOvertureStyle}" Content="Apply Overture Maps styling" Margin="0,8,0,4"
+                                          ToolTipService.ToolTip="Automatically apply professional cartographic styling to loaded Overture Maps data based on themes and feature types."/>
                             </StackPanel>
                         </Border>
                         <!-- Selected Themes Preview -->

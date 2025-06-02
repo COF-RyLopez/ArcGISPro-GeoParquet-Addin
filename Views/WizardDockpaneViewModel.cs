@@ -329,6 +329,9 @@ namespace DuckDBGeoparquet.Views
 
         // Property for the TreeView to bind its selected item for preview
         private SelectableThemeItem _selectedItemForPreview;
+        
+        // Property to control whether Overture Maps styling is applied
+        private bool _applyOvertureStyle = true;
         public SelectableThemeItem SelectedItemForPreview
         {
             get => _selectedItemForPreview;
@@ -344,6 +347,12 @@ namespace DuckDBGeoparquet.Views
                 UpdateThemePreview(); // Update description, estimates etc.
                 (ShowThemeInfoCommand as RelayCommand)?.RaiseCanExecuteChanged();
             }
+        }
+
+        public bool ApplyOvertureStyle
+        {
+            get => _applyOvertureStyle;
+            set => SetProperty(ref _applyOvertureStyle, value);
         }
 
         // Properties for TreeView Preview
@@ -1186,6 +1195,231 @@ namespace DuckDBGeoparquet.Views
             }
         }
 
+        /// <summary>
+        /// Provides periodic heartbeat feedback during long-running operations
+        /// </summary>
+        private async Task StartHeartbeatAsync(string itemName, CancellationToken cancellationToken)
+        {
+            int heartbeatCount = 0;
+            try
+            {
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    await Task.Delay(10000, cancellationToken); // Every 10 seconds
+                    heartbeatCount++;
+                    
+                    var timeElapsed = heartbeatCount * 10;
+                    StatusText = $"Still loading {itemName}... ({timeElapsed}s elapsed)";
+                    AddToLog($"⏱️ Still working on {itemName} ({timeElapsed} seconds elapsed)...");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when operation completes
+            }
+        }
+
+        /// <summary>
+        /// Performs bulk folder deletion and layer removal asynchronously to prevent UI blocking
+        /// </summary>
+        private async Task PerformBulkDataReplacementAsync(List<SelectableThemeItem> selectedItems, string dataPath)
+        {
+            try
+            {
+                StatusText = "Removing existing layers from map...";
+                
+                // First, collect all unique actualS3Type folders that need to be deleted
+                var typeFoldersToDelete = selectedItems
+                    .Select(item => Path.Combine(dataPath, item.ActualType))
+                    .Where(Directory.Exists)
+                    .Distinct()
+                    .ToList();
+
+                AddToLog($"Found {typeFoldersToDelete.Count} theme folders to clean up");
+
+                if (typeFoldersToDelete.Count == 0)
+                {
+                    return; // Nothing to delete
+                }
+
+                // Remove layers that use files from these folders asynchronously
+                for (int i = 0; i < typeFoldersToDelete.Count; i++)
+                {
+                    var folderPath = typeFoldersToDelete[i];
+                    var folderName = Path.GetFileName(folderPath);
+                    
+                    StatusText = $"Removing layers for {folderName} ({i + 1}/{typeFoldersToDelete.Count})...";
+                    AddToLog($"Removing layers using data from folder: {folderName}");
+                    
+                    // Remove layers asynchronously with proper UI thread handling
+                    await RemoveLayersUsingFolderAsync(folderPath);
+                    
+                    // Small delay to allow UI updates
+                    await Task.Delay(100);
+                }
+
+                StatusText = "Deleting existing data folders...";
+                AddToLog("All layers removed. Now deleting data folders...");
+
+                // Now delete the folders asynchronously
+                for (int i = 0; i < typeFoldersToDelete.Count; i++)
+                {
+                    var folderPath = typeFoldersToDelete[i];
+                    var folderName = Path.GetFileName(folderPath);
+                    
+                    StatusText = $"Deleting {folderName} folder ({i + 1}/{typeFoldersToDelete.Count})...";
+                    AddToLog($"Deleting folder: {folderName}");
+                    
+                    // Delete folder asynchronously to prevent UI blocking
+                    await Task.Run(() =>
+                    {
+                        try
+                        {
+                            if (Directory.Exists(folderPath))
+                            {
+                                Directory.Delete(folderPath, recursive: true);
+                                System.Diagnostics.Debug.WriteLine($"Successfully deleted folder: {folderPath}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Error deleting folder {folderPath}: {ex.Message}");
+                            // Log but don't throw - we'll continue with other folders
+                        }
+                    });
+                    
+                    // Small delay to allow UI updates
+                    await Task.Delay(50);
+                }
+
+                StatusText = "Data cleanup completed. Ready to load new data...";
+                AddToLog("Bulk folder deletion completed successfully");
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"Warning during bulk cleanup: {ex.Message}");
+                StatusText = "Cleanup completed with warnings. Continuing with data load...";
+                System.Diagnostics.Debug.WriteLine($"Error in PerformBulkDataReplacementAsync: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Removes all layers that use files from the specified folder
+        /// </summary>
+        private async Task RemoveLayersUsingFolderAsync(string folderPath)
+        {
+            await QueuedTask.Run(() =>
+            {
+                try
+                {
+                    var map = MapView.Active?.Map;
+                    if (map == null) return;
+
+                    var membersToRemove = new List<MapMember>();
+                    var allLayers = map.GetLayersAsFlattenedList().ToList();
+                    var allTables = map.GetStandaloneTablesAsFlattenedList().ToList();
+
+                    string normalizedFolderPath = Path.GetFullPath(folderPath).ToLowerInvariant();
+
+                    // Helper to check if a file path is within the target folder
+                    bool IsFileInTargetFolder(string filePath)
+                    {
+                        if (string.IsNullOrEmpty(filePath)) return false;
+                        try
+                        {
+                            string normalizedFilePath = Path.GetFullPath(filePath).ToLowerInvariant();
+                            return normalizedFilePath.StartsWith(normalizedFolderPath, StringComparison.OrdinalIgnoreCase);
+                        }
+                        catch
+                        {
+                            return false;
+                        }
+                    }
+
+                    // Check layers
+                    foreach (var layer in allLayers)
+                    {
+                        if (layer is FeatureLayer featureLayer)
+                        {
+                            try
+                            {
+                                using var fc = featureLayer.GetFeatureClass();
+                                if (fc != null)
+                                {
+                                    var fcPathUri = fc.GetPath();
+                                    if (fcPathUri != null && fcPathUri.IsFile)
+                                    {
+                                        if (IsFileInTargetFolder(fcPathUri.LocalPath))
+                                        {
+                                            membersToRemove.Add(featureLayer);
+                                            System.Diagnostics.Debug.WriteLine($"Marked layer '{featureLayer.Name}' for removal (folder cleanup)");
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"Error checking layer '{featureLayer.Name}': {ex.Message}");
+                            }
+                        }
+                    }
+
+                    // Check standalone tables
+                    foreach (var tableMember in allTables)
+                    {
+                        if (tableMember is StandaloneTable standaloneTable)
+                        {
+                            try
+                            {
+                                using var tbl = standaloneTable.GetTable();
+                                if (tbl != null)
+                                {
+                                    var tblPathUri = tbl.GetPath();
+                                    if (tblPathUri != null && tblPathUri.IsFile)
+                                    {
+                                        if (IsFileInTargetFolder(tblPathUri.LocalPath))
+                                        {
+                                            membersToRemove.Add(standaloneTable);
+                                            System.Diagnostics.Debug.WriteLine($"Marked table '{standaloneTable.Name}' for removal (folder cleanup)");
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"Error checking table '{standaloneTable.Name}': {ex.Message}");
+                            }
+                        }
+                    }
+
+                    // Remove the identified members
+                    if (membersToRemove.Count > 0)
+                    {
+                        var distinctMembersToRemove = membersToRemove.Distinct().ToList();
+                        System.Diagnostics.Debug.WriteLine($"Removing {distinctMembersToRemove.Count} map members for folder: {folderPath}");
+                        
+                        foreach (var member in distinctMembersToRemove)
+                        {
+                            if (member is Layer layerToRemove)
+                            {
+                                map.RemoveLayer(layerToRemove);
+                                (layerToRemove as IDisposable)?.Dispose();
+                            }
+                            else if (member is StandaloneTable tableToRemove)
+                            {
+                                map.RemoveStandaloneTable(tableToRemove);
+                                (tableToRemove as IDisposable)?.Dispose();
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Error in RemoveLayersUsingFolderAsync: {ex.Message}");
+                }
+            });
+        }
+
         private async Task LoadOvertureDataAsync()
         {
             try
@@ -1309,14 +1543,22 @@ namespace DuckDBGeoparquet.Views
                     }
 
                     AddToLog("User confirmed replacing existing data");
+                    
+                    // Perform bulk folder deletion with progress feedback to prevent UI blocking
+                    StatusText = "Preparing to replace existing data...";
+                    AddToLog("Removing existing layers and deleting theme folders...");
+                    await PerformBulkDataReplacementAsync(selectedLeafItems, dataPath);
+                    AddToLog("Existing data cleanup completed. Beginning new data loading...");
                 }
 
                 int totalDataTypesToProcess = selectedLeafItems.Count;
                 int processedDataTypes = 0;
 
                 // Process each selected leaf item (sub-theme or leaf parent theme)
-                foreach (var itemToLoad in selectedLeafItems)
+                for (int itemIndex = 0; itemIndex < selectedLeafItems.Count; itemIndex++)
                 {
+                    var itemToLoad = selectedLeafItems[itemIndex];
+                    
                     // Check for cancellation between items
                     if (cancellationToken.IsCancellationRequested)
                     {
@@ -1329,39 +1571,9 @@ namespace DuckDBGeoparquet.Views
                     string actualS3Type = itemToLoad.ActualType;
                     string itemDisplayName = itemToLoad.DisplayName; // For logging and layer naming
 
-                    StatusText = $"Processing: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}";
+                    // Enhanced status and logging with better visibility
+                    StatusText = $"Processing {itemIndex + 1} of {totalDataTypesToProcess}: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}";
                     AddToLog($"Processing: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}");
-
-                    // ---- Remove existing layer for this specific data type ----
-                    string layerNameToRemove = $"{MakeFriendlyName(parentS3Theme)} - {itemDisplayName}";
-                    AddToLog($"Checking for existing layer: {layerNameToRemove}");
-
-                    await QueuedTask.Run(() =>
-                    {
-                        var activeMap = MapView.Active?.Map;
-                        if (activeMap != null)
-                        {
-                            var layersToRemove = activeMap.GetLayersAsFlattenedList()
-                                .Where(l => l.Name.Equals(layerNameToRemove, StringComparison.OrdinalIgnoreCase))
-                                .ToList();
-
-                            if (layersToRemove.Any())
-                            {
-                                AddToLog($"Found {layersToRemove.Count} existing layer(s) named '{layerNameToRemove}'. Removing them.");
-                                activeMap.RemoveLayers(layersToRemove);
-                            }
-                            else
-                            {
-                                AddToLog($"No existing layer named '{layerNameToRemove}' found.");
-                            }
-                        }
-                        else
-                        {
-                            AddToLog("No active map to remove layers from.");
-                        }
-                    });
-                    // ---- End Remove existing layer ----
-
                     AddToLog($"Data type for S3: theme='{parentS3Theme}', type='{actualS3Type}'");
                     System.Diagnostics.Debug.WriteLine($"Data type for S3: theme='{parentS3Theme}', type='{actualS3Type}'");
 
@@ -1370,17 +1582,44 @@ namespace DuckDBGeoparquet.Views
                 ? $"{S3_BASE_PATH}/{trimmedRelease}/theme={parentS3Theme}/type={actualS3Type}/*.parquet"
                 : $"{S3_BASE_PATH}/theme={parentS3Theme}/type={actualS3Type}/*.parquet";
 
-                    StatusText = $"Loading from S3 path: {s3Path}";
                     AddToLog($"Loading from S3 path: {s3Path}");
                     System.Diagnostics.Debug.WriteLine($"Loading from S3 path: {s3Path}");
 
-                    bool ingestSuccess = await _dataProcessor.IngestFileAsync(s3Path, extent, actualS3Type);
+                    // Add explicit UI yield before heavy operations
+                    await Task.Delay(50); // Allow UI to update
+
+                    // Create a detailed progress reporter for the S3 data loading phase with heartbeat
+                    var ingestProgressReporter = new Progress<string>(status =>
+                    {
+                        StatusText = status;
+                        AddToLog(status);
+                        // Update progress to show activity within current item
+                        var baseProgress = (processedDataTypes * 100.0) / totalDataTypesToProcess;
+                        var ingestProgress = 1.5; // Small increment for S3 loading
+                        ProgressValue = Math.Min(baseProgress + ingestProgress, 98.0);
+                    });
+
+                    // Add heartbeat timer for long-running S3 operations
+                    using var heartbeatCts = new CancellationTokenSource();
+                    var heartbeatTask = StartHeartbeatAsync(itemDisplayName, heartbeatCts.Token);
+
+                    StatusText = $"Loading {itemDisplayName} from S3 (this may take 30-60 seconds)...";
+                    AddToLog($"⏳ Starting S3 data load for {itemDisplayName} - please wait, this operation may take time...");
+
+                    bool ingestSuccess = await _dataProcessor.IngestFileAsync(s3Path, extent, actualS3Type, ingestProgressReporter);
+                    
+                    // Stop heartbeat
+                    heartbeatCts.Cancel();
+                    try { await heartbeatTask; } catch (OperationCanceledException) { /* Expected */ }
+
                     if (!ingestSuccess)
                     {
-                        AddToLog($"Failed to ingest data from {s3Path}");
+                        AddToLog($"❌ Failed to ingest data from {s3Path}");
                         StatusText = $"Error loading data from {s3Path}";
                         continue; // Skip to next item
                     }
+
+                    AddToLog($"✅ Successfully loaded {itemDisplayName} data from S3");
 
                     if (cancellationToken.IsCancellationRequested)
                     {
@@ -1389,23 +1628,34 @@ namespace DuckDBGeoparquet.Views
                         return;
                     }
 
+                    // Add UI yield before layer creation
+                    await Task.Delay(50);
+
                     // Create a feature layer for the loaded data
-                    // Layer name: Parent Theme Display Name - Item Display Name
-                    string featureLayerName = layerNameToRemove; // Reuse the calculated name
-                    var progressReporter = new Progress<string>(status =>
+                    string featureLayerName = $"{MakeFriendlyName(parentS3Theme)} - {itemDisplayName}";
+                    StatusText = $"Creating layers for {itemDisplayName}...";
+                    AddToLog($"🔄 Creating feature layers for {itemDisplayName}...");
+
+                    var itemProgressReporter = new Progress<string>(status =>
                     {
                         StatusText = status;
                         AddToLog(status);
-                        // ProgressValue update based on processedDataTypes / totalDataTypesToProcess
+                        // Update progress bar with more granular feedback during processing
+                        var baseProgress = (processedDataTypes * 100.0) / totalDataTypesToProcess;
+                        var itemProgress = 3.0; // Small increment for within-item progress
+                        ProgressValue = Math.Min(baseProgress + itemProgress, 99.0); // Don't hit 100 until truly done
                     });
 
-                    await _dataProcessor.CreateFeatureLayerAsync(featureLayerName, progressReporter, parentS3Theme, actualS3Type, DataOutputPath);
+                    await _dataProcessor.CreateFeatureLayerAsync(featureLayerName, itemProgressReporter, parentS3Theme, actualS3Type, DataOutputPath, ApplyOvertureStyle);
 
                     processedDataTypes++;
                     ProgressValue = (processedDataTypes * 100.0) / totalDataTypesToProcess;
 
-                    StatusText = $"Successfully loaded {itemDisplayName} for {MakeFriendlyName(parentS3Theme)}";
-                    AddToLog($"Successfully loaded {itemDisplayName} for {MakeFriendlyName(parentS3Theme)}");
+                    StatusText = $"✅ Completed {itemDisplayName} ({processedDataTypes}/{totalDataTypesToProcess})";
+                    AddToLog($"✅ Successfully loaded {itemDisplayName} for {MakeFriendlyName(parentS3Theme)}");
+                    
+                    // Add small delay between items to ensure UI responsiveness
+                    await Task.Delay(100);
                 }
 
                 // Check for cancellation
@@ -1416,6 +1666,21 @@ namespace DuckDBGeoparquet.Views
                     return;
                 }
 
+                // Now that all data is processed, add all layers to map in optimal stacking order
+                StatusText = "Adding layers to map in optimal stacking order...";
+                AddToLog("🗺️ All data exported successfully. Now adding layers to map with optimal stacking order...");
+                
+                // Add UI yield before final layer creation
+                await Task.Delay(100);
+                
+                var progressReporter = new Progress<string>(status =>
+                {
+                    StatusText = status;
+                    AddToLog(status);
+                });
+
+                await _dataProcessor.AddAllLayersToMapAsync(progressReporter);
+
                 // Store the data path for potential MFC creation later
                 _lastLoadedDataPath = DataOutputPath;
 
@@ -1424,6 +1689,7 @@ namespace DuckDBGeoparquet.Views
                 AddToLog("Data loading complete. You can now:");
                 AddToLog("1. Work with the loaded GeoParquet data directly");
                 AddToLog("2. Create a Multifile Feature Connection (MFC) from the 'Create MFC' tab");
+                AddToLog("Note: Layers have been added with optimal drawing order (points on top → lines → polygons on bottom)");
                 AddToLog("----------------");
 
                 // Show a message box offering to go to the Create MFC tab
