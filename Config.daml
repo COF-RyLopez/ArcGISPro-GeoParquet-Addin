@@ -16,12 +16,16 @@
 			<tabs>
 				<tab id="DuckDBGeoparquet_Tab" caption="Overture Maps" keytip="O">
 					<group refID="DuckDBGeoparquet_Group2" />
+					<group refID="DuckDBGeoparquet_NetworkTools_Group" />
 				</tab>
 			</tabs>
 			<groups>
 				<group id="DuckDBGeoparquet_Group2" caption="Overture Maps" appearsOnAddInTab="false" keytip="A">
 					<labelControl refID="DuckDBGeoparquet_OvertureMapDescription"/>
 					<button refID="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" size="large" />
+				</group>
+				<group id="DuckDBGeoparquet_NetworkTools_Group" caption="Network Tools" appearsOnAddInTab="true" keytip="N">
+					<button refID="DuckDBGeoparquet_Views_NetworkLrsDockpane_ShowButton" size="large" />
 				</group>
 			</groups>
 			<controls>
@@ -44,6 +48,19 @@
 					</tooltip>
 				</button>
 
+				<button id="DuckDBGeoparquet_Views_NetworkLrsDockpane_ShowButton"
+                       caption="Network &amp; LRS Setup"
+                       className="DuckDBGeoparquet.Views.NetworkLrsDockpaneShowButton"
+                       loadOnClick="true"
+                       smallImage="Images\\Overture16.png"
+                       largeImage="Images\\Overture32.png"
+                       keytip="S">
+					<tooltip heading="Overture Network &amp; LRS Setup">
+						Configure Overture transportation data for network analysis and LRS.
+						<disabledText>Unable to launch Network &amp; LRS Setup at this time</disabledText>
+					</tooltip>
+				</button>
+
 				<!-- Custom Extent Tool -->
 				<tool id="DuckDBGeoparquet_CustomExtentTool"
                      className="DuckDBGeoparquet.Views.CustomExtentTool"
@@ -51,7 +68,8 @@
                      loadOnClick="true"
                      smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool16.png"
                      largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool32.png"
-                     condition="esri_mapping_mapPane">
+                     condition="esri_mapping_mapPane"
+                     keytip="D">
 					<tooltip heading="Draw Custom Extent">
 						Draw a rectangle on the map to define a custom data extent
 						<disabledText>A map must be open to use this tool</disabledText>
@@ -65,14 +83,14 @@
                          dock="right">
 					<content className="DuckDBGeoparquet.Views.WizardDockpaneView" />
 				</dockPane>
+				<dockPane id="DuckDBGeoparquet_Views_NetworkLrsDockpane"
+                         caption="Overture Network &amp; LRS Setup"
+                         className="DuckDBGeoparquet.Views.NetworkLrsDockpaneViewModel"
+                         dock="right"
+                         keytip="L">
+					<content className="DuckDBGeoparquet.Views.NetworkLrsDockpaneView" />
+				</dockPane>
 			</dockPanes>
-			<groups>
-				<group id="DuckDBGeoparquet_DockPane_Group" caption="Overture Maps Options" keytip="O">
-					<labelControl refID="DuckDBGeoparquet_ThemeSelectionLabel"/>
-					<labelControl refID="DuckDBGeoparquet_AreaSelectionLabel"/>
-					<labelControl refID="DuckDBGeoparquet_StatusLabel"/>
-				</group>
-			</groups>
 		</insertModule>
 	</modules>
 	<propertySheets>
@@ -89,7 +107,7 @@
 	</backstage>
 	<categories>
 		<updateCategory refID="esri_framework_configurationManager">
-			<insertComponent id="DuckDBGeoparquet_Config" className="DuckDBGeoparquet.Views.ConfigurationManager" />
+			<insertComponent id="DuckDBGeoparquet_Config" className="DuckDBGeoparquet.Views.ConfigurationManager" keytip="C" />
 		</updateCategory>
 	</categories>
 </ArcGIS>

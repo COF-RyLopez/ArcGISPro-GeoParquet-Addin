@@ -736,7 +736,18 @@ namespace DuckDBGeoparquet.Services
                 // Note: Individual file deletion is no longer needed here since we now delete
                 // entire folders upfront when the user confirms replacing existing data
 
-                string query = $"SELECT * EXCLUDE geometry, ST_AsWKB(geometry) as geometry FROM current_table WHERE ST_GeometryType(geometry) = '{geomType}'";
+                // **NEW: Enhanced query with connector flattening for transportation data**
+                string query;
+                if (IsTransportationData())
+                {
+                    progress?.Report($"🚚 Transportation data detected - analyzing connector structure...");
+                    query = await BuildTransportationQueryWithConnectorFlattening(geomType, progress);
+                    System.Diagnostics.Debug.WriteLine($"Using enhanced transportation query with connector flattening");
+                }
+                else
+                {
+                    query = $"SELECT * EXCLUDE geometry, ST_AsWKB(geometry) as geometry FROM current_table WHERE ST_GeometryType(geometry) = '{geomType}'";
+                }
 
                 try
                 {
@@ -765,6 +776,142 @@ namespace DuckDBGeoparquet.Services
                 }
             }
             progress?.Report($"Finished processing all geometry types for {layerNameBase}.");
+        }
+
+        /// <summary>
+        /// Checks if the current dataset is transportation data that might have nested connector arrays
+        /// </summary>
+        private bool IsTransportationData()
+        {
+            return _currentActualS3Type?.Contains("segment") == true || 
+                   _currentParentS3Theme?.Contains("transportation") == true;
+        }
+
+        /// <summary>
+        /// Builds an enhanced query for transportation data that properly flattens connector arrays
+        /// </summary>
+        private async Task<string> BuildTransportationQueryWithConnectorFlattening(string geomType, IProgress<string> progress = null)
+        {
+            try
+            {
+                progress?.Report($"🔍 Analyzing schema for connector fields...");
+                
+                // First, check what connector-related fields exist in the current table
+                using var schemaCommand = _connection.CreateCommand();
+                schemaCommand.CommandText = "DESCRIBE current_table";
+                
+                var allFields = new List<string>();
+                var connectorFields = new List<string>();
+                
+                using var reader = await schemaCommand.ExecuteReaderAsync(CancellationToken.None);
+                while (await reader.ReadAsync())
+                {
+                    string fieldName = reader.GetString(0);
+                    allFields.Add(fieldName);
+                    
+                    if (fieldName.ToLowerInvariant().Contains("connector"))
+                    {
+                        connectorFields.Add(fieldName);
+                    }
+                }
+                
+                System.Diagnostics.Debug.WriteLine($"🚚 Transportation data analysis: Found {connectorFields.Count} connector fields");
+                foreach (var field in connectorFields)
+                {
+                    System.Diagnostics.Debug.WriteLine($"  📋 Connector field: {field}");
+                }
+                
+                // Check if we have nested connectors array that needs flattening
+                bool hasNestedConnectors = allFields.Any(f => f.Equals("connectors", StringComparison.OrdinalIgnoreCase));
+                bool hasFlattenedConnectors = allFields.Any(f => f.ToLowerInvariant().Contains("connectors_list_element"));
+                
+                System.Diagnostics.Debug.WriteLine($"🔍 Connector analysis: Nested={hasNestedConnectors}, Flattened={hasFlattenedConnectors}");
+                
+                if (hasNestedConnectors && !hasFlattenedConnectors)
+                {
+                    // We have nested connectors that need flattening
+                    progress?.Report($"🔧 Flattening nested connector arrays for transportation splitter compatibility...");
+                    System.Diagnostics.Debug.WriteLine("🔧 Flattening nested connectors array - creating proper list_element fields");
+                    
+                    // Enhanced flattening that handles multiple connectors by using UNNEST
+                    string flatteningQuery = $@"
+                        WITH flattened_connectors AS (
+                            SELECT 
+                                -- Keep all original fields except connectors and geometry
+                                * EXCLUDE (connectors, geometry),
+                                -- Add flattened connector fields for transportation splitter compatibility
+                                CASE 
+                                    WHEN connectors IS NOT NULL AND len(connectors) > 0 THEN
+                                        connectors[1].connector_id
+                                    ELSE NULL
+                                END as connectors_list_element_connector_id,
+                                CASE 
+                                    WHEN connectors IS NOT NULL AND len(connectors) > 0 THEN
+                                        CAST(connectors[1].at AS DOUBLE)
+                                    ELSE NULL
+                                END as connectors_list_element_at,
+                                -- Keep original geometry for conversion
+                                geometry
+                            FROM current_table
+                            WHERE ST_GeometryType(geometry) = '{geomType}'
+                        )
+                        SELECT 
+                            * EXCLUDE geometry, 
+                            ST_AsWKB(geometry) as geometry
+                        FROM flattened_connectors";
+                    
+                    progress?.Report($"✅ Connector flattening complete - ready for transportation analysis");
+                    System.Diagnostics.Debug.WriteLine($"🎯 Created flattening query for transportation segments");
+                    return flatteningQuery;
+                }
+                else if (hasNestedConnectors && hasFlattenedConnectors)
+                {
+                    // We have both - prioritize flattened and exclude nested
+                    progress?.Report($"✅ Using existing flattened connector fields");
+                    System.Diagnostics.Debug.WriteLine("✅ Using existing flattened connectors, excluding redundant nested array");
+                    
+                    return $@"
+                        SELECT 
+                            * EXCLUDE (geometry, connectors), 
+                            ST_AsWKB(geometry) as geometry 
+                        FROM current_table 
+                        WHERE ST_GeometryType(geometry) = '{geomType}'";
+                }
+                else if (hasFlattenedConnectors)
+                {
+                    // Only flattened connectors exist - use them as-is
+                    progress?.Report($"✅ Found properly formatted connector fields");
+                    System.Diagnostics.Debug.WriteLine("✅ Found existing flattened connector fields - using as-is");
+                    
+                    return $@"
+                        SELECT 
+                            * EXCLUDE geometry, 
+                            ST_AsWKB(geometry) as geometry 
+                        FROM current_table 
+                        WHERE ST_GeometryType(geometry) = '{geomType}'";
+                }
+                else
+                {
+                    // No connector fields found
+                    progress?.Report($"ℹ️ No connector data found - will use geometric analysis for splitting");
+                    System.Diagnostics.Debug.WriteLine("ℹ️ No connector fields detected - using standard query");
+                    
+                    return $@"
+                        SELECT 
+                            * EXCLUDE geometry, 
+                            ST_AsWKB(geometry) as geometry 
+                        FROM current_table 
+                        WHERE ST_GeometryType(geometry) = '{geomType}'";
+                }
+            }
+            catch (Exception ex)
+            {
+                progress?.Report($"⚠️ Error analyzing connectors - using standard export");
+                System.Diagnostics.Debug.WriteLine($"❌ Error in connector flattening analysis: {ex.Message}");
+                
+                // Fallback to standard query
+                return $"SELECT * EXCLUDE geometry, ST_AsWKB(geometry) as geometry FROM current_table WHERE ST_GeometryType(geometry) = '{geomType}'";
+            }
         }
 
         private async Task ExportToGeoParquet(string query, string outputPath, string _layerName, IProgress<string> progress = null)

@@ -201,7 +201,7 @@ namespace DuckDBGeoparquet.Views
         }
     }
 
-    internal class WizardDockpaneViewModel : DockPane
+    public class WizardDockpaneViewModel : DockPane
     {
         private const string _dockPaneID = "DuckDBGeoparquet_Views_WizardDockpane";
         private DataProcessor _dataProcessor;
@@ -406,13 +406,13 @@ namespace DuckDBGeoparquet.Views
             System.Diagnostics.Debug.WriteLine("InitializeViewModelForRuntime executing...");
             _dataProcessor = new DataProcessor();
 
-            LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => GetSelectedLeafItems().Count > 0);
+            LoadDataCommand = new RelayCommand(() => _ = LoadOvertureDataAsync(), () => GetSelectedLeafItems().Count > 0);
             ShowThemeInfoCommand = new RelayCommand(() => ShowThemeInfo(), () => SelectedItemForPreview != null);
             SetCustomExtentCommand = new RelayCommand(() => SetCustomExtent(), () => UseCustomExtent);
             BrowseMfcLocationCommand = new RelayCommand(() => BrowseMfcLocation());
             BrowseDataLocationCommand = new RelayCommand(() => BrowseDataLocation());
             BrowseCustomDataFolderCommand = new RelayCommand(() => BrowseCustomDataFolder());
-            CreateMfcCommand = new RelayCommand(async () => await CreateMfcAsync(), () => (UsePreviouslyLoadedData && !string.IsNullOrEmpty(_lastLoadedDataPath)) || (UseCustomDataFolder && !string.IsNullOrEmpty(CustomDataFolderPath)));
+            CreateMfcCommand = new RelayCommand(() => _ = CreateMfcAsync(), () => (UsePreviouslyLoadedData && !string.IsNullOrEmpty(_lastLoadedDataPath)) || (UseCustomDataFolder && !string.IsNullOrEmpty(CustomDataFolderPath)));
             GoToCreateMfcTabCommand = new RelayCommand(() => ShowCreateMfcTab(), () => true);
             CancelCommand = new RelayCommand(() =>
             {
@@ -767,6 +767,17 @@ namespace DuckDBGeoparquet.Views
             // Update the text property
             LogOutputText = LogOutput.ToString();
             NotifyPropertyChanged(nameof(LogOutputText));
+            
+            // Force UI update and scroll to bottom with a slight delay
+            // This ensures the TextBox has time to update before scrolling
+            System.Windows.Application.Current?.Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Background,
+                new System.Action(() =>
+                {
+                    // This will trigger the TextChanged event which handles auto-scroll
+                    NotifyPropertyChanged(nameof(LogOutputText));
+                })
+            );
         }
 
         private void UpdateThemePreview()

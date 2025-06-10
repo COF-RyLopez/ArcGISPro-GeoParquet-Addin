@@ -20,6 +20,9 @@
 		<Content Include="DarkImages\AddInDesktop32.png" />
 		<Content Include="DarkImages\Overture16.png" />
 		<Content Include="DarkImages\Overture32.png" />
+		<Content Include="Scripts\transportation_splitter_runner.py">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</Content>
 	</ItemGroup>
 	<ItemGroup>
 		<None Include="Properties\launchSettings.json" />
@@ -27,6 +30,7 @@
 	<ItemGroup>
 		<PackageReference Include="DuckDB.NET.Data.Full" Version="1.2.0" />
 		<PackageReference Include="Esri.ArcGISRuntime" Version="200.6.0" />
+		<PackageReference Include="Microsoft.Spark" Version="2.3.0" />
 	</ItemGroup>
 	<ItemGroup>
 		<Reference Include="ArcGIS.Core">
