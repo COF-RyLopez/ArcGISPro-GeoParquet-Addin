@@ -15,6 +15,9 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+      
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
@@ -22,42 +25,23 @@ jobs:
     
     - name: Install ArcGIS Pro SDK NuGet Package
       run: |
-        dotnet nuget add source https://api.nuget.org/v3/index.json -n nuget.org
-        dotnet add package Esri.ArcGISPro.Extensions30 --version 3.5.0.57366
+        nuget sources add -name nuget.org -source https://api.nuget.org/v3/index.json
+        nuget install Esri.ArcGISPro.Extensions30 -Version 3.5.0.57366 -OutputDirectory packages
     
     - name: Update csproj to use NuGet references
       shell: powershell
       run: |
-        $csproj = "DuckDBGeoparquet.csproj"
-        $content = Get-Content $csproj -Raw
+        pwsh ./.github/workflows/update-csproj.ps1 -ProjectFile "DuckDBGeoparquet.csproj" -NuGetVersion "3.5.0.57366"
         
-        # Remove existing ArcGIS references and SDK import
-        $content = $content -replace '<Reference Include="ArcGIS\..*?</Reference>', ''
-        $content = $content -replace '<Reference Include="ESRI\..*?</Reference>', ''
-        $content = $content -replace '<Import Project="C:\\Program Files\\ArcGIS\\Pro\\bin\\Esri\.ProApp\.SDK\.Desktop\.targets".*?/>', ''
-        
-        # Add ArcGIS Pro SDK NuGet package reference if not already present
-        if ($content -notmatch 'Esri\.ArcGISPro\.Extensions30') {
-          $packageRefSection = $content -match '<PackageReference Include.*?>'
-          if ($packageRefSection) {
-            $insertIdx = $content.IndexOf('</ItemGroup>', $content.IndexOf('<PackageReference')) 
-            $nugetRef = '    <PackageReference Include="Esri.ArcGISPro.Extensions30" Version="3.5.0.57366" />'
-            $content = $content.Insert($insertIdx, "$nugetRef`r`n")
-          }
-        }
-        
-        # Write updated content back to csproj
-        Set-Content -Path $csproj -Value $content
-        
-    - name: Restore dependencies
-      run: dotnet restore DuckDBGeoparquet.sln
+    - name: Restore NuGet packages
+      run: nuget restore DuckDBGeoparquet.sln
       
-    - name: Build solution
-      run: dotnet build DuckDBGeoparquet.sln --configuration Release --no-restore
+    - name: Build solution with MSBuild
+      run: msbuild DuckDBGeoparquet.sln /p:Configuration=Release /p:Platform="Any CPU"
       
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: addin-package
-        path: "bin/Release/*.esriAddInX"
+        path: "bin/Release/net8.0-windows/*.esriAddInX"
         if-no-files-found: warn
