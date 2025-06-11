@@ -2,7 +2,9 @@ name: Build ArcGIS Pro GeoParquet Add-in
 
 on:
   push:
-    branches: [ gh-actions-build ]
+    branches: [ main ]
+    tags:
+      - 'v*'  # Run workflow on version tags, e.g. v1.0.0
   pull_request:
     branches: [ main ]
   workflow_dispatch:  # Allows manual triggering
@@ -39,9 +41,56 @@ jobs:
     - name: Build solution with MSBuild
       run: msbuild DuckDBGeoparquet.sln /p:Configuration=Release /p:Platform="Any CPU"
       
+    - name: Get version from tag
+      id: get_version
+      shell: bash
+      run: |
+        # Extract version from tag (if present), otherwise use today's date
+        if [[ $GITHUB_REF == refs/tags/v* ]]; then
+          echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        else
+          echo "VERSION=$(date +'%Y.%m.%d')" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Create Release Zip
+      shell: powershell
+      run: |
+        $version = "${{ steps.get_version.outputs.VERSION }}"
+        $zipName = "ArcGISPro-GeoParquet-Addin-v${version}.zip"
+        $addinFile = Get-ChildItem -Path "bin/Release/net8.0-windows" -Filter "*.esriAddInX" | Select-Object -First 1
+        
+        if ($addinFile) {
+          # Create a directory for the release
+          New-Item -Path "release" -ItemType Directory -Force
+          
+          # Copy the addin file to the release directory with a properly named version
+          Copy-Item -Path $addinFile.FullName -Destination "release/$zipName"
+          
+          echo "Created release file: $zipName"
+        } else {
+          echo "::error::No .esriAddInX file found"
+          exit 1
+        }
+    
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: addin-package
         path: "bin/Release/net8.0-windows/*.esriAddInX"
-        if-no-files-found: warn
+        if-no-files-found: error
+        
+    - name: Upload release zip
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-zip
+        path: "release/*.zip"
+        if-no-files-found: error
+        
+    # Create GitHub Release when a version tag is pushed
+    - name: Create GitHub Release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2.3.2
+      with:
+        files: release/*.zip
+        name: Release ${{ steps.get_version.outputs.VERSION }}
+        generate_release_notes: true
