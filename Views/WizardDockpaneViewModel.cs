@@ -445,7 +445,10 @@ namespace DuckDBGeoparquet.Views
             NotifyPropertyChanged(nameof(StatusText));
             _isSelectAllChecked = false; // Initialize Select All state
 
-            _ = InitializeAsync(); // This will call InitializeThemes and update release-specific paths
+            // Do not call InitializeAsync() here. The base DockPane class
+            // will invoke it automatically after construction. Calling it
+            // explicitly would cause double initialization which leads to
+            // errors such as attempting to open the DuckDB connection twice.
         }
 
         protected override async Task InitializeAsync()
