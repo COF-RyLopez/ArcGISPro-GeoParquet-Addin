@@ -1,0 +1,106 @@
+name: Build ArcGIS Pro GeoParquet Add-in
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'  # Run workflow on version tags, e.g. v1.0.0
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  build:
+    runs-on: windows-2022  # Using Windows Server 2022 with Visual Studio 2022
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+      
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+    
+    - name: Install ArcGIS Pro SDK NuGet Package
+      run: |
+        nuget sources add -name nuget.org -source https://api.nuget.org/v3/index.json
+        nuget install Esri.ArcGISPro.Extensions30 -Version 3.5.0.57366 -OutputDirectory packages
+    
+    - name: Update csproj to use NuGet references
+      shell: powershell
+      run: |
+        pwsh ./.github/workflows/update-csproj.ps1 -ProjectFile "DuckDBGeoparquet.csproj" -NuGetVersion "3.5.0.57366"
+        
+    - name: Restore NuGet packages
+      run: nuget restore DuckDBGeoparquet.sln
+      
+    - name: Build solution with MSBuild
+      run: msbuild DuckDBGeoparquet.sln /p:Configuration=Release /p:Platform="Any CPU"
+      
+    - name: Get version from tag
+      id: get_version
+      shell: bash
+      run: |
+        # Extract version from tag (if present), otherwise use today's date
+        if [[ $GITHUB_REF == refs/tags/v* ]]; then
+          echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        else
+          echo "VERSION=$(date +'%Y.%m.%d')" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Create Release Zip
+      shell: powershell
+      run: |
+        $version = "${{ steps.get_version.outputs.VERSION }}"
+        $zipName = "ArcGISPro-GeoParquet-Addin-v${version}.zip"
+        $addinFile = Get-ChildItem -Path "bin/Release/net8.0-windows" -Filter "*.esriAddInX" | Select-Object -First 1
+        
+        if ($addinFile) {
+          # Create a directory for the release
+          New-Item -Path "release" -ItemType Directory -Force
+          
+          # Create a temporary directory to properly structure the zip content
+          $tempDir = "temp-release"
+          New-Item -Path $tempDir -ItemType Directory -Force
+          
+          # Copy the add-in file to the temp directory
+          Copy-Item -Path $addinFile.FullName -Destination "$tempDir/"
+          
+          # Create the zip file containing only the add-in
+          Compress-Archive -Path "$tempDir/*" -DestinationPath "release/$zipName" -Force
+          
+          # Clean up the temporary directory
+          Remove-Item -Path $tempDir -Recurse -Force
+          
+          echo "Created release zip: $zipName containing the .esriAddInX file"
+        } else {
+          echo "::error::No .esriAddInX file found"
+          exit 1
+        }
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: addin-package
+        path: "bin/Release/net8.0-windows/*.esriAddInX"
+        if-no-files-found: error
+        
+    - name: Upload release zip
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-zip
+        path: "release/*.zip"
+        if-no-files-found: error
+        
+    # Create GitHub Release when a version tag is pushed
+    - name: Create GitHub Release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2.3.2
+      with:
+        files: release/*.zip
+        name: Release ${{ steps.get_version.outputs.VERSION }}
+        generate_release_notes: true
