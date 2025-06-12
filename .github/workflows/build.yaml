@@ -105,5 +105,5 @@ jobs:
       uses: softprops/action-gh-release@v2.3.2
       with:
         files: release/*.zip
-        name: Release ${{ steps.get_version.outputs.VERSION }}
+        name: v${{ steps.get_version.outputs.VERSION }}
         generate_release_notes: true
