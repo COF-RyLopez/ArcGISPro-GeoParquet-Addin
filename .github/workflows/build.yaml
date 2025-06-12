@@ -9,6 +9,9 @@ on:
     branches: [ main ]
   workflow_dispatch:  # Allows manual triggering
 
+permissions:
+  contents: write  # Needed for creating releases
+  
 jobs:
   build:
     runs-on: windows-2022  # Using Windows Server 2022 with Visual Studio 2022
