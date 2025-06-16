@@ -157,20 +157,16 @@ namespace DuckDBGeoparquet.Services
                 // Clear previous parent theme context, it will be set by CreateFeatureLayerAsync if needed
                 _currentParentS3Theme = null;
 
-                // The following call to MakeEnvironmentArray was not directly used by a GP tool in this method.
-                // Overwrite for deletion is handled in DeleteParquetFileAsync if needed elsewhere.
-                // DuckDB handles its own table replacement/creation.
-                /* 
+                // Enable ArcGIS Pro 3.5 overwrite capabilities to handle file conflicts gracefully
                 await QueuedTask.Run(() => {
                     try {
                         Geoprocessing.MakeEnvironmentArray(overwriteoutput: true);
-                        System.Diagnostics.Debug.WriteLine("Set geoprocessing environment to allow overwriting");
+                        System.Diagnostics.Debug.WriteLine("Set geoprocessing environment to allow overwriting outputs");
                     }
                     catch (Exception ex) {
                         System.Diagnostics.Debug.WriteLine($"Warning: Could not set geoprocessing environment: {ex.Message}");
                     }
                 });
-                */
 
                 progress?.Report($"Reading schema from S3...");
 
@@ -183,11 +179,10 @@ namespace DuckDBGeoparquet.Services
 
                 command.CommandText = "DESCRIBE temp";
                 using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
-                System.Diagnostics.Debug.WriteLine("Schema from Parquet:");
-                while (await reader.ReadAsync())
-                {
-                    System.Diagnostics.Debug.WriteLine($"Column: {reader["column_name"]}, Type: {reader["column_type"]}");
-                }
+                // Count columns for basic validation
+                int columnCount = 0;
+                while (await reader.ReadAsync()) { columnCount++; }
+                System.Diagnostics.Debug.WriteLine($"Schema validated: {columnCount} columns found");
 
                 progress?.Report($"Loading data from S3 (this may take a moment)...");
 
@@ -216,12 +211,12 @@ namespace DuckDBGeoparquet.Services
                 progress?.Report($"Successfully loaded {count:N0} rows from S3");
                 System.Diagnostics.Debug.WriteLine($"Loaded {count} rows");
 
-                command.CommandText = "DESCRIBE current_table";
-                using var reader2 = await command.ExecuteReaderAsync(CancellationToken.None);
-                System.Diagnostics.Debug.WriteLine("Final table structure:");
-                while (await reader2.ReadAsync())
+                // Early exit for empty datasets to avoid unnecessary processing
+                if (Convert.ToInt64(count) == 0)
                 {
-                    System.Diagnostics.Debug.WriteLine($"Column: {reader2["column_name"]}, Type: {reader2["column_type"]}");
+                    progress?.Report("Dataset is empty - no features to process");
+                    System.Diagnostics.Debug.WriteLine("Early exit: Dataset contains no rows");
+                    return false; // Indicate no data to process
                 }
 
                 return true;
@@ -259,25 +254,27 @@ namespace DuckDBGeoparquet.Services
                 return;
             }
 
-            System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Attempting to remove layers associated with file: {filePath}");
-
             await QueuedTask.Run(() =>
             {
-                var map = MapView.Active?.Map;
-                if (map == null)
+                var project = Project.Current;
+                if (project == null)
                 {
-                    System.Diagnostics.Debug.WriteLine("RemoveLayersUsingFileAsync: No active map found.");
+                    System.Diagnostics.Debug.WriteLine("RemoveLayersUsingFileAsync: No current project found.");
                     return;
                 }
 
-                var membersToRemove = new List<MapMember>();
-                var allLayers = map.GetLayersAsFlattenedList().ToList();
-                var allTables = map.GetStandaloneTablesAsFlattenedList().ToList();
+                // Get ALL maps in the project, not just the active one
+                var allMaps = project.GetItems<MapProjectItem>().Select(item => item.GetMap()).Where(map => map != null).ToList();
 
-                System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Found {allLayers.Count} layers and {allTables.Count} standalone tables in the map.");
+                var allMembersToRemove = new Dictionary<Map, List<MapMember>>();
+
+                foreach (var map in allMaps)
+                {
+                    var membersToRemove = new List<MapMember>();
+                    var allLayers = map.GetLayersAsFlattenedList().ToList();
+                    var allTables = map.GetStandaloneTablesAsFlattenedList().ToList();
 
                 string normalizedTargetPath = Path.GetFullPath(filePath).ToLowerInvariant();
-                System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Normalized target path: {normalizedTargetPath}");
 
                 // Helper to get the actual file path from a potential dataset path
                 static string GetActualFilePath(string dataSourcePath)
@@ -302,7 +299,6 @@ namespace DuckDBGeoparquet.Services
                 {
                     if (layer is FeatureLayer featureLayer)
                     {
-                        bool removedByPath = false;
                         try
                         {
                             using var fc = featureLayer.GetFeatureClass();
@@ -313,45 +309,10 @@ namespace DuckDBGeoparquet.Services
                                 {
                                     string rawLayerDataSourcePath = fcPathUri.LocalPath;
                                     string actualLayerFilePath = GetActualFilePath(rawLayerDataSourcePath);
-                                    System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Layer '{featureLayer.Name}' path from FeatureClass.GetPath(): {rawLayerDataSourcePath}, Resolved to: {actualLayerFilePath}");
                                     if (actualLayerFilePath == normalizedTargetPath)
                                     {
                                         membersToRemove.Add(featureLayer);
-                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Added layer '{featureLayer.Name}' for removal based on FeatureClass.GetPath().");
-                                        removedByPath = true;
-                                    }
-                                }
-
-                                if (!removedByPath)
-                                {
-                                    using var datastore = fc.GetDatastore();
-                                    var connector = datastore.GetConnector();
-                                    string dsPathViaConnectorRaw = string.Empty;
-                                    if (connector is FileSystemConnectionPath fileSystemConnectionPath)
-                                    {
-                                        dsPathViaConnectorRaw = fileSystemConnectionPath.Path?.LocalPath;
-                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Layer '{featureLayer.Name}' (Connector Fallback) FileSystemConnectionPath: {dsPathViaConnectorRaw}");
-                                    }
-                                    else if (connector is ArcGIS.Core.Data.PluginDatastore.PluginDatasourceConnectionPath)
-                                    {
-                                        var datastoreUri = datastore.GetPath();
-                                        dsPathViaConnectorRaw = datastoreUri?.LocalPath;
-                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Layer '{featureLayer.Name}' (Connector Fallback) PluginDatasourceConnectionPath from Datastore: {dsPathViaConnectorRaw}");
-                                    }
-                                    else
-                                    {
-                                        if (connector != null) { System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Layer '{featureLayer.Name}' (Connector Fallback) type: {connector.GetType().Name}"); }
-                                        else { System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Layer '{featureLayer.Name}' (Connector Fallback) connector is null."); }
-                                        var connString = datastore.GetConnectionString();
-                                        if (!string.IsNullOrEmpty(connString) && Uri.TryCreate(connString, UriKind.Absolute, out Uri uriResult) && uriResult.IsFile) { dsPathViaConnectorRaw = uriResult.LocalPath; }
-                                        else if (!string.IsNullOrEmpty(connString)) { try { dsPathViaConnectorRaw = Path.GetFullPath(connString); } catch { } }
-                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Layer '{featureLayer.Name}' (Connector Fallback) path via ConnStr: {dsPathViaConnectorRaw}");
-                                    }
-                                    string actualDsPathViaConnector = GetActualFilePath(dsPathViaConnectorRaw);
-                                    if (!string.IsNullOrEmpty(actualDsPathViaConnector) && actualDsPathViaConnector == normalizedTargetPath)
-                                    {
-                                        membersToRemove.Add(featureLayer);
-                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Added layer '{featureLayer.Name}' for removal based on Connector Fallback (Resolved Path: {actualDsPathViaConnector}).");
+                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Found layer '{featureLayer.Name}' for removal");
                                     }
                                 }
                             }
@@ -368,7 +329,6 @@ namespace DuckDBGeoparquet.Services
                 {
                     if (tableMember is StandaloneTable standaloneTable)
                     {
-                        bool removedByPath = false;
                         try
                         {
                             using var tbl = standaloneTable.GetTable();
@@ -379,45 +339,10 @@ namespace DuckDBGeoparquet.Services
                                 {
                                     string rawTableDataSourcePath = tblPathUri.LocalPath;
                                     string actualTableFilePath = GetActualFilePath(rawTableDataSourcePath);
-                                    System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Table '{standaloneTable.Name}' path from Table.GetPath(): {rawTableDataSourcePath}, Resolved to: {actualTableFilePath}");
                                     if (actualTableFilePath == normalizedTargetPath)
                                     {
                                         membersToRemove.Add(standaloneTable);
-                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Added table '{standaloneTable.Name}' for removal based on Table.GetPath().");
-                                        removedByPath = true;
-                                    }
-                                }
-
-                                if (!removedByPath)
-                                {
-                                    using var datastore = tbl.GetDatastore();
-                                    var connector = datastore.GetConnector();
-                                    string dsPathViaConnectorRaw = string.Empty;
-                                    if (connector is FileSystemConnectionPath fileSystemConnectionPath)
-                                    {
-                                        dsPathViaConnectorRaw = fileSystemConnectionPath.Path?.LocalPath;
-                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Table '{standaloneTable.Name}' (Connector Fallback) FileSystemConnectionPath: {dsPathViaConnectorRaw}");
-                                    }
-                                    else if (connector is ArcGIS.Core.Data.PluginDatastore.PluginDatasourceConnectionPath)
-                                    {
-                                        var datastoreUri = datastore.GetPath();
-                                        dsPathViaConnectorRaw = datastoreUri?.LocalPath;
-                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Table '{standaloneTable.Name}' (Connector Fallback) PluginDatasourceConnectionPath from Datastore: {dsPathViaConnectorRaw}");
-                                    }
-                                    else
-                                    {
-                                        if (connector != null) { System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Table '{standaloneTable.Name}' (Connector Fallback) type: {connector.GetType().Name}."); }
-                                        else { System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Table '{standaloneTable.Name}' (Connector Fallback) connector is null."); }
-                                        var connString = datastore.GetConnectionString();
-                                        if (!string.IsNullOrEmpty(connString) && Uri.TryCreate(connString, UriKind.Absolute, out Uri uriResult) && uriResult.IsFile) { dsPathViaConnectorRaw = uriResult.LocalPath; }
-                                        else if (!string.IsNullOrEmpty(connString)) { try { dsPathViaConnectorRaw = Path.GetFullPath(connString); } catch { } }
-                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Table '{standaloneTable.Name}' (Connector Fallback) path via ConnStr: {dsPathViaConnectorRaw}");
-                                    }
-                                    string actualDsPathViaConnector = GetActualFilePath(dsPathViaConnectorRaw);
-                                    if (!string.IsNullOrEmpty(actualDsPathViaConnector) && actualDsPathViaConnector == normalizedTargetPath)
-                                    {
-                                        membersToRemove.Add(standaloneTable);
-                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Added table '{standaloneTable.Name}' for removal based on Connector Fallback (Resolved Path: {actualDsPathViaConnector}).");
+                                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Found table '{standaloneTable.Name}' for removal");
                                     }
                                 }
                             }
@@ -429,29 +354,48 @@ namespace DuckDBGeoparquet.Services
                     }
                 }
 
-                if (membersToRemove.Count > 0)
+                    if (membersToRemove.Count > 0)
+                    {
+                        allMembersToRemove[map] = membersToRemove;
+                        System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Found {membersToRemove.Count} members to remove from map '{map.Name}'");
+                    }
+                }
+
+                // Now remove all found members from their respective maps
+                int totalRemoved = 0;
+                foreach (var kvp in allMembersToRemove)
                 {
-                    var distinctMembersToRemove = membersToRemove.Distinct().ToList();
-                    System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Removing {distinctMembersToRemove.Count} distinct layers/tables associated with file: {filePath}");
-                    foreach (var member in distinctMembersToRemove)
+                    var map = kvp.Key;
+                    var membersToRemove = kvp.Value.Distinct().ToList();
+                    
+                    System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Removing {membersToRemove.Count} distinct layers/tables from map '{map.Name}'");
+                    
+                    foreach (var member in membersToRemove)
                     {
                         if (member is Layer layerToRemove)
                         {
                             map.RemoveLayer(layerToRemove);
-                            System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Removed layer '{member.Name}'.");
+                            totalRemoved++;
+                            System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Removed layer '{member.Name}' from map '{map.Name}'");
                             (layerToRemove as IDisposable)?.Dispose();
                         }
                         else if (member is StandaloneTable tableToRemove)
                         {
                             map.RemoveStandaloneTable(tableToRemove);
-                            System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Removed table '{member.Name}'.");
+                            totalRemoved++;
+                            System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Removed table '{member.Name}' from map '{map.Name}'");
                             (tableToRemove as IDisposable)?.Dispose();
                         }
                     }
                 }
+
+                if (totalRemoved > 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: Total removed {totalRemoved} layers/tables across all maps for file: {filePath}");
+                }
                 else
                 {
-                    System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: No layers or tables found using the file: {filePath}");
+                    System.Diagnostics.Debug.WriteLine($"RemoveLayersUsingFileAsync: No layers or tables found using the file across all maps: {filePath}");
                 }
             });
         }
@@ -470,12 +414,12 @@ namespace DuckDBGeoparquet.Services
                 await RemoveLayersUsingFileAsync(parquetPath);
 
                 System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: Layers removed. Waiting for file locks to release...");
-                await Task.Delay(2500); // Increased delay to 2.5 seconds
+                await Task.Delay(100); // Reduced delay
 
                 System.Diagnostics.Debug.WriteLine("DeleteParquetFileAsync: Invoking GC.Collect and WaitForPendingFinalizers.");
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
-                await Task.Delay(500); // Short additional delay after GC
+                await Task.Delay(100); // Short additional delay after GC
 
                 bool deleted = false;
                 int gpRetryCount = 2; // Try GP delete a couple of times
@@ -485,7 +429,7 @@ namespace DuckDBGeoparquet.Services
                     if (i > 0)
                     {
                         System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: Retrying GP delete, attempt {i + 1} after delay...");
-                        await Task.Delay(1500 * i); // Increasing delay for GP retries
+                        await Task.Delay(200 * i); // Much shorter delays for GP retries
                     }
                     System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: Attempting GP delete (attempt {i + 1}/{gpRetryCount}): {parquetPath}");
 
@@ -541,7 +485,7 @@ namespace DuckDBGeoparquet.Services
                             lastFileDeleteException = ex;
                             if (i < fileDeleteRetryCount - 1)
                             {
-                                int delay = (i + 1) * 1000;
+                                int delay = (i + 1) * 100; // Much shorter delays
                                 System.Diagnostics.Debug.WriteLine($"DeleteParquetFileAsync: Direct delete attempt {i + 1} failed (file locked), waiting {delay}ms to retry: {parquetPath}");
                                 await Task.Delay(delay);
                             }
@@ -674,7 +618,6 @@ namespace DuckDBGeoparquet.Services
                     if (!string.IsNullOrEmpty(geomType))
                     {
                         geometryTypes.Add(geomType);
-                        System.Diagnostics.Debug.WriteLine($"Found geometry type: {geomType}");
                     }
                 }
             }
@@ -698,14 +641,14 @@ namespace DuckDBGeoparquet.Services
                 .OrderBy(geomType => geometryTypeOrder.TryGetValue(geomType, out int order) ? order : 99)
                 .ToList();
 
-            System.Diagnostics.Debug.WriteLine($"Geometry types will be processed in optimal stacking order: {string.Join(", ", geometryTypes)}");
-
             if (geometryTypes.Count == 0)
             {
                 progress?.Report("No geometries found in the current dataset. Skipping layer creation.");
                 System.Diagnostics.Debug.WriteLine("No geometry types found. Skipping export.");
                 return;
             }
+
+            System.Diagnostics.Debug.WriteLine($"Processing {geometryTypes.Count} geometry types: {string.Join(", ", geometryTypes)}");
 
             int typeIndex = 0;
             foreach (var geomType in geometryTypes)
@@ -715,7 +658,6 @@ namespace DuckDBGeoparquet.Services
                     ? $" (layer {order} of 3)"
                     : "";
                 progress?.Report($"Processing {layerNameBase}: {geomType}{stackingNote} ({typeIndex}/{geometryTypes.Count})");
-                System.Diagnostics.Debug.WriteLine($"Processing {layerNameBase}: {geomType}");
 
                 string descriptiveGeomType = GetDescriptiveGeometryType(geomType);
                 string finalLayerName = geometryTypes.Count > 1 ? $"{layerNameBase} ({descriptiveGeomType})" : layerNameBase;
@@ -723,7 +665,6 @@ namespace DuckDBGeoparquet.Services
 
                 // Ensure output path uses the theme/type specific folder
                 string outputPath = Path.Combine(themeTypeSpecificOutputFolder, outputFileName);
-                System.Diagnostics.Debug.WriteLine($"Output path for {geomType}: {outputPath}");
 
                 // Ensure the specific output directory exists (it should from CreateFeatureLayerAsync, but double check)
                 string specificDir = Path.GetDirectoryName(outputPath);
@@ -736,30 +677,41 @@ namespace DuckDBGeoparquet.Services
                 // Note: Individual file deletion is no longer needed here since we now delete
                 // entire folders upfront when the user confirms replacing existing data
 
-                string query = $"SELECT * EXCLUDE geometry, ST_AsWKB(geometry) as geometry FROM current_table WHERE ST_GeometryType(geometry) = '{geomType}'";
+                string query = $"SELECT * EXCLUDE geometry, geometry FROM current_table WHERE ST_GeometryType(geometry) = '{geomType}'";
 
                 try
                 {
-                    await ExportToGeoParquet(query, outputPath, finalLayerName, progress);
+                    string actualFilePath = await ExportToGeoParquet(query, outputPath, finalLayerName, progress);
 
-                    // Instead of immediately adding to map, collect layer info for bulk creation
-                    var layerInfo = new LayerCreationInfo
+                    // Verify the file actually exists before adding to pending layers
+                    if (File.Exists(actualFilePath))
                     {
-                        FilePath = outputPath,
-                        LayerName = finalLayerName,
-                        GeometryType = geomType,
-                        StackingPriority = geometryTypeOrder.TryGetValue(geomType, out int priority) ? priority : 99,
-                        ParentTheme = _currentParentS3Theme,
-                        ActualType = _currentActualS3Type
-                    };
-                    _pendingLayers.Add(layerInfo);
+                        // Instead of immediately adding to map, collect layer info for bulk creation
+                        var layerInfo = new LayerCreationInfo
+                        {
+                            FilePath = actualFilePath,
+                            LayerName = finalLayerName,
+                            GeometryType = geomType,
+                            StackingPriority = geometryTypeOrder.TryGetValue(geomType, out int priority) ? priority : 99,
+                            ParentTheme = _currentParentS3Theme,
+                            ActualType = _currentActualS3Type
+                        };
+                        _pendingLayers.Add(layerInfo);
 
-                    progress?.Report($"Prepared layer {finalLayerName} for optimal stacking");
+                        progress?.Report($"Prepared layer {finalLayerName} for optimal stacking");
+                        System.Diagnostics.Debug.WriteLine($"Successfully prepared layer: {finalLayerName} at {actualFilePath}");
+                    }
+                    else
+                    {
+                        progress?.Report($"Error: Export completed but file not found for {finalLayerName}");
+                        System.Diagnostics.Debug.WriteLine($"Error: Export completed but file not found: {actualFilePath}");
+                    }
                 }
                 catch (Exception ex)
                 {
                     progress?.Report($"Error exporting layer for {geomType}: {ex.Message}");
                     System.Diagnostics.Debug.WriteLine($"Error during export for {geomType} of {layerNameBase}: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Stack trace: {ex.StackTrace}");
                     // Decide if we should continue with other geometry types or rethrow
                     // For now, log and continue to attempt other types
                 }
@@ -767,20 +719,89 @@ namespace DuckDBGeoparquet.Services
             progress?.Report($"Finished processing all geometry types for {layerNameBase}.");
         }
 
-        private async Task ExportToGeoParquet(string query, string outputPath, string _layerName, IProgress<string> progress = null)
+        private async Task<string> ExportToGeoParquet(string query, string outputPath, string _layerName, IProgress<string> progress = null)
         {
             progress?.Report($"Exporting data for {_layerName} to {Path.GetFileName(outputPath)}");
-            System.Diagnostics.Debug.WriteLine($"Exporting {_layerName} to {outputPath}");
-            System.Diagnostics.Debug.WriteLine($"Export query: {query}");
 
             try
             {
-                using var command = _connection.CreateCommand();
-                command.CommandText = BuildGeoParquetCopyCommand(query, outputPath);
+                // First, proactively remove any existing layers that use this file
+                if (File.Exists(outputPath))
+                {
+                    await RemoveLayersUsingFileAsync(outputPath);
+                    
+                    // Give ArcGIS Pro time to release file handles
+                    await Task.Delay(50);
+                    
+                    // Try to delete the file directly before DuckDB export
+                    for (int attempt = 1; attempt <= 2; attempt++)
+                    {
+                        try
+                        {
+                            File.Delete(outputPath);
+                            break;
+                        }
+                        catch (IOException) when (attempt < 2)
+                        {
+                            await Task.Delay(50); // Single short delay
+                        }
+                        catch (IOException ex) when (attempt == 2)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Could not delete existing file: {ex.Message}. Using temp file approach.");
+                        }
+                    }
+                }
 
+                using var command = _connection.CreateCommand();
+                
+                // If the file still exists after our cleanup attempts, use a temporary file approach
+                string actualOutputPath = outputPath;
+                bool useTempFile = File.Exists(outputPath);
+                
+                if (useTempFile)
+                {
+                    actualOutputPath = outputPath + $".tmp_{DateTime.Now:yyyyMMdd_HHmmss}";
+                    System.Diagnostics.Debug.WriteLine($"File still locked, using temporary export path: {actualOutputPath}");
+                }
+                
+                command.CommandText = BuildGeoParquetCopyCommand(query, actualOutputPath);
                 await command.ExecuteNonQueryAsync(CancellationToken.None);
+                
+                // If we used a temp file, try to replace the original
+                if (useTempFile && File.Exists(actualOutputPath))
+                {
+                    System.Diagnostics.Debug.WriteLine("Temp file export successful, attempting to replace original...");
+                    
+                    // Try one more time to delete the original file
+                    for (int attempt = 1; attempt <= 3; attempt++)
+                    {
+                        try
+                        {
+                            if (File.Exists(outputPath))
+                            {
+                                File.Delete(outputPath);
+                            }
+                            File.Move(actualOutputPath, outputPath);
+                            System.Diagnostics.Debug.WriteLine($"Successfully replaced original file on attempt {attempt}");
+                            break;
+                        }
+                        catch (IOException ex) when (attempt < 3)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Attempt {attempt} to replace file failed: {ex.Message}. Retrying in {attempt * 100}ms...");
+                            await Task.Delay(attempt * 100);
+                        }
+                        catch (IOException ex) when (attempt == 3)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Could not replace original file after {attempt} attempts: {ex.Message}");
+                            System.Diagnostics.Debug.WriteLine($"Temp file remains at: {actualOutputPath}");
+                            // Update the output path to point to the temp file for layer creation
+                            outputPath = actualOutputPath;
+                        }
+                    }
+                }
                 progress?.Report($"Successfully exported data for {_layerName}.");
                 System.Diagnostics.Debug.WriteLine($"Successfully exported to {outputPath}");
+                return outputPath; // Return the actual file path used
             }
             catch (Exception ex)
             {
@@ -849,94 +870,129 @@ namespace DuckDBGeoparquet.Services
 
             progress?.Report($"Layer summary: {pointLayers.Count} point layers, {lineLayers.Count} line layers, {polygonLayers.Count} polygon layers");
 
-            try
+            // Use individual layer creation for single layers, bulk creation for multiple layers
+            if (sortedLayers.Count == 1)
             {
-                progress?.Report("Starting bulk layer creation process...");
-
-                await QueuedTask.Run(() =>
+                progress?.Report("Single layer detected, using individual layer creation...");
+                System.Diagnostics.Debug.WriteLine("Using individual layer creation for single layer (bulk creation may not work reliably with 1 layer)");
+                await FallbackToIndividualLayerCreation(sortedLayers, progress);
+            }
+            else
+            {
+                List<LayerCreationInfo> missingLayersForIndividualCreation = null;
+                
+                try
                 {
-                    var map = MapView.Active?.Map;
-                    if (map == null)
+                    progress?.Report("Starting bulk layer creation process...");
+
+                    await QueuedTask.Run(() =>
                     {
-                        progress?.Report("Error: No active map found to add layers.");
-                        System.Diagnostics.Debug.WriteLine("AddAllLayersToMapAsync: No active map found.");
-                        return;
-                    }
-
-                    progress?.Report("Validating layer files...");
-
-                    // Use BulkMapMemberCreationParams for optimal performance
-                    var uris = new List<Uri>();
-                    var layerNames = new List<string>();
-                    int validFiles = 0;
-
-                    foreach (var layerInfo in sortedLayers)
-                    {
-                        if (File.Exists(layerInfo.FilePath))
+                        var map = MapView.Active?.Map;
+                        if (map == null)
                         {
-                            uris.Add(new Uri(layerInfo.FilePath));
-                            layerNames.Add(layerInfo.LayerName);
-                            validFiles++;
+                            progress?.Report("Error: No active map found to add layers.");
+                            System.Diagnostics.Debug.WriteLine("AddAllLayersToMapAsync: No active map found.");
+                            return;
                         }
-                        else
+
+                        progress?.Report("Validating layer files...");
+
+                        // Use BulkMapMemberCreationParams for optimal performance
+                        var uris = new List<Uri>();
+                        var layerNames = new List<string>();
+                        int validFiles = 0;
+
+                        foreach (var layerInfo in sortedLayers)
                         {
-                            progress?.Report($"Warning: File not found for {layerInfo.LayerName}");
-                            System.Diagnostics.Debug.WriteLine($"Warning: File not found for layer {layerInfo.LayerName}: {layerInfo.FilePath}");
-                        }
-                    }
-
-                    progress?.Report($"Validated {validFiles} layer files. Creating layers...");
-
-                    if (uris.Any())
-                    {
-                        progress?.Report("Executing bulk layer creation (this may take a moment)...");
-
-                        // Create layers using LayerFactory with URI enumeration for optimal performance
-                        var layers = LayerFactory.Instance.CreateLayers(uris, map);
-
-                        progress?.Report($"Bulk creation completed. Applying settings to {layers.Count} layers...");
-
-                        // Apply custom names and settings to the created layers
-                        for (int i = 0; i < layers.Count && i < layerNames.Count; i++)
-                        {
-                            if (layers[i] != null)
+                            if (File.Exists(layerInfo.FilePath))
                             {
-                                layers[i].SetName(layerNames[i]);
-
-                                // Apply cache and feature reduction settings
-                                if (layers[i] is FeatureLayer featureLayer)
-                                {
-                                    ApplyLayerSettings(featureLayer);
-                                }
-
-                                // Report progress every few layers to keep UI responsive
-                                if (i % 3 == 0 || i == layers.Count - 1)
-                                {
-                                    progress?.Report($"Configured layer {i + 1} of {layers.Count}: {layerNames[i]}");
-                                }
-                                System.Diagnostics.Debug.WriteLine($"Successfully added layer: {layerNames[i]}");
+                                uris.Add(new Uri(layerInfo.FilePath));
+                                layerNames.Add(layerInfo.LayerName);
+                                validFiles++;
+                                System.Diagnostics.Debug.WriteLine($"Valid file for {layerInfo.LayerName}: {layerInfo.FilePath}");
+                            }
+                            else
+                            {
+                                progress?.Report($"Warning: File not found for {layerInfo.LayerName}");
+                                System.Diagnostics.Debug.WriteLine($"Warning: File not found for layer {layerInfo.LayerName}: {layerInfo.FilePath}");
                             }
                         }
 
-                        progress?.Report($"✅ Successfully added {layers.Count} layers with optimal stacking order!");
-                        System.Diagnostics.Debug.WriteLine($"Bulk layer creation completed. Added {layers.Count} layers.");
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                progress?.Report($"Error during bulk layer creation: {ex.Message}");
-                System.Diagnostics.Debug.WriteLine($"Error in AddAllLayersToMapAsync: {ex.Message}");
+                        progress?.Report($"Validated {validFiles} layer files. Creating layers...");
 
-                // Fallback to individual layer creation if bulk creation fails
-                progress?.Report("Falling back to individual layer creation...");
-                await FallbackToIndividualLayerCreation(sortedLayers, progress);
+                        if (uris.Any())
+                        {
+                            progress?.Report("Executing bulk layer creation (this may take a moment)...");
+
+                            // Create layers using LayerFactory with URI enumeration for optimal performance
+                            System.Diagnostics.Debug.WriteLine($"Attempting to create {uris.Count} layers via bulk creation...");
+                            var layers = LayerFactory.Instance.CreateLayers(uris, map);
+
+                            progress?.Report($"Bulk creation completed. Applying settings to {layers.Count} layers...");
+                            System.Diagnostics.Debug.WriteLine($"Bulk creation result: {layers.Count} layers created from {uris.Count} URIs");
+
+                            // Apply custom names and settings to the created layers
+                            for (int i = 0; i < layers.Count && i < layerNames.Count; i++)
+                            {
+                                if (layers[i] != null)
+                                {
+                                    layers[i].SetName(layerNames[i]);
+
+                                    // Apply cache and feature reduction settings
+                                    if (layers[i] is FeatureLayer featureLayer)
+                                    {
+                                        ApplyLayerSettings(featureLayer);
+                                    }
+
+                                    // Report progress every few layers to keep UI responsive
+                                    if (i % 3 == 0 || i == layers.Count - 1)
+                                    {
+                                        progress?.Report($"Configured layer {i + 1} of {layers.Count}: {layerNames[i]}");
+                                    }
+                                    System.Diagnostics.Debug.WriteLine($"Successfully added layer: {layerNames[i]}");
+                                }
+                            }
+
+                            progress?.Report($"✅ Successfully added {layers.Count} layers with optimal stacking order!");
+                            System.Diagnostics.Debug.WriteLine($"Bulk layer creation completed. Added {layers.Count} layers.");
+                            
+                            // If bulk creation didn't create all expected layers, fall back to individual creation for missing ones
+                            if (layers.Count < uris.Count)
+                            {
+                                progress?.Report($"Some layers missing from bulk creation ({layers.Count}/{uris.Count}). Creating missing layers individually...");
+                                System.Diagnostics.Debug.WriteLine($"Bulk creation incomplete: {layers.Count}/{uris.Count} layers created. Falling back for missing layers...");
+                                
+                                // Find which layers were not created and create them individually
+                                var createdLayerNames = layers.Select(l => l.Name).ToHashSet();
+                                var missingLayers = sortedLayers.Where(layerInfo => 
+                                    File.Exists(layerInfo.FilePath) && 
+                                    !createdLayerNames.Contains(layerInfo.LayerName)).ToList();
+                                
+                                // Store missing layers for individual creation outside QueuedTask
+                                missingLayersForIndividualCreation = missingLayers;
+                            }
+                        }
+                    });
+                    
+                    // Create missing layers individually outside QueuedTask
+                    if (missingLayersForIndividualCreation?.Any() == true)
+                    {
+                        await FallbackToIndividualLayerCreation(missingLayersForIndividualCreation, progress);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    progress?.Report($"Error during bulk layer creation: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Error in AddAllLayersToMapAsync: {ex.Message}");
+
+                    // Fallback to individual layer creation if bulk creation fails
+                    progress?.Report("Falling back to individual layer creation...");
+                    await FallbackToIndividualLayerCreation(sortedLayers, progress);
+                }
             }
-            finally
-            {
-                // Clear pending layers after processing
-                _pendingLayers.Clear();
-            }
+            
+            // Clear pending layers after processing
+            _pendingLayers.Clear();
         }
 
         /// <summary>
