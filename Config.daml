@@ -1,6 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <ArcGIS defaultAssembly="DuckDBGeoparquet.dll" defaultNamespace="DuckDBGeoparquet" xmlns="http://schemas.esri.com/DADF/Registry" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
-	<AddInInfo id="{9e44d8fc-6e1a-4513-9992-85c2de3e2d61}" version="1.1" desktopVersion="3.5">
+	<AddInInfo id="{9e44d8fc-6e1a-4513-9992-85c2de3e2d61}" version="0.1.0" desktopVersion="3.5">
 		<Name>DuckDBGeoparquet</Name>
 		<Description>Export Overture Maps data to GeoParquet format for use in ArcGIS Pro 3.5</Description>
 		<Image>Images\AddinDesktop32.png</Image>
