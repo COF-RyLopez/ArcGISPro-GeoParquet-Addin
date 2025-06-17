@@ -7,7 +7,7 @@
 		<Author>rylopez</Author>
 		<Company>County of Fresno</Company>
 		<Date>5/16/2025</Date>
-		<Subject>Framework</Subject>
+		<Subject>Framework, Geoprocessing, Geodatabase</Subject>
 		<!-- Note subject can be one or more of these topics:
                     Content, Framework, Editing, Geodatabase, Geometry, Geoprocessing, Layouts, Map Authoring, Map Exploration -->
 	</AddInInfo>
@@ -19,16 +19,13 @@
 				</tab>
 			</tabs>
 			<groups>
-				<group id="DuckDBGeoparquet_Group2" caption="Overture Maps" appearsOnAddInTab="false" keytip="A">
+				<group id="DuckDBGeoparquet_Group2" caption="Overture Maps" appearsOnAddInTab="false" keytip="M">
 					<labelControl refID="DuckDBGeoparquet_OvertureMapDescription"/>
 					<button refID="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" size="large" />
 				</group>
 			</groups>
 			<controls>
 				<labelControl id="DuckDBGeoparquet_OvertureMapDescription" caption="Import and explore GeoParquet data" />
-				<labelControl id="DuckDBGeoparquet_ThemeSelectionLabel" caption="Theme" />
-				<labelControl id="DuckDBGeoparquet_AreaSelectionLabel" caption="Area" />
-				<labelControl id="DuckDBGeoparquet_StatusLabel" caption="Status" />
 
 				<button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton"
                        caption="Launch Overture"
@@ -36,7 +33,8 @@
                        loadOnClick="true"
                        smallImage="Images\Overture16.png"
                        largeImage="Images\Overture32.png"
-                       keytip="Z"
+                       keytip="L"
+                       condition="esri_mapping_mapPane"
                        extendedCaption="Load Overture Maps Data">
 					<tooltip heading="Overture Maps Data Loader">
 						Launch the Overture Maps Data Loader to import GeoParquet data
@@ -51,7 +49,8 @@
                      loadOnClick="true"
                      smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool16.png"
                      largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool32.png"
-                     condition="esri_mapping_mapPane">
+                     condition="esri_mapping_mapPane"
+                     keytip="E">
 					<tooltip heading="Draw Custom Extent">
 						Draw a rectangle on the map to define a custom data extent
 						<disabledText>A map must be open to use this tool</disabledText>
@@ -62,31 +61,13 @@
 				<dockPane id="DuckDBGeoparquet_Views_WizardDockpane"
                          caption="Overture Maps Data Loader"
                          className="DuckDBGeoparquet.Views.WizardDockpaneViewModel"
-                         dock="right">
+                         dock="right"
+                         dockWith="esri_core_projectDockPane">
 					<content className="DuckDBGeoparquet.Views.WizardDockpaneView" />
 				</dockPane>
 			</dockPanes>
-			<groups>
-				<group id="DuckDBGeoparquet_DockPane_Group" caption="Overture Maps Options" keytip="O">
-					<labelControl refID="DuckDBGeoparquet_ThemeSelectionLabel"/>
-					<labelControl refID="DuckDBGeoparquet_AreaSelectionLabel"/>
-					<labelControl refID="DuckDBGeoparquet_StatusLabel"/>
-				</group>
-			</groups>
 		</insertModule>
 	</modules>
-	<propertySheets>
-		<updateSheet refID="esri_core_optionsPropertySheet">
-			<insertPage id="DuckDBGeoparquet_Options" caption="Overture Maps Settings" className="DuckDBGeoparquet.Views.OptionsPropertyPage" keytip="O">
-				<content className="DuckDBGeoparquet.Views.OptionsPropertyPageView" />
-			</insertPage>
-		</updateSheet>
-	</propertySheets>
-	<backstage>
-		<insertTab id="DuckDBGeoparquet_Backstage" caption="Overture Maps" className="DuckDBGeoparquet.Views.BackstageTab" keytip="M">
-			<content className="DuckDBGeoparquet.Views.BackstageTabView" />
-		</insertTab>
-	</backstage>
 	<categories>
 		<updateCategory refID="esri_framework_configurationManager">
 			<insertComponent id="DuckDBGeoparquet_Config" className="DuckDBGeoparquet.Views.ConfigurationManager" />
