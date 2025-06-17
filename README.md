@@ -4,6 +4,14 @@ A powerful ArcGIS Pro add-in that simplifies working with cloud-native geospatia
 
 ![ArcGIS Pro GeoParquet Add-in](https://raw.githubusercontent.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin/main/Images/addin-icon.png)
 
+## 🎥 See It In Action
+
+Watch the add-in in action loading Overture Maps data with incredible performance:
+
+[![Demo Video](https://img.shields.io/badge/▶️%20Demo%20Video-LinkedIn-blue?style=for-the-badge)](https://www.linkedin.com/posts/ryan-lopez-fresnocounty_now-the-arcgis-pro-35-brings-native-geoparquet-activity-7333914884641890307-sYOY)
+
+📖 **Comprehensive Guide**: Mark Litwintschik wrote an excellent [step-by-step guide](https://tech.marksblogg.com/overture-maps-esri-arcgis-pro.html) covering installation and usage.
+
 ## Features
 
 - **Native GeoParquet Support**: Fully leverages ArcGIS Pro 3.5's native GeoParquet capabilities for optimal performance
@@ -14,6 +22,8 @@ A powerful ArcGIS Pro add-in that simplifies working with cloud-native geospatia
 - **Overture Maps Integration**: Specialized support for Overture Maps Foundation data
 - **In-Memory Processing**: Uses DuckDB for high-performance operations
 - **Spatial Filtering**: Filter data by map extent before loading
+- **Multi-File Feature Connections**: Automatically creates MFCs for efficient multi-dataset workflows
+- **Incredible Performance**: Experience blazing-fast map redraws thanks to Parquet's optimized format
 
 ## Requirements
 
@@ -97,6 +107,12 @@ A powerful ArcGIS Pro add-in that simplifies working with cloud-native geospatia
 2. Layers are named based on the Overture Maps theme and geometry type
 3. All attributes are preserved in their original structure
 
+#### Step 5: Multi-File Feature Connection (Optional)
+1. After loading multiple datasets, you'll be prompted to create an MFC
+2. Choose your preferred location for the MFC file
+3. This enables more efficient workflows when working with multiple related datasets
+4. The MFC appears in your Catalog for easy access and management
+
 ### Advanced Features
 
 - **Spatial Filtering**: Reduces data volume by filtering to your area of interest
@@ -151,7 +167,12 @@ The add-in maintains detailed logs that can help diagnose issues:
 
 ## Recent Improvements
 
-### Version 0.1.0 (Latest)
+### Version 0.1.1 (Latest)
+- **Enhanced DAML Configuration**: Improved UI integration with ArcGIS Pro standards
+- **Better Accessibility**: Enhanced keytips and standard condition usage
+- **Cleaner Codebase**: Removed unused UI elements and optimized configuration
+
+### Version 0.1.0
 - **Performance Boost**: 5-15% faster processing through optimized file operations
 - **Smart Dataset Handling**: Automatically skips empty datasets (e.g., bathymetry in inland areas)  
 - **Native GeoParquet**: Fully utilizes ArcGIS Pro 3.5's built-in GeoParquet support
@@ -173,9 +194,19 @@ Please adhere to the existing code style and include appropriate tests.
 
 This project is licensed under the MIT License - see the [LICENSE.txt](LICENSE.txt) file for details.
 
+## Media Coverage & Community
+
+- 📺 **Demo Video**: [LinkedIn demonstration](https://www.linkedin.com/posts/ryan-lopez-fresnocounty_now-the-arcgis-pro-35-brings-native-geoparquet-activity-7333914884641890307-sYOY) by Ryan Lopez
+- 📖 **Technical Guide**: [Comprehensive walkthrough](https://tech.marksblogg.com/overture-maps-esri-arcgis-pro.html) by Mark Litwintschik
+- 🚀 **CI/CD Implementation**: [Automated release pipeline](https://www.linkedin.com/feed/update/urn:li:activity:7338847609953947648/) built by Youssef Harby
+- 🏆 **Inspiration**: Built upon the excellent work of [Chris Holmes](https://github.com/cholmes) and his QGIS Overture plugin
+
 ## Acknowledgments
 
 - [Overture Maps Foundation](https://overturemaps.org/) for providing open map data
 - [DuckDB](https://duckdb.org/) for the powerful embedded database engine
 - [ArcGIS Pro SDK](https://pro.arcgis.com/en/pro-app/latest/sdk/) for development tools
+- [Chris Holmes](https://github.com/cholmes) for pioneering the DuckDB + Overture approach in QGIS
+- [Mark Litwintschik](https://tech.marksblogg.com/) for the excellent technical documentation
+- [Youssef Harby](https://www.linkedin.com/in/youssef-harby/) for implementing the professional CI/CD pipeline
 - All contributors who have helped improve this add-in
