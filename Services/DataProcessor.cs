@@ -891,16 +891,17 @@ namespace DuckDBGeoparquet.Services
                         // Get the relative path structure for cloud storage
                         var fileName = Path.GetFileName(localFilePath);
                         var basePath = string.IsNullOrEmpty(_cloudBasePath) ? "overture-data" : _cloudBasePath;
-                        var cloudPath = $"{basePath}/{_currentActualS3Type}/{fileName}";
+                        
+                        // Create the cloud destination path using the ACS connection
+                        var cloudDestination = $"{_cloudConnectionPath}/{basePath}/{_currentActualS3Type}";
 
-                        // Use ArcGIS Pro's CopyFiles geoprocessing tool to upload to cloud storage
+                        // Use ArcGIS Pro's Transfer Files geoprocessing tool to upload to cloud storage
                         var parameters = Geoprocessing.MakeValueArray(
-                            localFilePath,          // in_files
-                            _cloudConnectionPath,   // out_folder (cloud connection)
-                            cloudPath              // out_name (cloud path structure)
+                            localFilePath,          // in_data
+                            cloudDestination        // out_folder (cloud destination path)
                         );
 
-                        var result = await Geoprocessing.ExecuteToolAsync("CopyFiles_management", parameters);
+                        var result = await Geoprocessing.ExecuteToolAsync("TransferFiles_management", parameters);
 
                         if (result.IsFailed)
                         {
@@ -908,7 +909,7 @@ namespace DuckDBGeoparquet.Services
                             throw new Exception($"Failed to upload to cloud storage: {errorMessages}");
                         }
 
-                        System.Diagnostics.Debug.WriteLine($"Successfully uploaded {fileName} to cloud storage: {cloudPath}");
+                        System.Diagnostics.Debug.WriteLine($"Successfully uploaded {fileName} to cloud storage: {cloudDestination}");
                         progress?.Report($"Successfully uploaded {layerName} to cloud storage");
                     }
                     catch (Exception ex)
