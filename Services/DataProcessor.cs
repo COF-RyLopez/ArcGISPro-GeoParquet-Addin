@@ -893,7 +893,8 @@ namespace DuckDBGeoparquet.Services
                         var basePath = string.IsNullOrEmpty(_cloudBasePath) ? "overture-data" : _cloudBasePath;
                         
                         // Create the cloud destination path using the ACS connection
-                        var cloudDestination = $"{_cloudConnectionPath}/{basePath}/{_currentActualS3Type}";
+                        // For TransferFiles, the ACS file path is followed by the cloud folder structure
+                        var cloudDestination = $"{_cloudConnectionPath}\\{basePath}\\{_currentActualS3Type}";
 
                         // Use ArcGIS Pro's Transfer Files geoprocessing tool to upload to cloud storage
                         var parameters = Geoprocessing.MakeValueArray(
