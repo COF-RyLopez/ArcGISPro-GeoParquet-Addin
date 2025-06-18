@@ -562,11 +562,12 @@ namespace DuckDBGeoparquet.Services
         {
             if (_enableCloudOutput && !string.IsNullOrEmpty(_cloudConnectionPath))
             {
-                // Generate cloud path using the cloud connection
-                var basePath = string.IsNullOrEmpty(_cloudBasePath) ? "overture-data" : _cloudBasePath;
-                var cloudPath = $"{_cloudConnectionPath}/{basePath}/{actualS3Type}";
-                System.Diagnostics.Debug.WriteLine($"Using cloud output path: {cloudPath}");
-                return cloudPath;
+                // For cloud output, create a local staging area and then use cloud connection for upload
+                // The .acs file is a connection file, not a directory path
+                var connectionDir = Path.GetDirectoryName(_cloudConnectionPath);
+                var cloudStagingPath = Path.Combine(connectionDir, "cloud-staging", actualS3Type);
+                System.Diagnostics.Debug.WriteLine($"Using cloud staging path: {cloudStagingPath}");
+                return cloudStagingPath;
             }
             else
             {
@@ -845,6 +846,12 @@ namespace DuckDBGeoparquet.Services
                         }
                     }
                 }
+                // Handle cloud upload if cloud output is enabled
+                if (_enableCloudOutput && !string.IsNullOrEmpty(_cloudConnectionPath))
+                {
+                    await UploadToCloudStorageAsync(outputPath, _layerName, progress);
+                }
+
                 progress?.Report($"Successfully exported data for {_layerName}.");
                 System.Diagnostics.Debug.WriteLine($"Successfully exported to {outputPath}");
                 return outputPath; // Return the actual file path used
@@ -868,6 +875,56 @@ namespace DuckDBGeoparquet.Services
                     ROW_GROUP_SIZE 100000,
                     COMPRESSION 'ZSTD'
                 );";
+        }
+
+        private async Task UploadToCloudStorageAsync(string localFilePath, string layerName, IProgress<string> progress = null)
+        {
+            try
+            {
+                progress?.Report($"Uploading {layerName} to cloud storage...");
+                System.Diagnostics.Debug.WriteLine($"Starting cloud upload for: {localFilePath}");
+
+                await QueuedTask.Run(async () =>
+                {
+                    try
+                    {
+                        // Get the relative path structure for cloud storage
+                        var fileName = Path.GetFileName(localFilePath);
+                        var basePath = string.IsNullOrEmpty(_cloudBasePath) ? "overture-data" : _cloudBasePath;
+                        var cloudPath = $"{basePath}/{_currentActualS3Type}/{fileName}";
+
+                        // Use ArcGIS Pro's CopyFiles geoprocessing tool to upload to cloud storage
+                        var parameters = Geoprocessing.MakeValueArray(
+                            localFilePath,          // in_files
+                            _cloudConnectionPath,   // out_folder (cloud connection)
+                            cloudPath              // out_name (cloud path structure)
+                        );
+
+                        var result = await Geoprocessing.ExecuteToolAsync("CopyFiles_management", parameters);
+
+                        if (result.IsFailed)
+                        {
+                            var errorMessages = string.Join("; ", result.Messages.Select(m => m.Text));
+                            throw new Exception($"Failed to upload to cloud storage: {errorMessages}");
+                        }
+
+                        System.Diagnostics.Debug.WriteLine($"Successfully uploaded {fileName} to cloud storage: {cloudPath}");
+                        progress?.Report($"Successfully uploaded {layerName} to cloud storage");
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Cloud upload error for {layerName}: {ex.Message}");
+                        progress?.Report($"Warning: Failed to upload {layerName} to cloud storage: {ex.Message}");
+                        // Don't throw - continue with local file processing
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Cloud upload exception for {layerName}: {ex}");
+                progress?.Report($"Warning: Cloud upload failed for {layerName}: {ex.Message}");
+                // Don't throw - continue with local file processing
+            }
         }
 
         // Helper method to get a more descriptive geometry type name
