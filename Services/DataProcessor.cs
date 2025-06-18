@@ -49,10 +49,27 @@ namespace DuckDBGeoparquet.Services
         // Collection to store layer information for bulk creation
         private readonly List<LayerCreationInfo> _pendingLayers;
 
+        // Cloud output configuration
+        private bool _enableCloudOutput = false;
+        private string _cloudConnectionPath = "";
+        private string _cloudBasePath = "";
+
         public DataProcessor()
         {
             _connection = new DuckDBConnection("DataSource=:memory:");
             _pendingLayers = new List<LayerCreationInfo>();
+        }
+
+        /// <summary>
+        /// Configure cloud output settings for this DataProcessor instance
+        /// </summary>
+        public void ConfigureCloudOutput(bool enableCloudOutput, string cloudConnectionPath, string cloudBasePath = "")
+        {
+            _enableCloudOutput = enableCloudOutput;
+            _cloudConnectionPath = cloudConnectionPath ?? "";
+            _cloudBasePath = cloudBasePath ?? "";
+            
+            System.Diagnostics.Debug.WriteLine($"Cloud output configured: Enabled={_enableCloudOutput}, Connection={_cloudConnectionPath}, BasePath={_cloudBasePath}");
         }
 
         public async Task InitializeDuckDBAsync()
@@ -538,6 +555,28 @@ namespace DuckDBGeoparquet.Services
         /// <param name="parentS3Theme">The S3 parent theme key (e.g., 'buildings').</param>
         /// <param name="actualS3Type">The specific S3 data type (e.g., 'building', 'building_part').</param>
         /// <param name="dataOutputPathRoot">The root directory where data for the current release is stored (e.g., C:\...\ProjectHome\OvertureProAddinData\Data\{ReleaseVersion})</param>
+        /// <summary>
+        /// Determines the output path for data files - either local or cloud-based
+        /// </summary>
+        private string GetOutputPath(string dataOutputPathRoot, string actualS3Type)
+        {
+            if (_enableCloudOutput && !string.IsNullOrEmpty(_cloudConnectionPath))
+            {
+                // Generate cloud path using the cloud connection
+                var basePath = string.IsNullOrEmpty(_cloudBasePath) ? "overture-data" : _cloudBasePath;
+                var cloudPath = $"{_cloudConnectionPath}/{basePath}/{actualS3Type}";
+                System.Diagnostics.Debug.WriteLine($"Using cloud output path: {cloudPath}");
+                return cloudPath;
+            }
+            else
+            {
+                // Use traditional local path
+                var localPath = Path.Combine(dataOutputPathRoot, actualS3Type);
+                System.Diagnostics.Debug.WriteLine($"Using local output path: {localPath}");
+                return localPath;
+            }
+        }
+
         public async Task CreateFeatureLayerAsync(string layerNameBase, IProgress<string> progress, string parentS3Theme, string actualS3Type, string dataOutputPathRoot)
         {
             System.Diagnostics.Debug.WriteLine($"CreateFeatureLayerAsync called for: {layerNameBase}, ParentS3Theme: {parentS3Theme}, ActualS3Type: {actualS3Type}, DataOutputPathRoot: {dataOutputPathRoot}");
@@ -560,20 +599,26 @@ namespace DuckDBGeoparquet.Services
             _currentParentS3Theme = parentS3Theme;
             _currentActualS3Type = actualS3Type;
 
-            // Define the specific output folder for this actualS3Type directly under the dataOutputPathRoot
-            // Path structure: dataOutputPathRoot / actualS3Type / *.parquet
-            string themeTypeSpecificFolder = Path.Combine(dataOutputPathRoot, actualS3Type);
+            // Determine output path (local or cloud)
+            string themeTypeSpecificFolder = GetOutputPath(dataOutputPathRoot, actualS3Type);
 
-            // Ensure the directory structure exists up to the actualS3Type level
-            if (!Directory.Exists(dataOutputPathRoot))
+            if (_enableCloudOutput && !string.IsNullOrEmpty(_cloudConnectionPath))
             {
-                System.Diagnostics.Debug.WriteLine($"Creating base data output path root: {dataOutputPathRoot}");
-                Directory.CreateDirectory(dataOutputPathRoot); // Create the ...\Data\{Release} folder if it doesn't exist
+                progress?.Report($"Writing data directly to cloud storage: {themeTypeSpecificFolder}");
             }
-            if (!Directory.Exists(themeTypeSpecificFolder))
+            else
             {
-                System.Diagnostics.Debug.WriteLine($"Creating theme-specific output folder: {themeTypeSpecificFolder}");
-                Directory.CreateDirectory(themeTypeSpecificFolder); // Create the ...\Data\{Release}\actualS3Type folder
+                // Ensure local directory structure exists
+                if (!Directory.Exists(dataOutputPathRoot))
+                {
+                    System.Diagnostics.Debug.WriteLine($"Creating base data output path root: {dataOutputPathRoot}");
+                    Directory.CreateDirectory(dataOutputPathRoot);
+                }
+                if (!Directory.Exists(themeTypeSpecificFolder))
+                {
+                    System.Diagnostics.Debug.WriteLine($"Creating theme-specific output folder: {themeTypeSpecificFolder}");
+                    Directory.CreateDirectory(themeTypeSpecificFolder);
+                }
             }
 
             System.Diagnostics.Debug.WriteLine($"Theme-specific output folder set to: {themeTypeSpecificFolder}");

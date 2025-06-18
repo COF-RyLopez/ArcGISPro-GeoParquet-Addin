@@ -284,6 +284,158 @@
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
+            <!-- Cloud Output Tab -->
+            <TabItem Header="Cloud Output">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="16,12,16,12" Orientation="Vertical">
+                        <TextBlock Text="Cloud Storage Output" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,12"/>
+
+                        <!-- Enable Cloud Output -->
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <CheckBox Content="Enable cloud output" IsChecked="{Binding EnableCloudOutput}" Margin="0,0,0,8"/>
+                                <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+                                    Write GeoParquet data directly to cloud object storage using ArcGIS Pro's native cloud storage connections.
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Cloud Provider Selection -->
+                        <StackPanel IsEnabled="{Binding EnableCloudOutput}">
+                            <TextBlock Text="Cloud Provider" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                            <Border 
+                                    BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="2"
+                                    Padding="8"
+                                    Margin="0,0,0,12">
+                                <StackPanel>
+                                    <RadioButton Content="Amazon S3" IsChecked="{Binding SelectedCloudProvider, Converter={x:Static local:CloudProviderConverter.Instance}, ConverterParameter=AwsS3}" Margin="0,0,0,4"/>
+                                    <RadioButton Content="Azure Blob Storage" IsChecked="{Binding SelectedCloudProvider, Converter={x:Static local:CloudProviderConverter.Instance}, ConverterParameter=AzureBlobStorage}" Margin="0,0,0,4"/>
+                                    <RadioButton Content="Google Cloud Storage" IsChecked="{Binding SelectedCloudProvider, Converter={x:Static local:CloudProviderConverter.Instance}, ConverterParameter=GoogleCloudStorage}" Margin="0,0,0,4"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- AWS S3 Settings -->
+                            <StackPanel Visibility="{Binding ShowAwsS3Settings, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Text="AWS S3 Configuration" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                                <Border 
+                                        BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="2"
+                                        Padding="8"
+                                        Margin="0,0,0,12">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Connection Name:" VerticalAlignment="Center" Margin="0,0,8,4"/>
+                                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding CloudConnectionName}" Margin="0,0,0,4" Style="{DynamicResource Esri_TextBox}"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Access Key ID:" VerticalAlignment="Center" Margin="0,0,8,4"/>
+                                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding CloudAccessKey}" Margin="0,0,0,4" Style="{DynamicResource Esri_TextBox}"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Secret Access Key:" VerticalAlignment="Center" Margin="0,0,8,4"/>
+                                        <PasswordBox Grid.Row="2" Grid.Column="1" Name="CloudSecretKeyBox" Margin="0,0,0,4" Style="{DynamicResource Esri_PasswordBox}"/>
+
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Bucket Name:" VerticalAlignment="Center" Margin="0,0,8,4"/>
+                                        <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding BucketName}" Margin="0,0,0,4" Style="{DynamicResource Esri_TextBox}"/>
+
+                                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Region:" VerticalAlignment="Center" Margin="0,0,8,4"/>
+                                        <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Region}" Margin="0,0,0,4" Style="{DynamicResource Esri_TextBox}"/>
+
+                                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Base Path (optional):" VerticalAlignment="Center" Margin="0,0,8,4"/>
+                                        <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding CloudBasePath}" Margin="0,0,0,4" Style="{DynamicResource Esri_TextBox}" 
+                                                 ToolTipService.ToolTip="Optional folder path in bucket (e.g., 'my-data/overture')"/>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+
+                            <!-- Azure Settings Placeholder -->
+                            <StackPanel Visibility="{Binding ShowAzureSettings, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Text="Azure Blob Storage Configuration" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                                <Border 
+                                        BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="2"
+                                        Padding="8"
+                                        Margin="0,0,0,12">
+                                    <TextBlock Text="Azure Blob Storage configuration will be available in a future update." 
+                                               Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                </Border>
+                            </StackPanel>
+
+                            <!-- Google Cloud Settings Placeholder -->
+                            <StackPanel Visibility="{Binding ShowGoogleCloudSettings, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Text="Google Cloud Storage Configuration" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                                <Border 
+                                        BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="2"
+                                        Padding="8"
+                                        Margin="0,0,0,12">
+                                    <TextBlock Text="Google Cloud Storage configuration will be available in a future update." 
+                                               Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                </Border>
+                            </StackPanel>
+
+                            <!-- Connection Status -->
+                            <TextBlock Text="Connection Status" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                            <Border 
+                                    BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="2"
+                                    Padding="8"
+                                    Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding ConnectionStatus}" Style="{DynamicResource Esri_TextBlockRegular}" 
+                                               Foreground="{DynamicResource Esri_TextStyleDefaultBrush}" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Direct Cloud Writing Option -->
+                            <Border 
+                                    BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="2"
+                                    Padding="8"
+                                    Margin="0,0,0,12">
+                                <StackPanel>
+                                    <CheckBox Content="Write directly to cloud during data loading" 
+                                             IsChecked="{Binding WriteDirectlyToCloud}" Margin="0,0,0,8"/>
+                                    <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+                                        When enabled, GeoParquet files will be written directly to the cloud storage location instead of local disk. 
+                                        Requires a valid cloud storage connection.
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Action Buttons -->
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                                <Button Content="Test Connection" Command="{Binding TestCloudConnectionCommand}" 
+                                        Style="{DynamicResource Esri_Button}" Margin="0,0,8,0" Width="120"/>
+                                <Button Content="Create Connection" Command="{Binding CreateCloudConnectionCommand}" 
+                                        Style="{DynamicResource Esri_ButtonBlue}" Width="120"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
         </TabControl>
         <!-- Loading Overlay -->
         <Grid Grid.Row="1" Background="{DynamicResource Esri_DockPaneClientAreaBackgroundBrush}" Visibility="{Binding IsLoading, Converter={StaticResource BooleanToVisibilityConverter}}">
