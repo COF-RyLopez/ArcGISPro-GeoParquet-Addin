@@ -849,7 +849,12 @@ namespace DuckDBGeoparquet.Services
                 // Handle cloud upload if cloud output is enabled
                 if (_enableCloudOutput && !string.IsNullOrEmpty(_cloudConnectionPath))
                 {
+                    progress?.Report($"Attempting cloud upload for {_layerName}...");
                     await UploadToCloudStorageAsync(outputPath, _layerName, progress);
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"Cloud upload disabled for {_layerName}");
                 }
 
                 progress?.Report($"Successfully exported data for {_layerName}.");
@@ -896,6 +901,24 @@ namespace DuckDBGeoparquet.Services
                         // For TransferFiles, the ACS file path is followed by the cloud folder structure
                         var cloudDestination = $"{_cloudConnectionPath}\\{basePath}\\{_currentActualS3Type}";
 
+                        System.Diagnostics.Debug.WriteLine($"Cloud upload details:");
+                        System.Diagnostics.Debug.WriteLine($"  Source file: {localFilePath}");
+                        System.Diagnostics.Debug.WriteLine($"  Destination: {cloudDestination}");
+                        System.Diagnostics.Debug.WriteLine($"  File size: {new FileInfo(localFilePath).Length / 1024 / 1024} MB");
+
+                        // First, let's test if we can access the cloud connection at all
+                        // Try to access the root of the cloud connection
+                        var testParams = Geoprocessing.MakeValueArray(_cloudConnectionPath);
+                        var listResult = await Geoprocessing.ExecuteToolAsync("ListFiles_management", testParams);
+                        
+                        if (listResult.IsFailed)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Cannot access cloud connection: {string.Join("; ", listResult.Messages.Select(m => m.Text))}");
+                            throw new Exception($"Cloud connection test failed: {string.Join("; ", listResult.Messages.Select(m => m.Text))}");
+                        }
+
+                        System.Diagnostics.Debug.WriteLine("Cloud connection test passed, proceeding with upload...");
+
                         // Use ArcGIS Pro's Transfer Files geoprocessing tool to upload to cloud storage
                         var parameters = Geoprocessing.MakeValueArray(
                             localFilePath,          // in_data
@@ -907,6 +930,7 @@ namespace DuckDBGeoparquet.Services
                         if (result.IsFailed)
                         {
                             var errorMessages = string.Join("; ", result.Messages.Select(m => m.Text));
+                            System.Diagnostics.Debug.WriteLine($"TransferFiles failed: {errorMessages}");
                             throw new Exception($"Failed to upload to cloud storage: {errorMessages}");
                         }
 
@@ -917,6 +941,7 @@ namespace DuckDBGeoparquet.Services
                     {
                         System.Diagnostics.Debug.WriteLine($"Cloud upload error for {layerName}: {ex.Message}");
                         progress?.Report($"Warning: Failed to upload {layerName} to cloud storage: {ex.Message}");
+                        progress?.Report($"Continuing with local file processing...");
                         // Don't throw - continue with local file processing
                     }
                 });
