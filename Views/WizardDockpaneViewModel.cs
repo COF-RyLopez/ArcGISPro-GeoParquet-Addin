@@ -2719,9 +2719,6 @@ namespace DuckDBGeoparquet.Views
                         AddToLog($"🌐 Provider: {SelectedCloudProvider}");
                         AddToLog($"📂 Base path: {CloudBasePath ?? "(root)"}");
                         AddToLog("You can now enable 'Write directly to cloud' for future data loading.");
-                        
-                        // Enable the test connection command
-                        (TestCloudConnectionCommand as RelayCommand)?.RaiseCanExecuteChanged();
                     }
                     catch (Exception ex)
                     {
@@ -2740,6 +2737,9 @@ namespace DuckDBGeoparquet.Views
             finally
             {
                 IsCreatingConnection = false;
+                
+                // Update the command availability on UI thread
+                (TestCloudConnectionCommand as RelayCommand)?.RaiseCanExecuteChanged();
             }
         }
 
