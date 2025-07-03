@@ -14,8 +14,9 @@
 	<modules>
 		<insertModule id="DuckDBGeoparquet_Module" className="DuckDBGeoparquet.DuckDBGeoparquetModule" autoLoad="false" caption="DuckDBGeoparquet Module">
 			<tabs>
-				<tab id="DuckDBGeoparquet_Tab" caption="Overture Maps" keytip="O">
+				<tab id="DuckDBGeoparquet_Tab" caption="Cloud Data" keytip="C">
 					<group refID="DuckDBGeoparquet_Group2" />
+					<group refID="DuckDBGeoparquet_SourceCoopGroup" />
 				</tab>
 			</tabs>
 			<groups>
@@ -23,9 +24,14 @@
 					<labelControl refID="DuckDBGeoparquet_OvertureMapDescription"/>
 					<button refID="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" size="large" />
 				</group>
+				<group id="DuckDBGeoparquet_SourceCoopGroup" caption="Source Cooperative" appearsOnAddInTab="false" keytip="S">
+					<labelControl refID="DuckDBGeoparquet_SourceCoopDescription"/>
+					<button refID="DuckDBGeoparquet_Views_SourceCoopDockpane_ShowButton" size="large" />
+				</group>
 			</groups>
 			<controls>
 				<labelControl id="DuckDBGeoparquet_OvertureMapDescription" caption="Import and explore GeoParquet data" />
+				<labelControl id="DuckDBGeoparquet_SourceCoopDescription" caption="Browse and download community datasets" />
 
 				<button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton"
                        caption="Launch Overture"
@@ -39,6 +45,22 @@
 					<tooltip heading="Overture Maps Data Loader">
 						Launch the Overture Maps Data Loader to import GeoParquet data
 						<disabledText>Unable to launch Overture Maps Data Loader at this time</disabledText>
+					</tooltip>
+				</button>
+
+				<!-- Source Cooperative Button -->
+				<button id="DuckDBGeoparquet_Views_SourceCoopDockpane_ShowButton"
+                       caption="Browse Source Coop"
+                       className="DuckDBGeoparquet.Views.SourceCoopDockpaneShowButton"
+                       loadOnClick="true"
+                       smallImage="Images\Globe16.png"
+                       largeImage="Images\Globe32.png"
+                       keytip="B"
+                       condition="esri_mapping_mapPane"
+                       extendedCaption="Browse Source Cooperative Data">
+					<tooltip heading="Source Cooperative Data Browser">
+						Browse and download datasets from Source Cooperative
+						<disabledText>Unable to launch Source Cooperative browser at this time</disabledText>
 					</tooltip>
 				</button>
 
@@ -64,6 +86,13 @@
                          dock="right"
                          dockWith="esri_core_projectDockPane">
 					<content className="DuckDBGeoparquet.Views.WizardDockpaneView" />
+				</dockPane>
+				<dockPane id="DuckDBGeoparquet_Views_SourceCoopDockpane"
+                         caption="Source Cooperative Browser"
+                         className="DuckDBGeoparquet.Views.SourceCoopDockpaneViewModel"
+                         dock="right"
+                         dockWith="esri_core_projectDockPane">
+					<content className="DuckDBGeoparquet.Views.SourceCoopDockpaneView" />
 				</dockPane>
 			</dockPanes>
 		</insertModule>
