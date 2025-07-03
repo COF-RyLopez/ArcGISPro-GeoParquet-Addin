@@ -1,7 +1,5 @@
 using ArcGIS.Desktop.Framework;
 using ArcGIS.Desktop.Framework.Contracts;
-using System.ComponentModel;
-using System.Runtime.CompilerServices;
 
 namespace DuckDBGeoparquet.Views
 {
@@ -14,14 +12,6 @@ namespace DuckDBGeoparquet.Views
         {
             get => _statusText;
             set => SetProperty(ref _statusText, value);
-        }
-
-        protected bool SetProperty<T>(ref T field, T value, [CallerMemberName] string propertyName = null)
-        {
-            if (Equals(field, value)) return false;
-            field = value;
-            OnPropertyChanged(propertyName);
-            return true;
         }
 
         internal static void Show()
