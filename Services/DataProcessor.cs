@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -190,11 +191,20 @@ namespace DuckDBGeoparquet.Services
                 string spatialFilter = "";
                 if (extent != null)
                 {
+                    // Use culture-invariant formatting for SQL to prevent German locale decimal separator issues
+                    string xMinStr = ((double)extent.XMin).ToString("G", CultureInfo.InvariantCulture);
+                    string yMinStr = ((double)extent.YMin).ToString("G", CultureInfo.InvariantCulture);
+                    string xMaxStr = ((double)extent.XMax).ToString("G", CultureInfo.InvariantCulture);
+                    string yMaxStr = ((double)extent.YMax).ToString("G", CultureInfo.InvariantCulture);
+                    
                     spatialFilter = $@"
-                        WHERE bbox.xmin >= {extent.XMin}
-                          AND bbox.ymin >= {extent.YMin}
-                          AND bbox.xmax <= {extent.XMax}
-                          AND bbox.ymax <= {extent.YMax}";
+                        WHERE bbox.xmin >= {xMinStr}
+                          AND bbox.ymin >= {yMinStr}
+                          AND bbox.xmax <= {xMaxStr}
+                          AND bbox.ymax <= {yMaxStr}";
+                    
+                    // Spatial filter applied successfully with culture-invariant formatting
+                    
                     progress?.Report($"Applying spatial filter for current map extent...");
                 }
 
