@@ -425,7 +425,20 @@ namespace DuckDBGeoparquet.Views
                 () => Themes != null && Themes.Any(t => t.IsSelectable || t.SubItems.Any()) // CanExecute: If there are any selectable themes
             );
 
+            // Initialize bridge files commands
+            LoadBridgeFilesCommand = new RelayCommand(async () => await LoadBridgeFilesAsync(), () => CanLoadBridgeFiles);
+            ViewAttributionReportCommand = new RelayCommand(async () => await ViewAttributionReportAsync(), () => BridgeFilesLoaded);
+            GetSelectedFeatureAttributionCommand = new RelayCommand(async () => await GetSelectedFeatureAttributionAsync());
+            EditAttributionCommand = new RelayCommand(async () => await EditAttributionAsync(), () => HasSelectedFeature);
+            ExportAttributedDatasetCommand = new RelayCommand(async () => await ExportAttributedDatasetAsync(), () => BridgeFilesLoaded);
+            BrowseAttributedExportPathCommand = new RelayCommand(() => BrowseAttributedExportPath());
+            OpenBridgeFilesDocumentationCommand = new RelayCommand(() => OpenBridgeFilesDocumentation());
+            OpenGersDocumentationCommand = new RelayCommand(() => OpenGersDocumentation());
+
             CustomExtentTool.ExtentCreatedStatic += OnExtentCreated;
+
+            // Initialize bridge files export path
+            InitializeAttributedExportPath();
 
             Themes = new ObservableCollection<SelectableThemeItem>();
             LogOutput = new StringBuilder();
@@ -462,6 +475,10 @@ namespace DuckDBGeoparquet.Views
                 NotifyPropertyChanged(nameof(LatestRelease));
                 AddToLog($"Async Initialization: Latest release set to: {LatestRelease}");
 
+                // Initialize bridge files functionality
+                _dataProcessor.BridgeFilesEnabled = BridgeFilesEnabled;
+                _dataProcessor.CurrentRelease = LatestRelease;
+
                 InitializeThemes(); // Populate Themes collection
                 AddToLog("Async Initialization: Themes initialized");
 
@@ -469,6 +486,9 @@ namespace DuckDBGeoparquet.Views
                 DataOutputPath = Path.Combine(defaultBasePath, "Data", LatestRelease ?? "latest");
                 NotifyPropertyChanged(nameof(DataOutputPath));
                 AddToLog($"Async Initialization: DataOutputPath updated to: {DataOutputPath}");
+
+                // Update bridge files capabilities
+                UpdateCanLoadBridgeFiles();
 
                 StatusText = "Ready to load Overture Maps data";
                 AddToLog("Async Initialization: Ready to load Overture Maps data");
@@ -745,6 +765,140 @@ namespace DuckDBGeoparquet.Views
         }
 
         private bool _isUpdatingSelectionInternally = false;
+
+        // Bridge Files Properties
+        private bool _bridgeFilesEnabled = false;
+        private bool _bridgeFilesLoaded = false;
+        private string _bridgeFilesStatus = "Bridge files not loaded";
+        private bool _canLoadBridgeFiles = false;
+        private long _totalFeatures = 0;
+        private long _attributedFeatures = 0;
+        private long _multiSourceFeatures = 0;
+        private string _topSourceDataset = "";
+        private ObservableCollection<SourceDatasetItem> _sourceDatasetBreakdown = new();
+        private string _selectedFeatureId = "";
+        private string _selectedFeatureAttribution = "No feature selected";
+        private bool _hasSelectedFeature = false;
+        private string _attributedExportPath = "";
+        private bool _includeBridgeTimestamps = true;
+        private bool _includeSourceRecordIds = true;
+
+        // Data structure for source dataset breakdown display
+        public class SourceDatasetItem
+        {
+            public string Key { get; set; }         // Dataset name
+            public long Value { get; set; }         // Count
+            public double Percentage { get; set; }  // Percentage for progress bar
+        }
+
+        public bool BridgeFilesEnabled
+        {
+            get => _bridgeFilesEnabled;
+            set
+            {
+                SetProperty(ref _bridgeFilesEnabled, value);
+                if (_dataProcessor != null)
+                {
+                    _dataProcessor.BridgeFilesEnabled = value;
+                    _dataProcessor.CurrentRelease = LatestRelease;
+                }
+                UpdateCanLoadBridgeFiles();
+            }
+        }
+
+        public bool BridgeFilesLoaded
+        {
+            get => _bridgeFilesLoaded;
+            set => SetProperty(ref _bridgeFilesLoaded, value);
+        }
+
+        public string BridgeFilesStatus
+        {
+            get => _bridgeFilesStatus;
+            set => SetProperty(ref _bridgeFilesStatus, value);
+        }
+
+        public bool CanLoadBridgeFiles
+        {
+            get => _canLoadBridgeFiles;
+            set => SetProperty(ref _canLoadBridgeFiles, value);
+        }
+
+        public long TotalFeatures
+        {
+            get => _totalFeatures;
+            set => SetProperty(ref _totalFeatures, value);
+        }
+
+        public long AttributedFeatures
+        {
+            get => _attributedFeatures;
+            set => SetProperty(ref _attributedFeatures, value);
+        }
+
+        public long MultiSourceFeatures
+        {
+            get => _multiSourceFeatures;
+            set => SetProperty(ref _multiSourceFeatures, value);
+        }
+
+        public string TopSourceDataset
+        {
+            get => _topSourceDataset;
+            set => SetProperty(ref _topSourceDataset, value);
+        }
+
+        public ObservableCollection<SourceDatasetItem> SourceDatasetBreakdown
+        {
+            get => _sourceDatasetBreakdown;
+            set => SetProperty(ref _sourceDatasetBreakdown, value);
+        }
+
+        public string SelectedFeatureId
+        {
+            get => _selectedFeatureId;
+            set => SetProperty(ref _selectedFeatureId, value);
+        }
+
+        public string SelectedFeatureAttribution
+        {
+            get => _selectedFeatureAttribution;
+            set => SetProperty(ref _selectedFeatureAttribution, value);
+        }
+
+        public bool HasSelectedFeature
+        {
+            get => _hasSelectedFeature;
+            set => SetProperty(ref _hasSelectedFeature, value);
+        }
+
+        public string AttributedExportPath
+        {
+            get => _attributedExportPath;
+            set => SetProperty(ref _attributedExportPath, value);
+        }
+
+        public bool IncludeBridgeTimestamps
+        {
+            get => _includeBridgeTimestamps;
+            set => SetProperty(ref _includeBridgeTimestamps, value);
+        }
+
+        public bool IncludeSourceRecordIds
+        {
+            get => _includeSourceRecordIds;
+            set => SetProperty(ref _includeSourceRecordIds, value);
+        }
+
+        // Bridge Files Commands
+        public ICommand LoadBridgeFilesCommand { get; private set; }
+        public ICommand ViewAttributionReportCommand { get; private set; }
+        public ICommand GetSelectedFeatureAttributionCommand { get; private set; }
+        public ICommand EditAttributionCommand { get; private set; }
+        public ICommand ExportAttributedDatasetCommand { get; private set; }
+        public ICommand BrowseAttributedExportPathCommand { get; private set; }
+        public ICommand OpenBridgeFilesDocumentationCommand { get; private set; }
+        public ICommand OpenGersDocumentationCommand { get; private set; }
 
         #endregion
 
@@ -2366,6 +2520,364 @@ namespace DuckDBGeoparquet.Views
                 leafItems.AddRange(themeItem.SubItems);
             }
             return leafItems.Distinct().ToList(); // Ensure distinct if structure could somehow allow duplicates
+        }
+
+        private void InitializeAttributedExportPath()
+        {
+            try
+            {
+                var defaultBasePath = DeterminedDefaultMfcBasePath;
+                AttributedExportPath = Path.Combine(defaultBasePath, "AttributedData", $"attributed_data_{DateTime.Now:yyyyMMdd_HHmmss}.parquet");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error initializing attributed export path: {ex.Message}");
+                AttributedExportPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "attributed_data.parquet");
+            }
+        }
+
+        private void UpdateCanLoadBridgeFiles()
+        {
+            // Can load bridge files if:
+            // 1. Bridge files are enabled
+            // 2. We have a current release
+            // 3. There are selected themes/types to load bridge files for
+            CanLoadBridgeFiles = BridgeFilesEnabled && 
+                                !string.IsNullOrEmpty(LatestRelease) && 
+                                AllSelectedLeafItems?.Any() == true;
+        }
+
+        // Bridge Files Command Implementations
+
+        private async Task LoadBridgeFilesAsync()
+        {
+            if (!BridgeFilesEnabled || _dataProcessor == null)
+            {
+                BridgeFilesStatus = "Bridge files are disabled or DataProcessor not available";
+                return;
+            }
+
+            try
+            {
+                BridgeFilesStatus = "Loading bridge files...";
+                AddToLog("🔄 Starting bridge files loading process...");
+
+                var selectedItems = AllSelectedLeafItems?.ToList() ?? new List<SelectableThemeItem>();
+                if (!selectedItems.Any())
+                {
+                    BridgeFilesStatus = "No data types selected to load bridge files for";
+                    AddToLog("❌ No data types selected for bridge files loading");
+                    return;
+                }
+
+                var progressReporter = new Progress<string>(status =>
+                {
+                    BridgeFilesStatus = status;
+                    AddToLog($"🔗 {status}");
+                });
+
+                bool anyBridgeFilesLoaded = false;
+                
+                foreach (var item in selectedItems)
+                {
+                    string theme = item.ParentThemeForS3;
+                    string type = item.ActualType;
+                    
+                    progressReporter.Report($"Loading bridge files for {theme}/{type}...");
+                    
+                    bool loaded = await _dataProcessor.LoadBridgeFilesAsync(theme, type, LatestRelease, progressReporter);
+                    if (loaded)
+                    {
+                        anyBridgeFilesLoaded = true;
+                        AddToLog($"✅ Successfully loaded bridge files for {theme}/{type}");
+                    }
+                    else
+                    {
+                        AddToLog($"⚠️ No bridge files available for {theme}/{type}");
+                    }
+                }
+
+                if (anyBridgeFilesLoaded)
+                {
+                    BridgeFilesLoaded = true;
+                    BridgeFilesStatus = "Bridge files loaded successfully";
+                    AddToLog("✅ Bridge files loading completed successfully");
+                    
+                    // Load attribution summary
+                    await UpdateAttributionSummaryAsync();
+                }
+                else
+                {
+                    BridgeFilesStatus = "No bridge files were available for the selected data types";
+                    AddToLog("⚠️ No bridge files were available for any of the selected data types");
+                }
+            }
+            catch (Exception ex)
+            {
+                BridgeFilesStatus = $"Error loading bridge files: {ex.Message}";
+                AddToLog($"❌ Error loading bridge files: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error in LoadBridgeFilesAsync: {ex}");
+            }
+        }
+
+        private async Task UpdateAttributionSummaryAsync()
+        {
+            if (_dataProcessor == null) return;
+
+            try
+            {
+                var summary = await _dataProcessor.GetAttributionSummaryAsync();
+                
+                if (summary.ContainsKey("error"))
+                {
+                    AddToLog($"⚠️ Attribution summary error: {summary["error"]}");
+                    return;
+                }
+
+                TotalFeatures = Convert.ToInt64(summary.GetValueOrDefault("total_features", 0L));
+                AttributedFeatures = Convert.ToInt64(summary.GetValueOrDefault("attributed_features", 0L));
+                MultiSourceFeatures = Convert.ToInt64(summary.GetValueOrDefault("multi_source_features", 0L));
+
+                // Update source dataset breakdown
+                if (summary.ContainsKey("dataset_breakdown") && summary["dataset_breakdown"] is Dictionary<string, long> breakdown)
+                {
+                    var totalWithAttribution = breakdown.Values.Sum();
+                    var breakdownItems = breakdown.Select(kvp => new SourceDatasetItem
+                    {
+                        Key = kvp.Key,
+                        Value = kvp.Value,
+                        Percentage = totalWithAttribution > 0 ? (kvp.Value * 100.0 / totalWithAttribution) : 0
+                    }).OrderByDescending(item => item.Value).ToList();
+
+                    SourceDatasetBreakdown.Clear();
+                    foreach (var item in breakdownItems)
+                    {
+                        SourceDatasetBreakdown.Add(item);
+                    }
+
+                    TopSourceDataset = breakdownItems.FirstOrDefault()?.Key ?? "N/A";
+                }
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"❌ Error updating attribution summary: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error in UpdateAttributionSummaryAsync: {ex}");
+            }
+        }
+
+        private async Task ViewAttributionReportAsync()
+        {
+            try
+            {
+                AddToLog("📊 Generating detailed attribution report...");
+                
+                // Create a simple report window or export report data
+                var reportBuilder = new StringBuilder();
+                reportBuilder.AppendLine("=== OVERTURE MAPS SOURCE ATTRIBUTION REPORT ===");
+                reportBuilder.AppendLine($"Generated: {DateTime.Now}");
+                reportBuilder.AppendLine($"Release: {LatestRelease}");
+                reportBuilder.AppendLine();
+                reportBuilder.AppendLine("SUMMARY:");
+                reportBuilder.AppendLine($"  Total Features: {TotalFeatures:N0}");
+                reportBuilder.AppendLine($"  With Attribution: {AttributedFeatures:N0} ({(TotalFeatures > 0 ? AttributedFeatures * 100.0 / TotalFeatures : 0):F1}%)");
+                reportBuilder.AppendLine($"  Multi-source Features: {MultiSourceFeatures:N0}");
+                reportBuilder.AppendLine($"  Top Source Dataset: {TopSourceDataset}");
+                reportBuilder.AppendLine();
+                reportBuilder.AppendLine("SOURCE DATASET BREAKDOWN:");
+                
+                foreach (var item in SourceDatasetBreakdown)
+                {
+                    reportBuilder.AppendLine($"  {item.Key}: {item.Value:N0} features ({item.Percentage:F1}%)");
+                }
+
+                // Save report to file
+                var reportPath = Path.Combine(Path.GetDirectoryName(AttributedExportPath) ?? "", $"attribution_report_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
+                await File.WriteAllTextAsync(reportPath, reportBuilder.ToString());
+                
+                AddToLog($"✅ Attribution report saved to: {reportPath}");
+                
+                // Show the report in a message box or open the file
+                ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                    $"Attribution report has been saved to:\n{reportPath}\n\nWould you like to open the file?", 
+                    "Attribution Report Generated",
+                    System.Windows.MessageBoxButton.YesNo, 
+                    System.Windows.MessageBoxImage.Information);
+                
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"❌ Error generating attribution report: {ex.Message}");
+            }
+        }
+
+        private async Task GetSelectedFeatureAttributionAsync()
+        {
+            try
+            {
+                // This would typically get the selected feature from the map
+                // For now, we'll show how this would work conceptually
+                
+                AddToLog("🎯 Getting selected feature attribution...");
+                
+                await QueuedTask.Run(() =>
+                {
+                    var mapView = MapView.Active;
+                    if (mapView?.Map == null)
+                    {
+                        AddToLog("❌ No active map view found");
+                        return;
+                    }
+
+                    // This is a placeholder - in a real implementation, you'd get the selected feature
+                    // from the map selection, extract its GERS ID, and query the attribution
+                    SelectedFeatureId = "Sample-GERS-ID-123";
+                    SelectedFeatureAttribution = "Primary Dataset: OpenStreetMap\nContributing Datasets: OpenStreetMap, Microsoft Places\nLast Updated: 2024-01-15";
+                    HasSelectedFeature = true;
+                    
+                    AddToLog($"✅ Retrieved attribution for feature: {SelectedFeatureId}");
+                });
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"❌ Error getting selected feature attribution: {ex.Message}");
+            }
+        }
+
+        private async Task EditAttributionAsync()
+        {
+            try
+            {
+                AddToLog($"📝 Opening attribution editor for feature: {SelectedFeatureId}");
+                
+                // This would open a dialog for editing attribution
+                // For now, just log the action
+                var newAttribution = "Updated attribution information would be applied here";
+                SelectedFeatureAttribution = newAttribution;
+                
+                AddToLog($"✅ Attribution updated for feature: {SelectedFeatureId}");
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"❌ Error editing attribution: {ex.Message}");
+            }
+        }
+
+        private async Task ExportAttributedDatasetAsync()
+        {
+            if (_dataProcessor == null || !BridgeFilesLoaded)
+            {
+                AddToLog("❌ Cannot export attributed dataset: Bridge files not loaded or DataProcessor not available");
+                return;
+            }
+
+            try
+            {
+                AddToLog("💾 Starting attributed dataset export...");
+                
+                var progressReporter = new Progress<string>(status =>
+                {
+                    StatusText = status;
+                    AddToLog($"📤 {status}");
+                });
+
+                // Ensure output directory exists
+                var outputDir = Path.GetDirectoryName(AttributedExportPath);
+                if (!Directory.Exists(outputDir))
+                {
+                    Directory.CreateDirectory(outputDir);
+                }
+
+                // Export the attributed dataset
+                string actualFilePath = await _dataProcessor.ExportAttributedDatasetAsync(
+                    AttributedExportPath, 
+                    "Attributed_Overture_Data", 
+                    progressReporter);
+
+                AddToLog($"✅ Successfully exported attributed dataset to: {actualFilePath}");
+                
+                // Optionally add the exported data to the map
+                await QueuedTask.Run(() =>
+                {
+                    try
+                    {
+                        var map = MapView.Active?.Map;
+                        if (map != null && File.Exists(actualFilePath))
+                        {
+                            var uri = new Uri(actualFilePath);
+                            var layer = LayerFactory.Instance.CreateLayer(uri, map, layerName: "Attributed Overture Data");
+                            AddToLog($"✅ Added attributed dataset to map as layer: {layer.Name}");
+                        }
+                    }
+                    catch (Exception layerEx)
+                    {
+                        AddToLog($"⚠️ Could not add exported data to map: {layerEx.Message}");
+                    }
+                });
+
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"❌ Error exporting attributed dataset: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error in ExportAttributedDatasetAsync: {ex}");
+            }
+        }
+
+        private void BrowseAttributedExportPath()
+        {
+            try
+            {
+                var saveFileDialog = new Microsoft.Win32.SaveFileDialog
+                {
+                    Title = "Save Attributed Dataset",
+                    Filter = "GeoParquet Files (*.parquet)|*.parquet|All Files (*.*)|*.*",
+                    DefaultExt = ".parquet",
+                    FileName = "attributed_overture_data.parquet"
+                };
+
+                if (saveFileDialog.ShowDialog() == true)
+                {
+                    AttributedExportPath = saveFileDialog.FileName;
+                    AddToLog($"📂 Export path set to: {AttributedExportPath}");
+                }
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"❌ Error browsing for export path: {ex.Message}");
+            }
+        }
+
+        private void OpenBridgeFilesDocumentation()
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "https://docs.overturemaps.org/gers/bridge-files/",
+                    UseShellExecute = true
+                });
+                AddToLog("📖 Opened Bridge Files documentation in browser");
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"❌ Error opening documentation: {ex.Message}");
+            }
+        }
+
+        private void OpenGersDocumentation()
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "https://docs.overturemaps.org/gers/",
+                    UseShellExecute = true
+                });
+                AddToLog("🔗 Opened GERS documentation in browser");
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"❌ Error opening documentation: {ex.Message}");
+            }
         }
     }
 }

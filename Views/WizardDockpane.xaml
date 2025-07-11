@@ -183,6 +183,78 @@
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
+            
+            <!-- Configuration Tab -->
+            <TabItem Header="Configuration">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="16,12,16,12">
+                        <TextBlock Text="Configuration" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,4"/>
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="General Configuration" FontWeight="SemiBold" Margin="0,0,0,2"/>
+                                <CheckBox Content="Enable Bridge Files" IsChecked="{Binding BridgeFilesEnabled}" Margin="0,0,0,5"
+                                          ToolTipService.ToolTip="When enabled, bridge files will be downloaded alongside Overture data to provide source attribution information"/>
+                                <TextBlock Text="ℹ️ Bridge files may increase download time but provide valuable source attribution data for data quality assessment and editing."
+                                          Style="{DynamicResource Esri_TextBlockSmall}"
+                                          Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                          TextWrapping="Wrap"
+                                          Margin="20,0,0,0"/>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock Text="MFC Settings" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <!-- Data Source Group -->
+                                <TextBlock Text="Data Source:" FontWeight="SemiBold" Margin="0,0,0,2"/>
+                                <RadioButton Content="Use previously loaded data (recommended)" GroupName="MfcDataSource" IsChecked="{Binding UsePreviouslyLoadedData}" Margin="0,0,0,5"
+                                             ToolTipService.ToolTip="Create MFC from data downloaded by this add-in in the current session."/>
+                                <RadioButton Content="Use custom data folder" GroupName="MfcDataSource" IsChecked="{Binding UseCustomDataFolder}"
+                                             ToolTipService.ToolTip="Create MFC from GeoParquet files you have in a different folder."/>
+                                <StackPanel Orientation="Horizontal" Margin="20,5,0,5" IsEnabled="{Binding UseCustomDataFolder}">
+                                    <TextBox Text="{Binding CustomDataFolderPath, UpdateSourceTrigger=PropertyChanged}" Width="250" Margin="0,0,5,0"
+                                             ToolTipService.ToolTip="Path to your folder containing GeoParquet files."/>
+                                    <Button Content="Browse..." Command="{Binding BrowseCustomDataFolderCommand}"/>
+                                </StackPanel>
+                                <TextBlock Margin="20,2,0,10" IsEnabled="{Binding UseCustomDataFolder}" TextWrapping="Wrap">
+                                    <Run Text="If using a custom folder, data should be organized with each dataset type in its own subfolder (e.g., YourFolder/buildings/building.parquet). The add-in handles this for downloaded data. "/>
+                                    <Hyperlink NavigateUri="https://pro.arcgis.com/en/pro-app/latest/help/data/big-data-connections/big-data-connections.htm" RequestNavigate="Hyperlink_RequestNavigate">
+                                        <Run Text="Learn more about MFC structure."/>
+                                    </Hyperlink>
+                                </TextBlock>
+
+                                <!-- MFC Output Location Group -->
+                                <TextBlock Text="MFC Output Location:" FontWeight="SemiBold" Margin="0,10,0,2"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                                    <TextBox Text="{Binding MfcOutputPath, UpdateSourceTrigger=PropertyChanged}" Width="300" Margin="0,0,5,0"
+                                             ToolTipService.ToolTip="Folder where the .mfc connection file will be saved."/>
+                                    <Button Content="Browse..." Command="{Binding BrowseMfcLocationCommand}"/>
+                                </StackPanel>
+
+                                <!-- MFC Options Group -->
+                                <TextBlock Text="MFC Options:" FontWeight="SemiBold" Margin="0,10,0,2"/>
+                                <CheckBox IsChecked="{Binding IsSharedMfc}" Content="Create as Shared Connection" Margin="0,0,0,5"
+                                          ToolTipService.ToolTip="Shared connections can be used by multiple projects. Standalone connections are specific to the current project."/>
+                                <!-- <CheckBox IsChecked="{Binding UseSpatialIndex}" Content="Use Spatial Index (if applicable)" Margin="0,0,0,10"
+                                          ToolTipService.ToolTip="Enable spatial indexing for faster queries. Generally recommended."/> -->
+
+                                <!-- Action Button -->
+                                <Button Content="Create Multifile Feature Connection" Command="{Binding CreateMfcCommand}" HorizontalAlignment="Left" Margin="0,15,0,0" Style="{DynamicResource Esri_Button}"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            
             <!-- Status Tab -->
             <TabItem Header="Status">
                 <StackPanel Margin="16,12,16,12">
@@ -217,6 +289,7 @@
                     </StackPanel>
                 </StackPanel>
             </TabItem>
+            
             <!-- Create MFC Tab -->
             <TabItem Header="Create MFC">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -281,6 +354,275 @@
                                 <Button Content="Create Multifile Feature Connection" Command="{Binding CreateMfcCommand}" HorizontalAlignment="Left" Margin="0,15,0,0" Style="{DynamicResource Esri_Button}"/>
                             </StackPanel>
                         </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            
+            <!-- NEW: Bridge Files & Attribution Tab -->
+            <TabItem Header="Bridge Files &amp; Attribution">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="16,12,16,12">
+                        
+                        <!-- Header Information -->
+                        <TextBlock Text="🔗 Source Attribution &amp; Bridge Files" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,8"/>
+                        <TextBlock TextWrapping="Wrap" Margin="0,0,0,12" Style="{DynamicResource Esri_TextBlockRegular}">
+                            <Run Text="Bridge files connect Overture features to their source datasets, allowing you to trace data back to OpenStreetMap, Microsoft, Meta, and other contributors. This enables source attribution editing and quality assessment."/>
+                        </TextBlock>
+                        
+                        <!-- Enable/Disable Bridge Files -->
+                        <Border Background="{DynamicResource Esri_GrayBackgroundBrush}" 
+                               BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                               BorderThickness="1" 
+                               CornerRadius="3" 
+                               Padding="12"
+                               Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="🔧 Bridge Files Configuration" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                                
+                                <CheckBox Content="Enable bridge files and source attribution"
+                                         IsChecked="{Binding BridgeFilesEnabled}"
+                                         Margin="0,4,0,8"
+                                         ToolTipService.ToolTip="When enabled, bridge files will be downloaded alongside Overture data to provide source attribution information"/>
+                                
+                                <TextBlock Text="ℹ️ Bridge files may increase download time but provide valuable source attribution data for data quality assessment and editing."
+                                          Style="{DynamicResource Esri_TextBlockSmall}"
+                                          Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                          TextWrapping="Wrap"
+                                          Margin="20,0,0,0"/>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Load Bridge Files for Current Data -->
+                        <Border Background="{DynamicResource Esri_GrayBackgroundBrush}" 
+                               BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                               BorderThickness="1" 
+                               CornerRadius="3" 
+                               Padding="12"
+                               Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="📥 Load Bridge Files" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                                
+                                <TextBlock Text="Load bridge files for currently loaded Overture data to enable source attribution exploration."
+                                          TextWrapping="Wrap"
+                                          Margin="0,0,0,8"/>
+                                
+                                <Button Content="🔄 Load Bridge Files for Current Data"
+                                       Command="{Binding LoadBridgeFilesCommand}"
+                                       IsEnabled="{Binding CanLoadBridgeFiles}"
+                                       HorizontalAlignment="Left"
+                                       Padding="12,6"
+                                       Margin="0,0,0,8"/>
+                                
+                                <TextBlock Text="{Binding BridgeFilesStatus}"
+                                          Style="{DynamicResource Esri_TextBlockSmall}"
+                                          Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                          TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Attribution Summary -->
+                        <Border Background="{DynamicResource Esri_GrayBackgroundBrush}" 
+                               BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                               BorderThickness="1" 
+                               CornerRadius="3" 
+                               Padding="12"
+                               Margin="0,0,0,12"
+                               Visibility="{Binding BridgeFilesLoaded, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="📊 Source Attribution Summary" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,8"/>
+                                
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Total Features:" FontWeight="SemiBold" Margin="0,2"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding TotalFeatures, StringFormat='{}{0:N0}'}" Margin="8,2,0,2"/>
+                                    
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Text="With Attribution:" FontWeight="SemiBold" Margin="0,2"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding AttributedFeatures, StringFormat='{}{0:N0}'}" Margin="8,2,0,2"/>
+                                    
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Multi-source:" FontWeight="SemiBold" Margin="0,2"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding MultiSourceFeatures, StringFormat='{}{0:N0}'}" Margin="8,2,0,2"/>
+                                    
+                                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Top Source:" FontWeight="SemiBold" Margin="0,2"/>
+                                    <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding TopSourceDataset}" Margin="8,2,0,2"/>
+                                </Grid>
+                                
+                                <Button Content="🔍 View Detailed Attribution Report"
+                                       Command="{Binding ViewAttributionReportCommand}"
+                                       HorizontalAlignment="Left"
+                                       Padding="8,4"
+                                       Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Source Dataset Breakdown -->
+                        <Border Background="{DynamicResource Esri_GrayBackgroundBrush}" 
+                               BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                               BorderThickness="1" 
+                               CornerRadius="3" 
+                               Padding="12"
+                               Margin="0,0,0,12"
+                               Visibility="{Binding BridgeFilesLoaded, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="🏢 Source Dataset Breakdown" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,8"/>
+                                
+                                <ListBox ItemsSource="{Binding SourceDatasetBreakdown}"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        MaxHeight="200"
+                                        ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,2">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="60"/>
+                                                </Grid.ColumnDefinitions>
+                                                
+                                                <TextBlock Grid.Column="0" Text="{Binding Key}" VerticalAlignment="Center"/>
+                                                <ProgressBar Grid.Column="1" Value="{Binding Percentage}" Maximum="100" Width="80" Height="8" Margin="8,0" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="2" Text="{Binding Value, StringFormat='{}{0:N0}'}" VerticalAlignment="Center" HorizontalAlignment="Right"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Attribution Editing -->
+                        <Border Background="{DynamicResource Esri_GrayBackgroundBrush}" 
+                               BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                               BorderThickness="1" 
+                               CornerRadius="3" 
+                               Padding="12"
+                               Margin="0,0,0,12"
+                               Visibility="{Binding BridgeFilesLoaded, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="✏️ Attribution Editing" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,8"/>
+                                
+                                <TextBlock Text="Select features in the map to view and edit their source attribution:"
+                                          TextWrapping="Wrap"
+                                          Margin="0,0,0,8"/>
+                                
+                                <TextBlock Text="Selected Feature ID:" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                <TextBox Text="{Binding SelectedFeatureId}"
+                                        IsReadOnly="True"
+                                        Margin="0,0,0,8"
+                                        Background="{DynamicResource Esri_ControlBackgroundBrush}"/>
+                                
+                                <TextBlock Text="Current Attribution:" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding SelectedFeatureAttribution}"
+                                          TextWrapping="Wrap"
+                                          Margin="0,0,0,8"
+                                          Style="{DynamicResource Esri_TextBlockSmall}"/>
+                                
+                                <Button Content="🎯 Get Selected Feature Attribution"
+                                       Command="{Binding GetSelectedFeatureAttributionCommand}"
+                                       HorizontalAlignment="Left"
+                                       Padding="8,4"
+                                       Margin="0,0,8,8"/>
+                                
+                                <Button Content="📝 Edit Attribution"
+                                       Command="{Binding EditAttributionCommand}"
+                                       IsEnabled="{Binding HasSelectedFeature}"
+                                       HorizontalAlignment="Left"
+                                       Padding="8,4"/>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Export Options -->
+                        <Border Background="{DynamicResource Esri_GrayBackgroundBrush}" 
+                               BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                               BorderThickness="1" 
+                               CornerRadius="3" 
+                               Padding="12"
+                               Margin="0,0,0,12"
+                               Visibility="{Binding BridgeFilesLoaded, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="💾 Export Attributed Data" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,8"/>
+                                
+                                <TextBlock Text="Export the current dataset with source attribution information included as additional fields."
+                                          TextWrapping="Wrap"
+                                          Margin="0,0,0,8"/>
+                                
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <TextBox Text="{Binding AttributedExportPath}"
+                                            Width="300"
+                                            Margin="0,0,8,0"
+                                            ToolTipService.ToolTip="File path for the attributed dataset export"/>
+                                    <Button Content="📂 Browse..."
+                                           Command="{Binding BrowseAttributedExportPathCommand}"
+                                           Padding="8,4"/>
+                                </StackPanel>
+                                
+                                <CheckBox Content="Include bridge file timestamps"
+                                         IsChecked="{Binding IncludeBridgeTimestamps}"
+                                         Margin="0,0,0,8"
+                                         ToolTipService.ToolTip="Include update timestamps from bridge files in the export"/>
+                                
+                                <CheckBox Content="Include source record IDs"
+                                         IsChecked="{Binding IncludeSourceRecordIds}"
+                                         Margin="0,0,0,8"
+                                         ToolTipService.ToolTip="Include the original source dataset record IDs in the export"/>
+                                
+                                <Button Content="💾 Export Attributed Dataset"
+                                       Command="{Binding ExportAttributedDatasetCommand}"
+                                       Background="{DynamicResource Esri_Blue}"
+                                       Foreground="White"
+                                       FontWeight="SemiBold"
+                                       Padding="12,8"
+                                       HorizontalAlignment="Left"/>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Help and Documentation -->
+                        <Border Background="{DynamicResource Esri_ControlBackgroundBrush}" 
+                               BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                               BorderThickness="1" 
+                               CornerRadius="3" 
+                               Padding="12">
+                            <StackPanel>
+                                <TextBlock Text="📚 About Bridge Files" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,8"/>
+                                <TextBlock Style="{DynamicResource Esri_TextBlockSmall}" TextWrapping="Wrap">
+                                    <Run Text="Bridge files are part of Overture's Global Entity Reference System (GERS). They connect GERS IDs to source dataset IDs, enabling:"/>
+                                    <LineBreak/><LineBreak/>
+                                    <Run Text="• "/>
+                                    <Run Text="Tracing features back to their original sources" FontWeight="SemiBold"/>
+                                    <LineBreak/>
+                                    <Run Text="• "/>
+                                    <Run Text="Understanding data conflation and quality" FontWeight="SemiBold"/>
+                                    <LineBreak/>
+                                    <Run Text="• "/>
+                                    <Run Text="Editing source attribution for custom datasets" FontWeight="SemiBold"/>
+                                    <LineBreak/>
+                                    <Run Text="• "/>
+                                    <Run Text="Quality assessment and validation workflows" FontWeight="SemiBold"/>
+                                    <LineBreak/><LineBreak/>
+                                    <Run Text="Bridge files are currently available for: OpenStreetMap, Microsoft Places, Meta Places, Esri Community Maps, geoBoundaries, IGN España, and PinMeTo."/>
+                                </TextBlock>
+                                
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <Button Content="📖 Learn More"
+                                           Command="{Binding OpenBridgeFilesDocumentationCommand}"
+                                           Padding="8,4"
+                                           Margin="0,0,8,0"/>
+                                    <Button Content="🔗 GERS Overview"
+                                           Command="{Binding OpenGersDocumentationCommand}"
+                                           Padding="8,4"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

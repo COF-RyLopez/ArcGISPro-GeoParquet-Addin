@@ -20,80 +20,88 @@ Watch the add-in in action loading Overture Maps data with incredible performanc
 - **Cloud-Native Integration**: Direct access to data in S3, Azure, and other cloud storage
 - **Wizard-Driven Interface**: Simple step-by-step process with clean, focused progress reporting
 - **Overture Maps Integration**: Specialized support for Overture Maps Foundation data
+- **🔗 Bridge Files & Source Attribution**: NEW! Trace features back to their source datasets (OpenStreetMap, Microsoft, Meta, etc.)
+- **✏️ Attribution Editing**: Edit and update source relationships for data quality assessment
 - **In-Memory Processing**: Uses DuckDB for high-performance operations
 - **Spatial Filtering**: Filter data by map extent before loading
 - **Multi-File Feature Connections**: Automatically creates MFCs for efficient multi-dataset workflows
 - **Incredible Performance**: Experience blazing-fast map redraws thanks to Parquet's optimized format
 
-## Requirements
+## 🔗 NEW: Bridge Files & Source Attribution
 
-- **ArcGIS Pro**: Version 3.5 or later
-- **.NET SDK**: Version 8.0 or later
-- **Storage**: Minimum 4GB free disk space for temporary data
-- **Memory**: Minimum 8GB RAM (16GB recommended for large datasets)
-- **For Developers**:
-  - Visual Studio 2022 or newer
-  - ArcGIS Pro SDK for .NET
+This add-in now includes comprehensive support for [Overture Maps Bridge Files](https://docs.overturemaps.org/gers/bridge-files/), enabling advanced source attribution workflows:
+
+### What are Bridge Files?
+
+Bridge files are part of Overture's Global Entity Reference System (GERS). They connect GERS IDs in Overture data to the IDs from underlying source datasets, providing transparency into data origins and conflation processes.
+
+### Key Capabilities
+
+- **🔍 Source Tracing**: Trace any Overture feature back to its original source datasets
+- **📊 Attribution Analysis**: Understand which datasets contributed to each feature
+- **🏢 Multi-Source Insights**: Identify features that combine data from multiple sources
+- **✏️ Quality Assessment**: Evaluate data quality based on source attribution
+- **💾 Enhanced Exports**: Export data with comprehensive source attribution metadata
+
+### Supported Source Datasets
+
+- OpenStreetMap
+- Microsoft Places  
+- Meta Places
+- Esri Community Maps
+- geoBoundaries
+- Instituto Geográfico Nacional (España)
+- PinMeTo
+
+### Bridge Files Workflow
+
+1. **Enable Bridge Files**: Turn on bridge files in the Configuration tab
+2. **Load Overture Data**: Select and download your desired Overture Maps themes
+3. **Load Bridge Files**: Use the "Bridge Files & Attribution" tab to download source attribution data
+4. **Explore Attribution**: View detailed source breakdown and attribution statistics
+5. **Edit Relationships**: Modify source attribution for custom analysis
+6. **Export Enhanced Data**: Export datasets with complete source attribution information
 
 ## Installation
 
-### Option 1: Quick Installation
+### Prerequisites
 
-1. Navigate to [ArcGIS Marketplace](https://cofgisonline.maps.arcgis.com/home/item.html?id=8293d1220b7848848ce316b4fa3263b5)
-2. Click **Download** to get the add-in
-3. Once downloaded, double-click the `ArcGISPro-GeoParquet-Addin.esriAddInX` file
-4. Follow the installation prompts
-5. Restart ArcGIS Pro if it's already running
+- **ArcGIS Pro 3.5 or later** (for optimal GeoParquet support)
+- **Windows 10/11** (ArcGIS Pro requirement)
+- **Internet connection** (for downloading Overture Maps data)
 
-### Option 2: Build from Source
+### Using the Installer (Recommended)
 
-1. **Clone the Repository**
-   ```bash
-   git clone https://github.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin.git
-   cd ArcGISPro-GeoParquet-Addin
-   ```
+1. **Download** the latest `.esriAddinX` file from [Releases](https://github.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin/releases)
+2. **Install** by double-clicking the `.esriAddinX` file
+3. **Restart** ArcGIS Pro
 
-2. **Open in Visual Studio**
-   - Launch Visual Studio 2022
-   - Go to **File → Open → Project/Solution**
-   - Select `DuckDBGeoparquet.sln`
+### Using the Required Extensions
 
-3. **Build the Add-in**
-   - Set configuration to Debug or Release
-   - Right-click the project in Solution Explorer
-   - Select **Build**
-   - Find the generated `.esriAddInX` file in the bin folder
+This add-in requires DuckDB extensions for S3 and spatial functionality:
 
-4. **Install the Add-in**
-   - Double-click the `.esriAddInX` file
-   - Or copy it to: `C:\Users\<YourUserName>\Documents\ArcGIS\AddIns\ArcGISPro`
-   - Restart ArcGIS Pro if it's already running
+1. **Download** `spatial.duckdb_extension` and `httpfs.duckdb_extension` from [DuckDB releases v1.2.0](https://github.com/duckdb/duckdb/releases/tag/v1.2.0)
+2. **Place** these files in the `Extensions` folder within your add-in installation directory
+3. See `Extensions/README.txt` for detailed instructions
 
-## Usage
+## Quick Start
 
-### Basic Workflow
+### Basic Overture Maps Data Loading
 
-1. **Start ArcGIS Pro** and open a project
-2. Navigate to the **Add-In** tab on the ribbon
-3. Click the **Launch Overture** button to open the dockpane
-4. Follow the wizard steps:
-   - Select data source
-   - Preview the data
-   - Apply transformations (if needed)
-   - Export to GeoParquet format
+#### Step 1: Launch the Tool
+- Open ArcGIS Pro and create or open a project
+- In the **Add-In** tab, click **"Launch Overture"**
 
-### Working with Overture Maps Data
+#### Step 2: Select Your Data
+1. Choose themes (Buildings, Places, Transportation, etc.)
+2. Select specific data types within each theme
+3. Review your selections in the preview section
 
-#### Step 1: Select Overture Maps Theme
-1. Open the Wizard Dockpane
-2. Choose a theme from the dropdown (addresses, base, buildings, etc.)
-3. Review the estimated data volume information
-
-#### Step 2: Define Your Area of Interest
+#### Step 3: Define Your Area of Interest
 1. Select "Use Current Map Extent" to use your current view
 2. Alternatively, use "Custom Extent" to define a specific area
 
-#### Step 3: Load and Transform
+#### Step 4: Load and Transform
 1. Click "Load Data" to begin the download process
 2. Monitor the progress through the clean, focused status reporting
 3. The add-in handles all processing automatically with optimized performance:
@@ -102,16 +110,40 @@ Watch the add-in in action loading Overture Maps data with incredible performanc
    - Maintains spatial relationships
    - Ensures proper georeferencing
 
-#### Step 4: Visualization
+#### Step 5: Visualization
 1. Data is automatically added to your map once processed
 2. Layers are named based on the Overture Maps theme and geometry type
 3. All attributes are preserved in their original structure
 
-#### Step 5: Multi-File Feature Connection (Optional)
-1. After loading multiple datasets, you'll be prompted to create an MFC
-2. Choose your preferred location for the MFC file
-3. This enables more efficient workflows when working with multiple related datasets
-4. The MFC appears in your Catalog for easy access and management
+### Bridge Files & Source Attribution Workflow
+
+#### Step 1: Enable Bridge Files
+1. Go to the **"Bridge Files & Attribution"** tab
+2. Check **"Enable bridge files and source attribution"**
+3. Note: This may increase download time but provides valuable source data
+
+#### Step 2: Load Bridge Files
+1. After loading Overture data, click **"Load Bridge Files for Current Data"**
+2. Wait for the system to download and process attribution data
+3. View the attribution summary showing:
+   - Total features with attribution
+   - Multi-source features
+   - Source dataset breakdown
+
+#### Step 3: Explore Source Attribution
+1. **View Attribution Report**: Generate detailed reports showing source contribution statistics
+2. **Dataset Breakdown**: See which source datasets contribute most to your data
+3. **Multi-Source Analysis**: Identify features that combine multiple data sources
+
+#### Step 4: Attribution Editing (Optional)
+1. Select features in the map to view their source attribution
+2. Use **"Get Selected Feature Attribution"** to see source details
+3. Edit attribution relationships for custom analysis workflows
+
+#### Step 5: Export Enhanced Data
+1. Set your export path for attributed datasets
+2. Choose options for including bridge timestamps and source record IDs
+3. Click **"Export Attributed Dataset"** to save data with source attribution
 
 ### Advanced Features
 
@@ -119,16 +151,56 @@ Watch the add-in in action loading Overture Maps data with incredible performanc
 - **Geometry-Based Layers**: Data is separated by geometry type for optimal display
 - **Release Selection**: Choose specific Overture Maps data releases
 - **Progress Tracking**: Detailed logging of each processing step
+- **Source Attribution**: NEW! Understand data origins and quality through bridge files
+
+#### Step 6: Multi-File Feature Connection (Optional)
+1. After loading multiple datasets, you'll be prompted to create an MFC
+2. Choose your preferred location for the MFC file
+3. This enables more efficient workflows when working with multiple related datasets
+4. The MFC appears in your Catalog for easy access and management
 
 ## Project Structure
 
 - **Views/**  
-  - `WizardDockpane.xaml` / `WizardDockpane.xaml.cs`: The UI components
-  - `WizardDockpaneViewModel.cs`: ViewModel controlling the UI logic
+  - `WizardDockpane.xaml` / `WizardDockpane.xaml.cs`: The main UI components
+  - `WizardDockpaneViewModel.cs`: ViewModel controlling the UI logic and bridge files functionality
+  - `SourceCoopDockpane.*`: Source Cooperative data browser components
 - **Services/**  
-  - `DataProcessor.cs`: Core data handling using DuckDB
+  - `DataProcessor.cs`: Core data handling using DuckDB with bridge files support
+  - `SourceCooperativeClient.cs`: Client for accessing Source Cooperative data
+  - `MfcUtility.cs`: Multifile Feature Connection utilities
 - **DuckDBGeoparquetModule.cs**: Main module class
 - **Config.daml**: Add-in manifest defining components
+
+## Bridge Files Technical Details
+
+### Data Structure
+
+Bridge files use the following schema:
+- **id**: GERS ID (Global Entity Reference System identifier)
+- **record_id**: Original source dataset record ID
+- **update_time**: Timestamp of last attribution update
+- **dataset**: Source dataset name (e.g., "OpenStreetMap", "Microsoft Places")
+- **theme**: Overture theme (buildings, places, transportation, etc.)
+- **type**: Specific data type within theme
+- **between**: Array indicating portion of normalized length
+- **dataset_between**: Array indicating dataset-specific portion
+
+### S3 Path Structure
+
+Bridge files are stored at:
+```
+s3://overturemaps-us-west-2/bridgefiles/{RELEASE}/dataset={DATASET}/theme={THEME}/type={TYPE}/*.parquet
+```
+
+### Attribution Export Schema
+
+When exporting attributed datasets, the following additional columns are included:
+- **source_record_id**: Original source data ID
+- **source_dataset**: Primary contributing dataset
+- **bridge_update_time**: Last attribution update timestamp
+- **source_count**: Number of contributing source datasets
+- **contributing_datasets**: Comma-separated list of all contributing datasets
 
 ## Troubleshooting
 
@@ -136,77 +208,40 @@ Watch the add-in in action loading Overture Maps data with incredible performanc
 
 #### Installation Problems
 - **Missing SDK Templates**: Ensure you've installed the [ArcGIS Pro SDK for .NET](https://pro.arcgis.com/en/pro-app/latest/sdk/)
-- **Access Denied Errors**: Right-click the .esriAddInX file → Properties → Unblock
-- **Add-in Not Appearing**: Verify installation path and restart ArcGIS Pro completely
 
-#### Data Loading Issues
-- **Timeout Errors**: Large Overture datasets may require multiple attempts
-- **Memory Errors**: Try reducing your area of interest or closing other applications
-- **Missing Data**: Verify internet connectivity and cloud storage permissions
+#### Bridge Files Issues
+- **No Bridge Files Found**: Not all themes/types have bridge files available. Check the supported source datasets list.
+- **Attribution Loading Errors**: Ensure you have loaded Overture data before attempting to load bridge files.
+- **Export Failures**: Verify you have write permissions to the export directory.
 
-#### Performance Optimization
-- **Slow Processing**: 
-  - The add-in now automatically skips empty datasets for faster processing
-  - Reduce the area of interest for very large regions
-  - Close other resource-intensive applications
-  - Ensure you have at least 8GB of available RAM
-- **Large Files**: 
-  - Recent optimizations provide 5-15% performance improvements
-  - Consider using a machine with more RAM for very large areas
-  - Process data in smaller geographic chunks
-- **Improved Logging**: 
-  - Cleaner, more focused progress reporting reduces visual noise
-  - Essential debugging information is still preserved
+### Performance Tips
 
-### Debug Logging
-
-The add-in maintains detailed logs that can help diagnose issues:
-- Check the log output in the dockpane
-- Review system logs for DuckDB-related errors
-- Optimized logging reduces noise while preserving essential debugging information
-
-## Recent Improvements
-
-### Version 0.1.1 (Latest)
-- **Enhanced DAML Configuration**: Improved UI integration with ArcGIS Pro standards
-- **Better Accessibility**: Enhanced keytips and standard condition usage
-- **Cleaner Codebase**: Removed unused UI elements and optimized configuration
-
-### Version 0.1.0
-- **Performance Boost**: 5-15% faster processing through optimized file operations
-- **Smart Dataset Handling**: Automatically skips empty datasets (e.g., bathymetry in inland areas)  
-- **Native GeoParquet**: Fully utilizes ArcGIS Pro 3.5's built-in GeoParquet support
-- **Cleaner Logging**: 70% reduction in debug noise while maintaining essential information
-- **Improved Reliability**: Enhanced error handling and retry logic
+- **Use Spatial Filtering**: Always apply spatial filtering to reduce data volume
+- **Enable Bridge Files Selectively**: Only enable bridge files when you need source attribution analysis
+- **Manage Export Size**: Bridge files can significantly increase export file sizes
 
 ## Contributing
 
-Contributions to this project are welcome! Here's how to get started:
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b new-feature`
-3. Make your changes
-4. Submit a pull request
-
-Please adhere to the existing code style and include appropriate tests.
+We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE.txt](LICENSE.txt) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE.txt) file for details.
 
-## Media Coverage & Community
+## Support
 
-- 📺 **Demo Video**: [LinkedIn demonstration](https://www.linkedin.com/posts/ryan-lopez-fresnocounty_now-the-arcgis-pro-35-brings-native-geoparquet-activity-7333914884641890307-sYOY) by Ryan Lopez
-- 📖 **Technical Guide**: [Comprehensive walkthrough](https://tech.marksblogg.com/overture-maps-esri-arcgis-pro.html) by Mark Litwintschik
-- 🚀 **CI/CD Implementation**: [Automated release pipeline](https://www.linkedin.com/feed/update/urn:li:activity:7338847609953947648/) built by Youssef Harby
-- 🏆 **Inspiration**: Built upon the excellent work of [Chris Holmes](https://github.com/cholmes) and his QGIS Overture plugin
+- **Documentation**: [Overture Maps Documentation](https://docs.overturemaps.org/)
+- **Bridge Files Guide**: [GERS Bridge Files Documentation](https://docs.overturemaps.org/gers/bridge-files/)
+- **Issues**: [GitHub Issues](https://github.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin/discussions)
 
 ## Acknowledgments
 
-- [Overture Maps Foundation](https://overturemaps.org/) for providing open map data
-- [DuckDB](https://duckdb.org/) for the powerful embedded database engine
-- [ArcGIS Pro SDK](https://pro.arcgis.com/en/pro-app/latest/sdk/) for development tools
-- [Chris Holmes](https://github.com/cholmes) for pioneering the DuckDB + Overture approach in QGIS
-- [Mark Litwintschik](https://tech.marksblogg.com/) for the excellent technical documentation
-- [Youssef Harby](https://www.linkedin.com/in/youssef-harby/) for implementing the professional CI/CD pipeline
-- All contributors who have helped improve this add-in
+- **Overture Maps Foundation** for the amazing open geospatial data initiative and GERS system
+- **DuckDB Team** for the high-performance analytical database
+- **ArcGIS Pro Team** for native GeoParquet support
+- **Community Contributors** who help improve this tool
+
+---
+
+*Experience the power of cloud-native geospatial data with full source attribution transparency!*

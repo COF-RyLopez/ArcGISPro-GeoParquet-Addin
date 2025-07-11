@@ -28,6 +28,50 @@ namespace DuckDBGeoparquet.Services
         public string ActualType { get; set; }
     }
 
+    // Bridge file record structure
+    public class BridgeFileRecord
+    {
+        public string Id { get; set; }                    // GERS ID
+        public string RecordId { get; set; }              // Source data ID
+        public DateTime UpdateTime { get; set; }          // Last update timestamp
+        public string Dataset { get; set; }               // Source dataset name
+        public string Theme { get; set; }                 // Theme (buildings, places, etc.)
+        public string Type { get; set; }                  // Type (building, place, etc.)
+        public double[] Between { get; set; }             // Portion of normalized length
+        public double[] DatasetBetween { get; set; }      // Dataset portion of normalized length
+    }
+
+    // Source attribution information for features
+    public class SourceAttribution
+    {
+        public string GersId { get; set; }
+        public List<BridgeFileRecord> SourceRecords { get; set; } = new List<BridgeFileRecord>();
+        public string PrimaryDataset { get; set; }
+        public int SourceCount { get; set; }
+        public List<string> ContributingDatasets { get; set; } = new List<string>();
+    }
+
+    // Available source datasets (based on Overture documentation)
+    public static class KnownSourceDatasets
+    {
+        public static readonly Dictionary<string, string> DatasetDisplayNames = new Dictionary<string, string>
+        {
+            { "Esri Community Maps", "Esri Community Maps" },
+            { "geoBoundaries", "geoBoundaries" },
+            { "Instituto Geográfico Nacional (España)", "IGN España" },
+            { "Meta Places", "Meta Places" },
+            { "Microsoft Places", "Microsoft Places" },
+            { "OpenStreetMap", "OpenStreetMap" },
+            { "PinMeTo", "PinMeTo" }
+        };
+
+        public static readonly HashSet<string> SupportedDatasets = new HashSet<string>
+        {
+            "Esri Community Maps", "geoBoundaries", "Instituto Geográfico Nacional (España)",
+            "Meta Places", "Microsoft Places", "OpenStreetMap", "PinMeTo"
+        };
+    }
+
     public class DataProcessor : IDisposable
     {
         private readonly DuckDBConnection _connection;
@@ -37,6 +81,7 @@ namespace DuckDBGeoparquet.Services
         private const string STRUCT_TYPE = "STRUCT";
         private const string BBOX_COLUMN = "bbox";
         private const string GEOMETRY_COLUMN = "geometry";
+        private const string BRIDGE_FILES_BASE_PATH = "s3://overturemaps-us-west-2/bridgefiles";
 
         // Add static readonly field for the theme-type separator
         private static readonly string[] THEME_TYPE_SEPARATOR = [" - "];
@@ -51,10 +96,28 @@ namespace DuckDBGeoparquet.Services
         // Collection to store layer information for bulk creation
         private readonly List<LayerCreationInfo> _pendingLayers;
 
+        // Bridge files functionality
+        private bool _bridgeFilesEnabled = false;
+        private string _currentRelease;
+        private readonly Dictionary<string, List<BridgeFileRecord>> _bridgeFileCache = new();
+
         public DataProcessor()
         {
             _connection = new DuckDBConnection("DataSource=:memory:");
             _pendingLayers = new List<LayerCreationInfo>();
+        }
+
+        // Bridge Files Properties
+        public bool BridgeFilesEnabled
+        {
+            get => _bridgeFilesEnabled;
+            set => _bridgeFilesEnabled = value;
+        }
+
+        public string CurrentRelease
+        {
+            get => _currentRelease;
+            set => _currentRelease = value;
         }
 
         public async Task InitializeDuckDBAsync()
@@ -1460,6 +1523,376 @@ namespace DuckDBGeoparquet.Services
                 logCallback?.Invoke($"Warning: Could not verify GeoParquet metadata: {ex.Message}");
                 // This is not critical - the file should still be readable by ArcGIS Pro
             }
+        }
+
+        /// <summary>
+        /// Downloads and loads bridge files for the specified theme and type
+        /// </summary>
+        public async Task<bool> LoadBridgeFilesAsync(string theme, string type, string release, IProgress<string> progress = null)
+        {
+            if (!_bridgeFilesEnabled)
+            {
+                progress?.Report("Bridge files functionality is disabled");
+                return false;
+            }
+
+            try
+            {
+                progress?.Report($"Loading bridge files for {theme}/{type}...");
+
+                // Clear existing bridge file cache for this theme/type
+                string cacheKey = $"{theme}:{type}";
+                _bridgeFileCache.Remove(cacheKey);
+
+                using var command = _connection.CreateCommand();
+
+                // Check which datasets have bridge files for this theme/type
+                var availableDatasets = new List<string>();
+                foreach (var dataset in KnownSourceDatasets.SupportedDatasets)
+                {
+                    string bridgePath = $"{BRIDGE_FILES_BASE_PATH}/{release}/dataset={dataset}/theme={theme}/type={type}/*.parquet";
+                    
+                    try
+                    {
+                        // Test if bridge files exist for this dataset
+                        command.CommandText = $@"
+                            SELECT COUNT(*) 
+                            FROM read_parquet('{bridgePath}', filename=true, hive_partitioning=1) 
+                            LIMIT 1
+                        ";
+                        var result = await command.ExecuteScalarAsync(CancellationToken.None);
+                        if (Convert.ToInt64(result) > 0)
+                        {
+                            availableDatasets.Add(dataset);
+                        }
+                    }
+                    catch
+                    {
+                        // Dataset doesn't have bridge files for this theme/type - skip
+                    }
+                }
+
+                if (!availableDatasets.Any())
+                {
+                    progress?.Report($"No bridge files found for {theme}/{type}");
+                    return false;
+                }
+
+                progress?.Report($"Found bridge files from {availableDatasets.Count} datasets: {string.Join(", ", availableDatasets.Take(3))}{(availableDatasets.Count > 3 ? "..." : "")}");
+
+                // Load bridge files from all available datasets
+                var bridgeRecords = new List<BridgeFileRecord>();
+                foreach (var dataset in availableDatasets)
+                {
+                    string bridgePath = $"{BRIDGE_FILES_BASE_PATH}/{release}/dataset={dataset}/theme={theme}/type={type}/*.parquet";
+                    
+                    command.CommandText = $@"
+                        CREATE OR REPLACE TABLE temp_bridge_{dataset.Replace(" ", "_").Replace("(", "").Replace(")", "")} AS 
+                        SELECT id, record_id, update_time, dataset, theme, type, between, dataset_between
+                        FROM read_parquet('{bridgePath}', filename=true, hive_partitioning=1)
+                    ";
+                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+
+                    // Read the bridge file records
+                    command.CommandText = $"SELECT * FROM temp_bridge_{dataset.Replace(" ", "_").Replace("(", "").Replace(")", "")}";
+                    using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
+                    
+                    while (await reader.ReadAsync())
+                    {
+                        var record = new BridgeFileRecord
+                        {
+                            Id = reader.GetString("id"),
+                            RecordId = reader.GetString("record_id"),
+                            UpdateTime = reader.GetDateTime("update_time"),
+                            Dataset = reader.GetString("dataset"),
+                            Theme = reader.GetString("theme"),
+                            Type = reader.GetString("type"),
+                            Between = ParseDoubleArray(reader["between"]),
+                            DatasetBetween = ParseDoubleArray(reader["dataset_between"])
+                        };
+                        bridgeRecords.Add(record);
+                    }
+                }
+
+                // Cache the bridge file records
+                _bridgeFileCache[cacheKey] = bridgeRecords;
+                
+                progress?.Report($"Successfully loaded {bridgeRecords.Count:N0} bridge file records for {theme}/{type}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                progress?.Report($"Error loading bridge files: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error loading bridge files for {theme}/{type}: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Creates a joined dataset with source attribution information
+        /// </summary>
+        public async Task<bool> CreateAttributedDatasetAsync(string layerName, string theme, string type, IProgress<string> progress = null)
+        {
+            if (!_bridgeFilesEnabled)
+            {
+                progress?.Report("Bridge files functionality is disabled");
+                return false;
+            }
+
+            string cacheKey = $"{theme}:{type}";
+            if (!_bridgeFileCache.ContainsKey(cacheKey))
+            {
+                progress?.Report($"No bridge files loaded for {theme}/{type}. Load bridge files first.");
+                return false;
+            }
+
+            try
+            {
+                progress?.Report($"Creating attributed dataset for {layerName}...");
+
+                using var command = _connection.CreateCommand();
+
+                // Create a table with the bridge file data
+                command.CommandText = $@"
+                    CREATE OR REPLACE TABLE bridge_data AS
+                    SELECT 
+                        id as gers_id,
+                        record_id,
+                        dataset,
+                        update_time,
+                        theme,
+                        type
+                    FROM (VALUES ";
+
+                var bridgeRecords = _bridgeFileCache[cacheKey];
+                var valuesList = new List<string>();
+                
+                foreach (var record in bridgeRecords.Take(10000)) // Limit for performance
+                {
+                    valuesList.Add($"('{record.Id}', '{record.RecordId}', '{record.Dataset}', '{record.UpdateTime:yyyy-MM-dd HH:mm:ss}', '{record.Theme}', '{record.Type}')");
+                }
+                
+                command.CommandText += string.Join(", ", valuesList) + @"
+                    ) AS bridge_values(id, record_id, dataset, update_time, theme, type)
+                ";
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+
+                // Create the attributed dataset by joining current_table with bridge data
+                command.CommandText = $@"
+                    CREATE OR REPLACE TABLE attributed_dataset AS
+                    SELECT 
+                        ct.*,
+                        bd.record_id as source_record_id,
+                        bd.dataset as source_dataset,
+                        bd.update_time as bridge_update_time,
+                        COUNT(bd.dataset) OVER (PARTITION BY ct.id) as source_count,
+                        STRING_AGG(DISTINCT bd.dataset, ', ') OVER (PARTITION BY ct.id) as contributing_datasets
+                    FROM current_table ct
+                    LEFT JOIN bridge_data bd ON ct.id = bd.gers_id
+                ";
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+
+                // Get count of attributed records
+                command.CommandText = "SELECT COUNT(*) FROM attributed_dataset WHERE source_dataset IS NOT NULL";
+                var attributedCount = await command.ExecuteScalarAsync(CancellationToken.None);
+                
+                command.CommandText = "SELECT COUNT(*) FROM attributed_dataset";
+                var totalCount = await command.ExecuteScalarAsync(CancellationToken.None);
+
+                progress?.Report($"Successfully created attributed dataset: {attributedCount:N0} of {totalCount:N0} features have source attribution");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                progress?.Report($"Error creating attributed dataset: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error creating attributed dataset: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Gets source attribution information for a specific GERS ID
+        /// </summary>
+        public async Task<SourceAttribution> GetSourceAttributionAsync(string gersId, string theme, string type)
+        {
+            string cacheKey = $"{theme}:{type}";
+            if (!_bridgeFileCache.ContainsKey(cacheKey))
+            {
+                return null;
+            }
+
+            var bridgeRecords = _bridgeFileCache[cacheKey].Where(r => r.Id == gersId).ToList();
+            
+            if (!bridgeRecords.Any())
+            {
+                return null;
+            }
+
+            var attribution = new SourceAttribution
+            {
+                GersId = gersId,
+                SourceRecords = bridgeRecords,
+                SourceCount = bridgeRecords.Count,
+                ContributingDatasets = bridgeRecords.Select(r => r.Dataset).Distinct().ToList(),
+                PrimaryDataset = bridgeRecords.GroupBy(r => r.Dataset)
+                                              .OrderByDescending(g => g.Count())
+                                              .First().Key
+            };
+
+            return attribution;
+        }
+
+        /// <summary>
+        /// Updates source attribution for a feature (for editing functionality)
+        /// </summary>
+        public async Task<bool> UpdateSourceAttributionAsync(string gersId, string newPrimaryDataset, List<string> contributingDatasets, IProgress<string> progress = null)
+        {
+            try
+            {
+                progress?.Report($"Updating source attribution for {gersId}...");
+
+                using var command = _connection.CreateCommand();
+
+                // Update the attributed_dataset table with new attribution
+                command.CommandText = $@"
+                    UPDATE attributed_dataset 
+                    SET 
+                        source_dataset = '{newPrimaryDataset}',
+                        contributing_datasets = '{string.Join(", ", contributingDatasets)}',
+                        bridge_update_time = CURRENT_TIMESTAMP
+                    WHERE id = '{gersId}'
+                ";
+                
+                var affectedRows = await command.ExecuteNonQueryAsync(CancellationToken.None);
+                
+                progress?.Report($"Updated attribution for {affectedRows} record(s)");
+                return affectedRows > 0;
+            }
+            catch (Exception ex)
+            {
+                progress?.Report($"Error updating source attribution: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Exports attributed dataset with source information
+        /// </summary>
+        public async Task<string> ExportAttributedDatasetAsync(string outputPath, string layerName, IProgress<string> progress = null)
+        {
+            try
+            {
+                progress?.Report($"Exporting attributed dataset to {Path.GetFileName(outputPath)}...");
+
+                using var command = _connection.CreateCommand();
+                
+                // Export the attributed dataset
+                string query = "SELECT * FROM attributed_dataset";
+                string actualFilePath = await ExportToGeoParquet(query, outputPath, layerName, progress);
+                
+                progress?.Report($"Successfully exported attributed dataset: {layerName}");
+                return actualFilePath;
+            }
+            catch (Exception ex)
+            {
+                progress?.Report($"Error exporting attributed dataset: {ex.Message}");
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Gets summary statistics about source attribution
+        /// </summary>
+        public async Task<Dictionary<string, object>> GetAttributionSummaryAsync()
+        {
+            var summary = new Dictionary<string, object>();
+            
+            try
+            {
+                using var command = _connection.CreateCommand();
+                
+                // Check if attributed_dataset exists
+                command.CommandText = @"
+                    SELECT COUNT(*) 
+                    FROM information_schema.tables 
+                    WHERE table_name = 'attributed_dataset'
+                ";
+                var tableExists = Convert.ToInt64(await command.ExecuteScalarAsync(CancellationToken.None)) > 0;
+                
+                if (!tableExists)
+                {
+                    summary["error"] = "No attributed dataset available";
+                    return summary;
+                }
+
+                // Total features
+                command.CommandText = "SELECT COUNT(*) FROM attributed_dataset";
+                summary["total_features"] = await command.ExecuteScalarAsync(CancellationToken.None);
+
+                // Features with attribution
+                command.CommandText = "SELECT COUNT(*) FROM attributed_dataset WHERE source_dataset IS NOT NULL";
+                summary["attributed_features"] = await command.ExecuteScalarAsync(CancellationToken.None);
+
+                // Source dataset breakdown
+                command.CommandText = @"
+                    SELECT source_dataset, COUNT(*) as count 
+                    FROM attributed_dataset 
+                    WHERE source_dataset IS NOT NULL 
+                    GROUP BY source_dataset 
+                    ORDER BY count DESC
+                ";
+                
+                var datasetBreakdown = new Dictionary<string, long>();
+                using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
+                while (await reader.ReadAsync())
+                {
+                    datasetBreakdown[reader.GetString("source_dataset")] = reader.GetInt64("count");
+                }
+                summary["dataset_breakdown"] = datasetBreakdown;
+
+                // Multi-source features
+                command.CommandText = "SELECT COUNT(*) FROM attributed_dataset WHERE source_count > 1";
+                summary["multi_source_features"] = await command.ExecuteScalarAsync(CancellationToken.None);
+
+            }
+            catch (Exception ex)
+            {
+                summary["error"] = ex.Message;
+            }
+            
+            return summary;
+        }
+
+        /// <summary>
+        /// Helper method to parse double arrays from DuckDB results
+        /// </summary>
+        private static double[] ParseDoubleArray(object value)
+        {
+            if (value == null || value == DBNull.Value)
+                return new double[0];
+                
+            // Handle various possible formats DuckDB might return arrays in
+            if (value is string stringValue)
+            {
+                // Parse array string format like "[1.0, 2.0]"
+                var cleaned = stringValue.Trim('[', ']');
+                if (string.IsNullOrWhiteSpace(cleaned))
+                    return new double[0];
+                    
+                return cleaned.Split(',')
+                             .Select(s => double.TryParse(s.Trim(), out double d) ? d : 0.0)
+                             .ToArray();
+            }
+            
+            // If it's already an array, convert it
+            if (value is Array array)
+            {
+                return array.Cast<object>()
+                           .Select(o => Convert.ToDouble(o))
+                           .ToArray();
+            }
+            
+            return new double[0];
         }
     }
 }
