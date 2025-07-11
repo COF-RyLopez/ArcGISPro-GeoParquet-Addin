@@ -14,7 +14,7 @@
 	<modules>
 		<insertModule id="DuckDBGeoparquet_Module" className="DuckDBGeoparquet.DuckDBGeoparquetModule" autoLoad="false" caption="DuckDBGeoparquet Module">
 			<tabs>
-				<tab id="DuckDBGeoparquet_Tab" caption="Cloud Data" keytip="C">
+				<tab id="DuckDBGeoparquet_Tab" caption="Cloud Native" keytip="C">
 					<group refID="DuckDBGeoparquet_Group2" />
 					<group refID="DuckDBGeoparquet_SourceCoopGroup" />
 				</tab>

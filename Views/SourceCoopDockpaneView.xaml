@@ -5,13 +5,30 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"   
              xmlns:ui="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
              mc:Ignorable="d" 
-             d:DesignHeight="450" d:DesignWidth="400">
+             d:DesignHeight="600" d:DesignWidth="400">
     
     <UserControl.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="pack://application:,,,/ArcGIS.Desktop.Framework;component/Themes/Default.xaml"/>
             </ResourceDictionary.MergedDictionaries>
+            
+            <!-- Converters -->
+            <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+            
+            <!-- Styles -->
+            <Style x:Key="SectionHeaderStyle" TargetType="TextBlock">
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="Foreground" Value="{DynamicResource Esri_TextControlBrush}"/>
+                <Setter Property="Margin" Value="0,10,0,5"/>
+            </Style>
+            
+            <Style x:Key="InfoTextStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="11"/>
+                <Setter Property="Foreground" Value="{DynamicResource Esri_TextControlBrush}"/>
+                <Setter Property="TextWrapping" Value="Wrap"/>
+            </Style>
         </ResourceDictionary>
     </UserControl.Resources>
     
@@ -23,107 +40,334 @@
         </Grid.RowDefinitions>
         
         <!-- Header -->
-        <Border Grid.Row="0" Background="{DynamicResource Esri_Blue}" Padding="10">
+        <Border Grid.Row="0" Background="{DynamicResource Esri_Blue}" Padding="12">
             <StackPanel>
                 <TextBlock Text="Source Cooperative" 
                           FontSize="16" 
                           FontWeight="Bold" 
                           Foreground="White"/>
                 <TextBlock Text="Community Data Repository Browser" 
-                          FontSize="12" 
+                          FontSize="11" 
                           Foreground="White" 
-                          Opacity="0.8"/>
+                          Opacity="0.9"/>
             </StackPanel>
         </Border>
         
         <!-- Main Content -->
-        <ScrollViewer Grid.Row="1" Padding="15" VerticalScrollBarVisibility="Auto">
-            <StackPanel>
-                
-                <!-- Welcome Message -->
-                <Border Background="{DynamicResource Esri_GrayBackgroundBrush}" 
-                       BorderBrush="{DynamicResource Esri_BorderBrush}" 
-                       BorderThickness="1" 
-                       CornerRadius="4" 
-                       Padding="15"
-                       Margin="0,0,0,15">
+        <TabControl Grid.Row="1" Background="Transparent" BorderThickness="0">
+            
+            <!-- Browse Tab -->
+            <TabItem Header="Browse Datasets">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12">
                     <StackPanel>
-                        <TextBlock Text="🌍 Source Cooperative Integration" 
-                                  FontSize="14" 
-                                  FontWeight="SemiBold" 
-                                  Margin="0,0,0,10"/>
-                        <TextBlock TextWrapping="Wrap" 
-                                  Foreground="{DynamicResource Esri_TextControlBrush}">
-                            Browse and download datasets from Source Cooperative, 
-                            a data publishing utility for trusted organizations and individuals 
-                            to share geospatial data using standard HTTP methods.
-                        </TextBlock>
+                        
+                        <!-- Search and Filters Section -->
+                        <Border Background="{DynamicResource Esri_GrayBackgroundBrush}" 
+                               BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                               BorderThickness="1" 
+                               CornerRadius="3" 
+                               Padding="12"
+                               Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="🔍 Search and Filter" Style="{StaticResource SectionHeaderStyle}"/>
+                                
+                                <!-- Search Box -->
+                                <TextBlock Text="Search datasets:" Margin="0,0,0,3" FontSize="11"/>
+                                <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" 
+                                        Padding="6"
+                                        Margin="0,0,0,8"/>
+                                
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    
+                                    <!-- Organization Filter -->
+                                    <StackPanel Grid.Column="0" Margin="0,0,6,0">
+                                        <TextBlock Text="Organization:" Margin="0,0,0,3" FontSize="11"/>
+                                        <ComboBox ItemsSource="{Binding AvailableOrganizations}"
+                                                 SelectedItem="{Binding SelectedOrganization}"
+                                                 Padding="4"/>
+                                    </StackPanel>
+                                    
+                                    <!-- Format Filter -->
+                                    <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                                        <TextBlock Text="Format:" Margin="0,0,0,3" FontSize="11"/>
+                                        <ComboBox ItemsSource="{Binding AvailableFormats}"
+                                                 SelectedItem="{Binding SelectedFormat}"
+                                                 Padding="4"/>
+                                    </StackPanel>
+                                </Grid>
+                                
+                                <!-- Spatial Extent Filter -->
+                                <CheckBox Content="📍 Only show datasets with data in current map extent" 
+                                         IsChecked="{Binding FilterByMapExtent}"
+                                         Margin="0,8,0,0"
+                                         ToolTip="Filter datasets to only show those that have data coverage in your current map view"/>
+                                
+                                <!-- Clear Filters Button -->
+                                <Button Content="Clear Filters" 
+                                       Command="{Binding ClearFiltersCommand}"
+                                       HorizontalAlignment="Right"
+                                       Margin="0,8,0,0"
+                                       Padding="8,4"/>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Refresh Button -->
+                        <Button Content="🔄 Refresh Dataset List" 
+                               Command="{Binding RefreshDatasetsCommand}"
+                               HorizontalAlignment="Stretch"
+                               Padding="8"
+                               Margin="0,0,0,12"/>
+                        
+                        <!-- Loading Indicator -->
+                        <Border Background="{DynamicResource Esri_ControlBackgroundBrush}" 
+                               BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                               BorderThickness="1" 
+                               CornerRadius="3" 
+                               Padding="12"
+                               Margin="0,0,0,12"
+                               Visibility="{Binding IsLoading, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="⏳ Loading..." FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                <ProgressBar Value="{Binding ProgressValue}" 
+                                           Height="4" 
+                                           Margin="0,8,0,0"
+                                           IsIndeterminate="{Binding IsLoading}"/>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Dataset List -->
+                        <TextBlock Text="📊 Available Datasets" Style="{StaticResource SectionHeaderStyle}"/>
+                        
+                        <Border Background="{DynamicResource Esri_ControlBackgroundBrush}" 
+                               BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                               BorderThickness="1" 
+                               CornerRadius="3"
+                               MaxHeight="300">
+                            <ListBox ItemsSource="{Binding FilteredDatasets}"
+                                    SelectedItem="{Binding SelectedDataset}"
+                                    ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                    Background="Transparent"
+                                    BorderThickness="0">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                                               BorderThickness="0,0,0,1" 
+                                               Padding="8">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                
+                                                <!-- Selection Checkbox -->
+                                                <CheckBox Grid.Column="0" 
+                                                         IsChecked="{Binding IsSelected}"
+                                                         VerticalAlignment="Top"
+                                                         Margin="0,0,8,0"/>
+                                                
+                                                <!-- Dataset Info -->
+                                                <StackPanel Grid.Column="1">
+                                                    <TextBlock Text="{Binding Name}" 
+                                                              FontWeight="SemiBold" 
+                                                              FontSize="12"/>
+                                                    <TextBlock Text="{Binding Organization}" 
+                                                              FontSize="11" 
+                                                              Opacity="0.8"/>
+                                                    <TextBlock Text="{Binding Description}" 
+                                                              Style="{StaticResource InfoTextStyle}"
+                                                              Margin="0,2,0,0"/>
+                                                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                                        <TextBlock Text="{Binding FormatDisplay}" 
+                                                                  FontSize="10" 
+                                                                  Background="{DynamicResource Esri_Blue}"
+                                                                  Foreground="White"
+                                                                  Padding="4,2"
+                                                                  Margin="0,0,4,0"/>
+                                                        <TextBlock Text="{Binding SizeDisplay}" 
+                                                                  FontSize="10" 
+                                                                  Opacity="0.7"/>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                                
+                                                <!-- Selection Status -->
+                                                <TextBlock Grid.Column="2" 
+                                                          Text="✓" 
+                                                          FontSize="16"
+                                                          Foreground="{DynamicResource Esri_Blue}"
+                                                          VerticalAlignment="Center"
+                                                          Visibility="{Binding IsSelected, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Border>
+                        
                     </StackPanel>
-                </Border>
-                
-                <!-- Feature Preview -->
-                <Border Background="{DynamicResource Esri_ControlBackgroundBrush}" 
-                       BorderBrush="{DynamicResource Esri_BorderBrush}" 
-                       BorderThickness="1" 
-                       CornerRadius="4" 
-                       Padding="15"
-                       Margin="0,0,0,15">
+                </ScrollViewer>
+            </TabItem>
+            
+            <!-- Download Tab -->
+            <TabItem Header="Download Options">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12">
                     <StackPanel>
-                        <TextBlock Text="🚧 Coming Soon" 
-                                  FontSize="14" 
-                                  FontWeight="SemiBold" 
-                                  Margin="0,0,0,10"/>
                         
-                        <TextBlock Text="Planned Features:" 
-                                  FontWeight="SemiBold" 
-                                  Margin="0,0,0,8"/>
+                        <!-- Spatial Extent Section -->
+                        <Border Background="{DynamicResource Esri_GrayBackgroundBrush}" 
+                               BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                               BorderThickness="1" 
+                               CornerRadius="3" 
+                               Padding="12"
+                               Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="🗺️ Spatial Extent" Style="{StaticResource SectionHeaderStyle}"/>
+                                
+                                <RadioButton Content="Use current map extent" 
+                                           IsChecked="{Binding UseCurrentMapExtent}"
+                                           Margin="0,4,0,2"/>
+                                
+                                <RadioButton Content="Use custom drawn extent" 
+                                           IsChecked="{Binding UseCustomExtent}"
+                                           Margin="0,2,0,8"/>
+                                
+                                <Button Content="🎯 Draw Custom Extent" 
+                                       Command="{Binding SetCustomExtentCommand}"
+                                       IsEnabled="{Binding UseCustomExtent}"
+                                       Padding="8,4"
+                                       Margin="0,0,0,8"/>
+                                
+                                <TextBlock Text="{Binding CustomExtentDisplay}" 
+                                          Style="{StaticResource InfoTextStyle}"
+                                          FontStyle="Italic"/>
+                            </StackPanel>
+                        </Border>
                         
-                        <StackPanel Margin="15,0,0,0">
-                            <TextBlock Text="• Browse community datasets" Margin="0,2"/>
-                            <TextBlock Text="• Search and filter by format/organization" Margin="0,2"/>
-                            <TextBlock Text="• Download GeoParquet, Parquet, and COG files" Margin="0,2"/>
-                            <TextBlock Text="• Automatic integration with ArcGIS Pro" Margin="0,2"/>
-                            <TextBlock Text="• Spatial filtering capabilities" Margin="0,2"/>
-                        </StackPanel>
+                        <!-- Output Location Section -->
+                        <Border Background="{DynamicResource Esri_GrayBackgroundBrush}" 
+                               BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                               BorderThickness="1" 
+                               CornerRadius="3" 
+                               Padding="12"
+                               Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="📁 Output Location" Style="{StaticResource SectionHeaderStyle}"/>
+                                
+                                <TextBox Text="{Binding OutputPath}" 
+                                        IsReadOnly="True"
+                                        Padding="6"
+                                        Margin="0,4,0,8"/>
+                                
+                                <Button Content="📂 Browse..." 
+                                       Command="{Binding BrowseOutputLocationCommand}"
+                                       HorizontalAlignment="Left"
+                                       Padding="8,4"/>
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Download Button -->
+                        <Button Content="⬇️ Download Selected Datasets" 
+                               Command="{Binding DownloadSelectedCommand}"
+                               Background="{DynamicResource Esri_Blue}"
+                               Foreground="White"
+                               FontWeight="SemiBold"
+                               Padding="12,8"
+                               HorizontalAlignment="Stretch"
+                               Margin="0,0,0,12"/>
+                        
+                        <!-- Download Info -->
+                        <Border Background="{DynamicResource Esri_ControlBackgroundBrush}" 
+                               BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                               BorderThickness="1" 
+                               CornerRadius="3" 
+                               Padding="12">
+                            <StackPanel>
+                                <TextBlock Text="ℹ️ Download Information" Style="{StaticResource SectionHeaderStyle}"/>
+                                <TextBlock Style="{StaticResource InfoTextStyle}">
+                                    • Data will be downloaded in GeoParquet format for optimal performance<LineBreak/>
+                                    • Spatial filtering will be applied based on your extent selection<LineBreak/>
+                                    • Layers will be automatically added to your current map<LineBreak/>
+                                    • Large datasets may take several minutes to download
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+                        
                     </StackPanel>
-                </Border>
-                
-                <!-- Links -->
-                <Border Background="{DynamicResource Esri_ControlBackgroundBrush}" 
-                       BorderBrush="{DynamicResource Esri_BorderBrush}" 
-                       BorderThickness="1" 
-                       CornerRadius="4" 
-                       Padding="15">
-                    <StackPanel>
-                        <TextBlock Text="🔗 Learn More" 
-                                  FontSize="14" 
-                                  FontWeight="SemiBold" 
-                                  Margin="0,0,0,10"/>
-                        
-                        <TextBlock TextWrapping="Wrap">
-                            Visit <Hyperlink NavigateUri="https://source.coop" RequestNavigate="Hyperlink_RequestNavigate">source.coop</Hyperlink> 
-                            to explore available datasets and learn more about the platform.
-                        </TextBlock>
-                        
-                        <TextBlock TextWrapping="Wrap" Margin="0,8,0,0">
-                            Source Cooperative is a Radiant Earth initiative providing 
-                            standardized access to community geospatial data.
-                        </TextBlock>
-                    </StackPanel>
-                </Border>
-                
-            </StackPanel>
-        </ScrollViewer>
+                </ScrollViewer>
+            </TabItem>
+            
+            <!-- Activity Log Tab -->
+            <TabItem Header="Activity Log">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    
+                    <TextBlock Grid.Row="0" 
+                              Text="📋 Activity Log" 
+                              Style="{StaticResource SectionHeaderStyle}"/>
+                    
+                    <Border Grid.Row="1" 
+                           Background="{DynamicResource Esri_ControlBackgroundBrush}" 
+                           BorderBrush="{DynamicResource Esri_BorderBrush}" 
+                           BorderThickness="1" 
+                           CornerRadius="3">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" 
+                                     HorizontalScrollBarVisibility="Auto">
+                            <TextBox Text="{Binding LogOutputText, Mode=OneWay}"
+                                    IsReadOnly="True"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    FontFamily="Consolas"
+                                    FontSize="10"
+                                    Padding="8"
+                                    TextWrapping="Wrap"
+                                    VerticalScrollBarVisibility="Auto"/>
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+            </TabItem>
+            
+        </TabControl>
         
         <!-- Status Bar -->
         <Border Grid.Row="2" 
                Background="{DynamicResource Esri_GrayBackgroundBrush}" 
                BorderBrush="{DynamicResource Esri_BorderBrush}" 
                BorderThickness="0,1,0,0" 
-               Padding="10,5">
-            <TextBlock Text="{Binding StatusText}" 
-                      FontSize="11" 
-                      Foreground="{DynamicResource Esri_TextControlBrush}"/>
+               Padding="12,6">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                
+                <TextBlock Grid.Column="0" 
+                          Text="{Binding StatusText}" 
+                          FontSize="11" 
+                          VerticalAlignment="Center"
+                          Foreground="{DynamicResource Esri_TextControlBrush}"/>
+                
+                <StackPanel Grid.Column="1" 
+                           Orientation="Horizontal" 
+                           VerticalAlignment="Center">
+                    <TextBlock Text="🌐" 
+                              FontSize="12" 
+                              Margin="0,0,4,0"
+                              VerticalAlignment="Center"/>
+                    <TextBlock Text="source.coop" 
+                              FontSize="10" 
+                              VerticalAlignment="Center"
+                              Foreground="{DynamicResource Esri_Blue}"
+                              TextDecorations="Underline"
+                              Cursor="Hand"/>
+                </StackPanel>
+            </Grid>
         </Border>
         
     </Grid>
