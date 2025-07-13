@@ -140,13 +140,16 @@ namespace DuckDBGeoparquet.Services
                     
                     while (await reader.ReadAsync())
                     {
-                        var account = reader.GetString("account");
-                        var repository = reader.GetString("repository");
+                        var account = reader["account"]?.ToString() ?? string.Empty;
+                        var repository = reader["repository"]?.ToString() ?? string.Empty;
                         
-                        if (!accountGroups.ContainsKey(account))
-                            accountGroups[account] = new List<(string account, string repository)>();
-                        
-                        accountGroups[account].Add((account, repository));
+                        if (!string.IsNullOrEmpty(account) && !string.IsNullOrEmpty(repository))
+                        {
+                            if (!accountGroups.ContainsKey(account))
+                                accountGroups[account] = new List<(string account, string repository)>();
+                            
+                            accountGroups[account].Add((account, repository));
+                        }
                     }
                     
                     // Convert to our repository structure
