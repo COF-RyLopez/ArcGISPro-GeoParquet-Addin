@@ -1713,7 +1713,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Gets source attribution information for a specific GERS ID
         /// </summary>
-        public async Task<SourceAttribution> GetSourceAttributionAsync(string gersId, string theme, string type)
+        public SourceAttribution GetSourceAttribution(string gersId, string theme, string type)
         {
             string cacheKey = $"{theme}:{type}";
             if (!_bridgeFileCache.ContainsKey(cacheKey))

@@ -429,7 +429,7 @@ namespace DuckDBGeoparquet.Views
             LoadBridgeFilesCommand = new RelayCommand(async () => await LoadBridgeFilesAsync(), () => CanLoadBridgeFiles);
             ViewAttributionReportCommand = new RelayCommand(async () => await ViewAttributionReportAsync(), () => BridgeFilesLoaded);
             GetSelectedFeatureAttributionCommand = new RelayCommand(async () => await GetSelectedFeatureAttributionAsync());
-            EditAttributionCommand = new RelayCommand(async () => await EditAttributionAsync(), () => HasSelectedFeature);
+            EditAttributionCommand = new RelayCommand(() => EditAttribution(), () => HasSelectedFeature);
             ExportAttributedDatasetCommand = new RelayCommand(async () => await ExportAttributedDatasetAsync(), () => BridgeFilesLoaded);
             BrowseAttributedExportPathCommand = new RelayCommand(() => BrowseAttributedExportPath());
             OpenBridgeFilesDocumentationCommand = new RelayCommand(() => OpenBridgeFilesDocumentation());
@@ -1585,7 +1585,7 @@ namespace DuckDBGeoparquet.Views
                 var cancellationToken = _cts.Token;
 
                 // Switch to status tab
-                SelectedTabIndex = 1;
+                SelectedTabIndex = 2;
 
                 StatusText = $"Loading {selectedLeafItems.Count} selected data types...";
                 AddToLog($"Starting to load {selectedLeafItems.Count} data type(s) from release {LatestRelease}");
@@ -1918,7 +1918,7 @@ namespace DuckDBGeoparquet.Views
                 var cancellationToken = _cts.Token;
 
                 // Switch to status tab
-                SelectedTabIndex = 1; // Status tab is now index 1
+                SelectedTabIndex = 2; // Status tab is now index 2
 
                 StatusText = "Creating Multifile Feature Connection...";
                 AddToLog("Setting up Multifile Feature Connection for data");
@@ -2306,8 +2306,8 @@ namespace DuckDBGeoparquet.Views
 
         private void ShowCreateMfcTab()
         {
-            // Navigate to the Create MFC tab (index 2)
-            SelectedTabIndex = 2;
+            // Navigate to the Create MFC tab (index 3)
+            SelectedTabIndex = 3;
             StatusText = "Ready to create Multifile Feature Connection";
             AddToLog("Create MFC tab activated");
         }
@@ -2544,7 +2544,7 @@ namespace DuckDBGeoparquet.Views
             // 3. There are selected themes/types to load bridge files for
             CanLoadBridgeFiles = BridgeFilesEnabled && 
                                 !string.IsNullOrEmpty(LatestRelease) && 
-                                AllSelectedLeafItems?.Any() == true;
+                                GetSelectedLeafItems()?.Any() == true;
         }
 
         // Bridge Files Command Implementations
@@ -2562,7 +2562,7 @@ namespace DuckDBGeoparquet.Views
                 BridgeFilesStatus = "Loading bridge files...";
                 AddToLog("🔄 Starting bridge files loading process...");
 
-                var selectedItems = AllSelectedLeafItems?.ToList() ?? new List<SelectableThemeItem>();
+                var selectedItems = GetSelectedLeafItems()?.ToList() ?? new List<SelectableThemeItem>();
                 if (!selectedItems.Any())
                 {
                     BridgeFilesStatus = "No data types selected to load bridge files for";
@@ -2583,7 +2583,7 @@ namespace DuckDBGeoparquet.Views
                     string theme = item.ParentThemeForS3;
                     string type = item.ActualType;
                     
-                    progressReporter.Report($"Loading bridge files for {theme}/{type}...");
+                    ((IProgress<string>)progressReporter).Report($"Loading bridge files for {theme}/{type}...");
                     
                     bool loaded = await _dataProcessor.LoadBridgeFilesAsync(theme, type, LatestRelease, progressReporter);
                     if (loaded)
@@ -2743,7 +2743,7 @@ namespace DuckDBGeoparquet.Views
             }
         }
 
-        private async Task EditAttributionAsync()
+        private void EditAttribution()
         {
             try
             {

@@ -144,7 +144,7 @@ namespace DuckDBGeoparquet.Services
                         var repository = reader.GetString("repository");
                         
                         if (!accountGroups.ContainsKey(account))
-                            accountGroups[account] = new List<(string, string)>();
+                            accountGroups[account] = new List<(string account, string repository)>();
                         
                         accountGroups[account].Add((account, repository));
                     }
