@@ -1859,6 +1859,9 @@ namespace DuckDBGeoparquet.Views
                 StatusText = $"Successfully loaded all selected themes from release {LatestRelease}";
                 AddToLog($"All selected themes loaded successfully");
                 AddToLog("----------------");
+                
+                // Update bridge files button state after successful data loading
+                UpdateCanLoadBridgeFiles();
                 if (extent != null)
                 {
                     AddToLog($"Data for extent: {extent.XMin:F2}, {extent.YMin:F2}, {extent.XMax:F2}, {extent.YMax:F2}");
@@ -2425,6 +2428,8 @@ namespace DuckDBGeoparquet.Views
             // Update combined estimates and other UI elements that depend on the full selection set
             UpdateThemePreview(); // This eventually calls UpdateIsSelectAllCheckedStatus
             (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            UpdateCanLoadBridgeFiles(); // Update bridge files button state when selection changes
+            (LoadBridgeFilesCommand as RelayCommand)?.RaiseCanExecuteChanged();
             NotifyPropertyChanged(nameof(SelectedLeafItemCount));
             NotifyPropertyChanged(nameof(AllSelectedLeafItemsForPreview));
             // UpdateIsSelectAllCheckedStatus(); // Explicitly call to ensure status is current
@@ -2541,10 +2546,13 @@ namespace DuckDBGeoparquet.Views
             // Can load bridge files if:
             // 1. Bridge files are enabled
             // 2. We have a current release
-            // 3. There are selected themes/types to load bridge files for
+            // 3. There is loaded data (either selected items for new loads OR previously loaded data)
             CanLoadBridgeFiles = BridgeFilesEnabled && 
                                 !string.IsNullOrEmpty(LatestRelease) && 
-                                GetSelectedLeafItems()?.Any() == true;
+                                (GetSelectedLeafItems()?.Any() == true || !string.IsNullOrEmpty(_lastLoadedDataPath));
+            
+            // Update the command's can-execute state
+            (LoadBridgeFilesCommand as RelayCommand)?.RaiseCanExecuteChanged();
         }
 
         // Bridge Files Command Implementations
