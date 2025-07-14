@@ -197,13 +197,11 @@
                                 Margin="0,0,0,12">
                             <StackPanel>
                                 <TextBlock Text="General Configuration" FontWeight="SemiBold" Margin="0,0,0,2"/>
-                                <CheckBox Content="Enable Bridge Files" IsChecked="{Binding BridgeFilesEnabled}" Margin="0,0,0,5"
-                                          ToolTipService.ToolTip="When enabled, bridge files will be downloaded alongside Overture data to provide source attribution information"/>
-                                <TextBlock Text="ℹ️ Bridge files may increase download time but provide valuable source attribution data for data quality assessment and editing."
+                                <TextBlock Text="🔗 Bridge Files &amp; Attribution: Use the dedicated tab to enable and configure source attribution features."
                                           Style="{DynamicResource Esri_TextBlockSmall}"
                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
                                           TextWrapping="Wrap"
-                                          Margin="20,0,0,0"/>
+                                          Margin="0,4,0,0"/>
                             </StackPanel>
                         </Border>
                         <TextBlock Text="MFC Settings" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
@@ -377,14 +375,14 @@
                                Padding="12"
                                Margin="0,0,0,12">
                             <StackPanel>
-                                <TextBlock Text="🔧 Bridge Files Configuration" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                                <TextBlock Text="🔧 Enable Bridge Files" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
                                 
                                 <CheckBox Content="Enable bridge files and source attribution"
                                          IsChecked="{Binding BridgeFilesEnabled}"
                                          Margin="0,4,0,8"
                                          ToolTipService.ToolTip="When enabled, bridge files will be downloaded alongside Overture data to provide source attribution information"/>
                                 
-                                <TextBlock Text="ℹ️ Bridge files may increase download time but provide valuable source attribution data for data quality assessment and editing."
+                                <TextBlock Text="ℹ️ Bridge files may increase download time but provide valuable source attribution data for data quality assessment and editing. This setting affects both data loading and MFC creation."
                                           Style="{DynamicResource Esri_TextBlockSmall}"
                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
                                           TextWrapping="Wrap"
