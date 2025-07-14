@@ -1548,8 +1548,12 @@ namespace DuckDBGeoparquet.Services
 
                 // Check which datasets have bridge files for this theme/type
                 var availableDatasets = new List<string>();
+                var checkedDatasets = 0;
+                var totalDatasets = KnownSourceDatasets.SupportedDatasets.Count;
+                
                 foreach (var dataset in KnownSourceDatasets.SupportedDatasets)
                 {
+                    checkedDatasets++;
                     string bridgePath = $"{BRIDGE_FILES_BASE_PATH}/{release}/dataset={dataset}/theme={theme}/type={type}/*.parquet";
                     
                     try
@@ -1567,25 +1571,36 @@ namespace DuckDBGeoparquet.Services
                             availableDatasets.Add(dataset);
                         }
                     }
-                    catch (Exception ex)
+                    catch
                     {
                         // Dataset doesn't have bridge files for this theme/type - this is expected for most datasets
-                        System.Diagnostics.Debug.WriteLine($"No bridge files found for dataset '{dataset}' with theme '{theme}' and type '{type}' - this is normal.");
+                        // Silently continue without logging - this is normal behavior
+                    }
+                    
+                    // Only report progress occasionally to reduce noise
+                    if (checkedDatasets % 3 == 0 || checkedDatasets == totalDatasets)
+                    {
+                        progress?.Report($"Checking datasets for {theme}/{type}... ({checkedDatasets}/{totalDatasets})");
                     }
                 }
 
                 if (!availableDatasets.Any())
                 {
-                    progress?.Report($"No bridge files found for {theme}/{type}");
+                    progress?.Report($"⚠️ No bridge files available for {theme}/{type}");
                     return false;
                 }
 
-                progress?.Report($"Found bridge files from {availableDatasets.Count} datasets: {string.Join(", ", availableDatasets.Take(3))}{(availableDatasets.Count > 3 ? "..." : "")}");
+                progress?.Report($"✅ Found bridge files from {availableDatasets.Count} dataset(s): {string.Join(", ", availableDatasets.Take(3))}{(availableDatasets.Count > 3 ? "..." : "")}");
 
                 // Load bridge files from all available datasets
                 var bridgeRecords = new List<BridgeFileRecord>();
+                var processedDatasets = 0;
+                
                 foreach (var dataset in availableDatasets)
                 {
+                    processedDatasets++;
+                    progress?.Report($"📥 Loading bridge files from {dataset}... ({processedDatasets}/{availableDatasets.Count})");
+                    
                     string bridgePath = $"{BRIDGE_FILES_BASE_PATH}/{release}/dataset={dataset}/theme={theme}/type={type}/*.parquet";
                     
                     command.CommandText = $@"
@@ -1599,6 +1614,7 @@ namespace DuckDBGeoparquet.Services
                     command.CommandText = $"SELECT * FROM temp_bridge_{dataset.Replace(" ", "_").Replace("(", "").Replace(")", "")}";
                     using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
                     
+                    int recordsFromThisDataset = 0;
                     while (await reader.ReadAsync())
                     {
                         var record = new BridgeFileRecord
@@ -1613,7 +1629,10 @@ namespace DuckDBGeoparquet.Services
                             DatasetBetween = ParseDoubleArray(reader["dataset_between"])
                         };
                         bridgeRecords.Add(record);
+                        recordsFromThisDataset++;
                     }
+                    
+                    progress?.Report($"✅ Loaded {recordsFromThisDataset:N0} records from {dataset}");
                 }
 
                 // Cache the bridge file records

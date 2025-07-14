@@ -2607,20 +2607,24 @@ namespace DuckDBGeoparquet.Views
 
                 bool anyBridgeFilesLoaded = false;
                 int processedCount = 0;
+                var successfulLoads = new List<string>();
+                var failedLoads = new List<string>();
                 
                 foreach (var (theme, type) in dataTypesToProcess)
                 {
                     processedCount++;
-                    BridgeFilesStatus = $"🔄 Loading bridge files ({processedCount}/{dataTypesToProcess.Count}): {theme}/{type}...";
+                    BridgeFilesStatus = $"🔄 Processing {theme}/{type}... ({processedCount}/{dataTypesToProcess.Count})";
                     
                     bool loaded = await _dataProcessor.LoadBridgeFilesAsync(theme, type, LatestRelease, progressReporter);
                     if (loaded)
                     {
                         anyBridgeFilesLoaded = true;
+                        successfulLoads.Add($"{theme}/{type}");
                         AddToLog($"✅ Successfully loaded bridge files for {theme}/{type}");
                     }
                     else
                     {
+                        failedLoads.Add($"{theme}/{type}");
                         AddToLog($"⚠️ No bridge files available for {theme}/{type}");
                     }
                 }
@@ -2628,16 +2632,26 @@ namespace DuckDBGeoparquet.Views
                 if (anyBridgeFilesLoaded)
                 {
                     BridgeFilesLoaded = true;
-                    BridgeFilesStatus = "✅ Bridge files loaded successfully! Check attribution data below.";
-                    AddToLog("✅ Bridge files loading completed successfully");
+                    BridgeFilesStatus = $"✅ Bridge files loaded for {successfulLoads.Count} data type(s)! Check attribution data below.";
+                    AddToLog($"✅ Bridge files loading completed - Success: {successfulLoads.Count}, No bridge files: {failedLoads.Count}");
+                    
+                    if (successfulLoads.Any())
+                    {
+                        AddToLog($"   Successfully loaded: {string.Join(", ", successfulLoads)}");
+                    }
+                    if (failedLoads.Any())
+                    {
+                        AddToLog($"   No bridge files available: {string.Join(", ", failedLoads)}");
+                    }
                     
                     // Load attribution summary
                     await UpdateAttributionSummaryAsync();
                 }
                 else
                 {
-                    BridgeFilesStatus = "⚠️ No bridge files were available for the loaded data types";
+                    BridgeFilesStatus = "⚠️ No bridge files were available for any of the loaded data types";
                     AddToLog("⚠️ No bridge files were available for any of the loaded data types");
+                    AddToLog($"   Checked data types: {string.Join(", ", failedLoads)}");
                 }
             }
             catch (Exception ex)
