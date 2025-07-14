@@ -416,7 +416,7 @@
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding IsLoadingBridgeFiles}" Value="True">
                                                     <Setter Property="Content" Value="⏳ Loading Bridge Files..."/>
-                                                    <Setter Property="Background" Value="{DynamicResource Esri_ColorOrange}"/>
+                                                    <Setter Property="Background" Value="Orange"/>
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>

@@ -1554,21 +1554,23 @@ namespace DuckDBGeoparquet.Services
                     
                     try
                     {
-                        // Test if bridge files exist for this dataset
+                        // Test if bridge files exist for this dataset using a more efficient approach
                         command.CommandText = $@"
-                            SELECT COUNT(*) 
-                            FROM read_parquet('{bridgePath}', filename=true, hive_partitioning=1) 
-                            LIMIT 1
+                            SELECT EXISTS(
+                                SELECT 1 FROM read_parquet('{bridgePath}', filename=true, hive_partitioning=1) 
+                                LIMIT 1
+                            )
                         ";
                         var result = await command.ExecuteScalarAsync(CancellationToken.None);
-                        if (Convert.ToInt64(result) > 0)
+                        if (Convert.ToBoolean(result))
                         {
                             availableDatasets.Add(dataset);
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        // Dataset doesn't have bridge files for this theme/type - skip
+                        // Dataset doesn't have bridge files for this theme/type - this is expected for most datasets
+                        System.Diagnostics.Debug.WriteLine($"No bridge files found for dataset '{dataset}' with theme '{theme}' and type '{type}' - this is normal.");
                     }
                 }
 
