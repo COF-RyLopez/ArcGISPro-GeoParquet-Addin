@@ -1925,8 +1925,6 @@ namespace DuckDBGeoparquet.Views
                 AddToLog($"All selected themes loaded successfully{bridgeFilesInfo}");
                 AddToLog("----------------");
                 
-                // Update bridge files button state after successful data loading
-                UpdateCanLoadBridgeFiles();
                 if (extent != null)
                 {
                     AddToLog($"Data for extent: {extent.XMin:F2}, {extent.YMin:F2}, {extent.XMax:F2}, {extent.YMax:F2}");
@@ -2493,8 +2491,6 @@ namespace DuckDBGeoparquet.Views
             // Update combined estimates and other UI elements that depend on the full selection set
             UpdateThemePreview(); // This eventually calls UpdateIsSelectAllCheckedStatus
             (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
-            UpdateCanLoadBridgeFiles(); // Update bridge files button state when selection changes
-            (LoadBridgeFilesCommand as RelayCommand)?.RaiseCanExecuteChanged();
             NotifyPropertyChanged(nameof(SelectedLeafItemCount));
             NotifyPropertyChanged(nameof(AllSelectedLeafItemsForPreview));
             // UpdateIsSelectAllCheckedStatus(); // Explicitly call to ensure status is current
