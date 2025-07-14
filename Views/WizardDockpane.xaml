@@ -124,6 +124,25 @@
                                 </Grid>
                             </StackPanel>
                         </Border>
+                        <!-- 4. Advanced Options -->
+                        <TextBlock Text="4. Advanced Options" Margin="0,0,0,4"/>
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <CheckBox Content="Load Bridge Files (Source Attribution)" 
+                                         IsChecked="{Binding BridgeFilesEnabled}" 
+                                         Margin="0,2,0,4"/>
+                                <TextBlock Text="Bridge files connect features to their original data sources, enabling source attribution tracking and quality assessment. Available for buildings, places, and some other themes."
+                                          TextWrapping="Wrap"
+                                          Style="{DynamicResource Esri_TextBlockSmall}"
+                                          Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                          Margin="20,0,0,0"/>
+                            </StackPanel>
+                        </Border>
                         <!-- Selected Themes Preview -->
                         <TextBlock Text="Selected Themes Preview" Margin="0,0,0,4"/>
                         <Border 
@@ -390,7 +409,7 @@
                             </StackPanel>
                         </Border>
                         
-                        <!-- Load Bridge Files for Current Data -->
+                        <!-- Bridge Files Status -->
                         <Border Background="{DynamicResource Esri_GrayBackgroundBrush}" 
                                BorderBrush="{DynamicResource Esri_BorderBrush}" 
                                BorderThickness="1" 
@@ -398,30 +417,11 @@
                                Padding="12"
                                Margin="0,0,0,12">
                             <StackPanel>
-                                <TextBlock Text="📥 Load Bridge Files" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                                <TextBlock Text="📥 Bridge Files Status" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
                                 
-                                <TextBlock Text="Load bridge files for currently loaded Overture data to enable source attribution exploration."
+                                <TextBlock Text="Bridge files are loaded automatically when you select 'Load Bridge Files' in the Select Data tab."
                                           TextWrapping="Wrap"
                                           Margin="0,0,0,8"/>
-                                
-                                <Button Command="{Binding LoadBridgeFilesCommand}"
-                                       IsEnabled="{Binding CanLoadBridgeFiles}"
-                                       HorizontalAlignment="Left"
-                                       Padding="12,6"
-                                       Margin="0,0,0,8">
-                                    <Button.Style>
-                                        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-                                            <Setter Property="Content" Value="🔄 Load Bridge Files for Current Data"/>
-                                            <Setter Property="Background" Value="{DynamicResource Esri_Button}"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsLoadingBridgeFiles}" Value="True">
-                                                    <Setter Property="Content" Value="⏳ Loading Bridge Files..."/>
-                                                    <Setter Property="Background" Value="Orange"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Button.Style>
-                                </Button>
                                 
                                 <TextBlock Text="{Binding BridgeFilesStatus}"
                                           Style="{DynamicResource Esri_TextBlockSmall}"

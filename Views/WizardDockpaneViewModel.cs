@@ -426,7 +426,6 @@ namespace DuckDBGeoparquet.Views
             );
 
             // Initialize bridge files commands
-            LoadBridgeFilesCommand = new RelayCommand(async () => await LoadBridgeFilesAsync(), () => CanLoadBridgeFiles && !IsLoadingBridgeFiles);
             ViewAttributionReportCommand = new RelayCommand(async () => await ViewAttributionReportAsync(), () => BridgeFilesLoaded);
             GetSelectedFeatureAttributionCommand = new RelayCommand(async () => await GetSelectedFeatureAttributionAsync());
             EditAttributionCommand = new RelayCommand(() => EditAttribution(), () => HasSelectedFeature);
@@ -486,9 +485,6 @@ namespace DuckDBGeoparquet.Views
                 DataOutputPath = Path.Combine(defaultBasePath, "Data", LatestRelease ?? "latest");
                 NotifyPropertyChanged(nameof(DataOutputPath));
                 AddToLog($"Async Initialization: DataOutputPath updated to: {DataOutputPath}");
-
-                // Update bridge files capabilities
-                UpdateCanLoadBridgeFiles();
 
                 StatusText = "Ready to load Overture Maps data";
                 AddToLog("Async Initialization: Ready to load Overture Maps data");
@@ -770,8 +766,7 @@ namespace DuckDBGeoparquet.Views
         private bool _bridgeFilesEnabled = false;
         private bool _bridgeFilesLoaded = false;
         private string _bridgeFilesStatus = "Bridge files not loaded";
-        private bool _canLoadBridgeFiles = false;
-        private bool _isLoadingBridgeFiles = false;
+
         private long _totalFeatures = 0;
         private long _attributedFeatures = 0;
         private long _multiSourceFeatures = 0;
@@ -803,7 +798,6 @@ namespace DuckDBGeoparquet.Views
                     _dataProcessor.BridgeFilesEnabled = value;
                     _dataProcessor.CurrentRelease = LatestRelease;
                 }
-                UpdateCanLoadBridgeFiles();
             }
         }
 
@@ -819,17 +813,7 @@ namespace DuckDBGeoparquet.Views
             set => SetProperty(ref _bridgeFilesStatus, value);
         }
 
-        public bool CanLoadBridgeFiles
-        {
-            get => _canLoadBridgeFiles;
-            set => SetProperty(ref _canLoadBridgeFiles, value);
-        }
 
-        public bool IsLoadingBridgeFiles
-        {
-            get => _isLoadingBridgeFiles;
-            set => SetProperty(ref _isLoadingBridgeFiles, value);
-        }
 
         public long TotalFeatures
         {
@@ -898,7 +882,7 @@ namespace DuckDBGeoparquet.Views
         }
 
         // Bridge Files Commands
-        public ICommand LoadBridgeFilesCommand { get; private set; }
+
         public ICommand ViewAttributionReportCommand { get; private set; }
         public ICommand GetSelectedFeatureAttributionCommand { get; private set; }
         public ICommand EditAttributionCommand { get; private set; }
@@ -1821,6 +1805,74 @@ namespace DuckDBGeoparquet.Views
                     return;
                 }
 
+                // Load bridge files if enabled
+                if (BridgeFilesEnabled)
+                {
+                    StatusText = "Loading bridge files for source attribution...";
+                    AddToLog("🔗 Loading bridge files for source attribution...");
+                    
+                    var bridgeProgressReporter = new Progress<string>(status =>
+                    {
+                        StatusText = status;
+                        AddToLog(status);
+                    });
+                    
+                    try
+                    {
+                        // Get the data types that were just loaded
+                        var loadedDataTypes = selectedLeafItems.Select(item => (item.ParentThemeForS3, item.ActualType)).ToList();
+                        
+                        bool anyBridgeFilesLoaded = false;
+                        var successfulLoads = new List<string>();
+                        var failedLoads = new List<string>();
+                        
+                        foreach (var (theme, type) in loadedDataTypes)
+                        {
+                            if (cancellationToken.IsCancellationRequested)
+                            {
+                                StatusText = "Operation cancelled";
+                                AddToLog("Bridge files loading cancelled");
+                                break;
+                            }
+                            
+                            StatusText = $"Loading bridge files for {theme}/{type}...";
+                            bool loaded = await _dataProcessor.LoadBridgeFilesAsync(theme, type, LatestRelease, bridgeProgressReporter);
+                            
+                            if (loaded)
+                            {
+                                anyBridgeFilesLoaded = true;
+                                successfulLoads.Add($"{theme}/{type}");
+                                AddToLog($"✅ Bridge files loaded for {theme}/{type}");
+                            }
+                            else
+                            {
+                                failedLoads.Add($"{theme}/{type}");
+                                AddToLog($"⚠️ No bridge files available for {theme}/{type}");
+                            }
+                        }
+                        
+                        if (anyBridgeFilesLoaded)
+                        {
+                            BridgeFilesLoaded = true;
+                            BridgeFilesStatus = $"✅ Bridge files loaded for {successfulLoads.Count} data type(s)";
+                            AddToLog($"✅ Bridge files loading completed - Success: {successfulLoads.Count}, No bridge files: {failedLoads.Count}");
+                            
+                            // Load attribution summary
+                            await UpdateAttributionSummaryAsync();
+                        }
+                        else
+                        {
+                            BridgeFilesStatus = "⚠️ No bridge files were available for any loaded data types";
+                            AddToLog("⚠️ No bridge files were available for any loaded data types");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        BridgeFilesStatus = $"❌ Error loading bridge files: {ex.Message}";
+                        AddToLog($"❌ Error loading bridge files: {ex.Message}");
+                    }
+                }
+
                 // Now that all data is processed, add all layers to map in optimal stacking order
                 StatusText = "Adding layers to map in optimal stacking order...";
                 AddToLog("🗺️ All data exported successfully. Now adding layers to map with optimal stacking order...");
@@ -1844,6 +1896,10 @@ namespace DuckDBGeoparquet.Views
                 AddToLog("Data loading complete. You can now:");
                 AddToLog("1. Work with the loaded GeoParquet data directly");
                 AddToLog("2. Create a Multifile Feature Connection (MFC) from the 'Create MFC' tab");
+                if (BridgeFilesEnabled && BridgeFilesLoaded)
+                {
+                    AddToLog("3. Explore source attribution data in the 'Bridge Files & Attribution' tab");
+                }
                 AddToLog("Note: Layers have been added with optimal drawing order (points on top → lines → polygons on bottom)");
                 AddToLog("----------------");
 
@@ -1863,8 +1919,10 @@ namespace DuckDBGeoparquet.Views
                 // Update the Create MFC command can-execute state
                 (CreateMfcCommand as RelayCommand)?.RaiseCanExecuteChanged();
 
-                StatusText = $"Successfully loaded all selected themes from release {LatestRelease}";
-                AddToLog($"All selected themes loaded successfully");
+                string bridgeFilesInfo = BridgeFilesEnabled ? 
+                    (BridgeFilesLoaded ? " (with bridge files)" : " (no bridge files available)") : "";
+                StatusText = $"Successfully loaded all selected themes from release {LatestRelease}{bridgeFilesInfo}";
+                AddToLog($"All selected themes loaded successfully{bridgeFilesInfo}");
                 AddToLog("----------------");
                 
                 // Update bridge files button state after successful data loading
@@ -2548,125 +2606,11 @@ namespace DuckDBGeoparquet.Views
             }
         }
 
-        private void UpdateCanLoadBridgeFiles()
-        {
-            // Can load bridge files if:
-            // 1. Bridge files are enabled
-            // 2. We have a current release
-            // 3. There is loaded data (either selected items for new loads OR previously loaded data)
-            // 4. Not currently loading bridge files
-            CanLoadBridgeFiles = BridgeFilesEnabled && 
-                                !string.IsNullOrEmpty(LatestRelease) && 
-                                (GetSelectedLeafItems()?.Any() == true || !string.IsNullOrEmpty(_lastLoadedDataPath)) &&
-                                !IsLoadingBridgeFiles;
-            
-            // Update the command's can-execute state
-            (LoadBridgeFilesCommand as RelayCommand)?.RaiseCanExecuteChanged();
-        }
+
 
         // Bridge Files Command Implementations
 
-        private async Task LoadBridgeFilesAsync()
-        {
-            if (!BridgeFilesEnabled || _dataProcessor == null)
-            {
-                BridgeFilesStatus = "Bridge files are disabled or DataProcessor not available";
-                return;
-            }
 
-            // Set loading state to disable button and show progress
-            IsLoadingBridgeFiles = true;
-            UpdateCanLoadBridgeFiles();
-
-            try
-            {
-                BridgeFilesStatus = "🔄 Detecting loaded data types...";
-                AddToLog("🔄 Starting bridge files loading process...");
-
-                // Get data types from loaded data, not just selected items
-                var dataTypesToProcess = GetLoadedDataTypes();
-                
-                if (!dataTypesToProcess.Any())
-                {
-                    BridgeFilesStatus = "No loaded data found to load bridge files for";
-                    AddToLog("❌ No Overture data has been loaded yet. Load data first, then try loading bridge files.");
-                    return;
-                }
-
-                AddToLog($"🔍 Found {dataTypesToProcess.Count} data types to load bridge files for:");
-                foreach (var (theme, type) in dataTypesToProcess)
-                {
-                    AddToLog($"   - {theme}/{type}");
-                }
-
-                var progressReporter = new Progress<string>(status =>
-                {
-                    BridgeFilesStatus = status;
-                    AddToLog($"🔗 {status}");
-                });
-
-                bool anyBridgeFilesLoaded = false;
-                int processedCount = 0;
-                var successfulLoads = new List<string>();
-                var failedLoads = new List<string>();
-                
-                foreach (var (theme, type) in dataTypesToProcess)
-                {
-                    processedCount++;
-                    BridgeFilesStatus = $"🔄 Processing {theme}/{type}... ({processedCount}/{dataTypesToProcess.Count})";
-                    
-                    bool loaded = await _dataProcessor.LoadBridgeFilesAsync(theme, type, LatestRelease, progressReporter);
-                    if (loaded)
-                    {
-                        anyBridgeFilesLoaded = true;
-                        successfulLoads.Add($"{theme}/{type}");
-                        AddToLog($"✅ Successfully loaded bridge files for {theme}/{type}");
-                    }
-                    else
-                    {
-                        failedLoads.Add($"{theme}/{type}");
-                        AddToLog($"⚠️ No bridge files available for {theme}/{type}");
-                    }
-                }
-
-                if (anyBridgeFilesLoaded)
-                {
-                    BridgeFilesLoaded = true;
-                    BridgeFilesStatus = $"✅ Bridge files loaded for {successfulLoads.Count} data type(s)! Check attribution data below.";
-                    AddToLog($"✅ Bridge files loading completed - Success: {successfulLoads.Count}, No bridge files: {failedLoads.Count}");
-                    
-                    if (successfulLoads.Any())
-                    {
-                        AddToLog($"   Successfully loaded: {string.Join(", ", successfulLoads)}");
-                    }
-                    if (failedLoads.Any())
-                    {
-                        AddToLog($"   No bridge files available: {string.Join(", ", failedLoads)}");
-                    }
-                    
-                    // Load attribution summary
-                    await UpdateAttributionSummaryAsync();
-                }
-                else
-                {
-                    BridgeFilesStatus = "⚠️ No bridge files were available for any of the loaded data types";
-                    AddToLog("⚠️ No bridge files were available for any of the loaded data types");
-                    AddToLog($"   Checked data types: {string.Join(", ", failedLoads)}");
-                }
-            }
-            catch (Exception ex)
-            {
-                BridgeFilesStatus = $"❌ Error loading bridge files: {ex.Message}";
-                AddToLog($"❌ Error loading bridge files: {ex.Message}");
-                System.Diagnostics.Debug.WriteLine($"Error in LoadBridgeFilesAsync: {ex}");
-            }
-            finally
-            {
-                // Clear loading state to re-enable button
-                IsLoadingBridgeFiles = false;
-                UpdateCanLoadBridgeFiles();
-            }
-        }
 
         /// <summary>
         /// Detects what data types have been loaded by scanning the data directory structure
