@@ -404,12 +404,24 @@
                                           TextWrapping="Wrap"
                                           Margin="0,0,0,8"/>
                                 
-                                <Button Content="🔄 Load Bridge Files for Current Data"
-                                       Command="{Binding LoadBridgeFilesCommand}"
+                                <Button Command="{Binding LoadBridgeFilesCommand}"
                                        IsEnabled="{Binding CanLoadBridgeFiles}"
                                        HorizontalAlignment="Left"
                                        Padding="12,6"
-                                       Margin="0,0,0,8"/>
+                                       Margin="0,0,0,8">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                            <Setter Property="Content" Value="🔄 Load Bridge Files for Current Data"/>
+                                            <Setter Property="Background" Value="{DynamicResource Esri_Button}"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsLoadingBridgeFiles}" Value="True">
+                                                    <Setter Property="Content" Value="⏳ Loading Bridge Files..."/>
+                                                    <Setter Property="Background" Value="{DynamicResource Esri_ColorOrange}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                </Button>
                                 
                                 <TextBlock Text="{Binding BridgeFilesStatus}"
                                           Style="{DynamicResource Esri_TextBlockSmall}"

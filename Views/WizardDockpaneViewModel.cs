@@ -426,7 +426,7 @@ namespace DuckDBGeoparquet.Views
             );
 
             // Initialize bridge files commands
-            LoadBridgeFilesCommand = new RelayCommand(async () => await LoadBridgeFilesAsync(), () => CanLoadBridgeFiles);
+            LoadBridgeFilesCommand = new RelayCommand(async () => await LoadBridgeFilesAsync(), () => CanLoadBridgeFiles && !IsLoadingBridgeFiles);
             ViewAttributionReportCommand = new RelayCommand(async () => await ViewAttributionReportAsync(), () => BridgeFilesLoaded);
             GetSelectedFeatureAttributionCommand = new RelayCommand(async () => await GetSelectedFeatureAttributionAsync());
             EditAttributionCommand = new RelayCommand(() => EditAttribution(), () => HasSelectedFeature);
@@ -771,6 +771,7 @@ namespace DuckDBGeoparquet.Views
         private bool _bridgeFilesLoaded = false;
         private string _bridgeFilesStatus = "Bridge files not loaded";
         private bool _canLoadBridgeFiles = false;
+        private bool _isLoadingBridgeFiles = false;
         private long _totalFeatures = 0;
         private long _attributedFeatures = 0;
         private long _multiSourceFeatures = 0;
@@ -822,6 +823,12 @@ namespace DuckDBGeoparquet.Views
         {
             get => _canLoadBridgeFiles;
             set => SetProperty(ref _canLoadBridgeFiles, value);
+        }
+
+        public bool IsLoadingBridgeFiles
+        {
+            get => _isLoadingBridgeFiles;
+            set => SetProperty(ref _isLoadingBridgeFiles, value);
         }
 
         public long TotalFeatures
@@ -2547,9 +2554,11 @@ namespace DuckDBGeoparquet.Views
             // 1. Bridge files are enabled
             // 2. We have a current release
             // 3. There is loaded data (either selected items for new loads OR previously loaded data)
+            // 4. Not currently loading bridge files
             CanLoadBridgeFiles = BridgeFilesEnabled && 
                                 !string.IsNullOrEmpty(LatestRelease) && 
-                                (GetSelectedLeafItems()?.Any() == true || !string.IsNullOrEmpty(_lastLoadedDataPath));
+                                (GetSelectedLeafItems()?.Any() == true || !string.IsNullOrEmpty(_lastLoadedDataPath)) &&
+                                !IsLoadingBridgeFiles;
             
             // Update the command's can-execute state
             (LoadBridgeFilesCommand as RelayCommand)?.RaiseCanExecuteChanged();
@@ -2565,17 +2574,29 @@ namespace DuckDBGeoparquet.Views
                 return;
             }
 
+            // Set loading state to disable button and show progress
+            IsLoadingBridgeFiles = true;
+            UpdateCanLoadBridgeFiles();
+
             try
             {
-                BridgeFilesStatus = "Loading bridge files...";
+                BridgeFilesStatus = "🔄 Detecting loaded data types...";
                 AddToLog("🔄 Starting bridge files loading process...");
 
-                var selectedItems = GetSelectedLeafItems()?.ToList() ?? new List<SelectableThemeItem>();
-                if (!selectedItems.Any())
+                // Get data types from loaded data, not just selected items
+                var dataTypesToProcess = GetLoadedDataTypes();
+                
+                if (!dataTypesToProcess.Any())
                 {
-                    BridgeFilesStatus = "No data types selected to load bridge files for";
-                    AddToLog("❌ No data types selected for bridge files loading");
+                    BridgeFilesStatus = "No loaded data found to load bridge files for";
+                    AddToLog("❌ No Overture data has been loaded yet. Load data first, then try loading bridge files.");
                     return;
+                }
+
+                AddToLog($"🔍 Found {dataTypesToProcess.Count} data types to load bridge files for:");
+                foreach (var (theme, type) in dataTypesToProcess)
+                {
+                    AddToLog($"   - {theme}/{type}");
                 }
 
                 var progressReporter = new Progress<string>(status =>
@@ -2585,13 +2606,12 @@ namespace DuckDBGeoparquet.Views
                 });
 
                 bool anyBridgeFilesLoaded = false;
+                int processedCount = 0;
                 
-                foreach (var item in selectedItems)
+                foreach (var (theme, type) in dataTypesToProcess)
                 {
-                    string theme = item.ParentThemeForS3;
-                    string type = item.ActualType;
-                    
-                    ((IProgress<string>)progressReporter).Report($"Loading bridge files for {theme}/{type}...");
+                    processedCount++;
+                    BridgeFilesStatus = $"🔄 Loading bridge files ({processedCount}/{dataTypesToProcess.Count}): {theme}/{type}...";
                     
                     bool loaded = await _dataProcessor.LoadBridgeFilesAsync(theme, type, LatestRelease, progressReporter);
                     if (loaded)
@@ -2608,7 +2628,7 @@ namespace DuckDBGeoparquet.Views
                 if (anyBridgeFilesLoaded)
                 {
                     BridgeFilesLoaded = true;
-                    BridgeFilesStatus = "Bridge files loaded successfully";
+                    BridgeFilesStatus = "✅ Bridge files loaded successfully! Check attribution data below.";
                     AddToLog("✅ Bridge files loading completed successfully");
                     
                     // Load attribution summary
@@ -2616,16 +2636,87 @@ namespace DuckDBGeoparquet.Views
                 }
                 else
                 {
-                    BridgeFilesStatus = "No bridge files were available for the selected data types";
-                    AddToLog("⚠️ No bridge files were available for any of the selected data types");
+                    BridgeFilesStatus = "⚠️ No bridge files were available for the loaded data types";
+                    AddToLog("⚠️ No bridge files were available for any of the loaded data types");
                 }
             }
             catch (Exception ex)
             {
-                BridgeFilesStatus = $"Error loading bridge files: {ex.Message}";
+                BridgeFilesStatus = $"❌ Error loading bridge files: {ex.Message}";
                 AddToLog($"❌ Error loading bridge files: {ex.Message}");
                 System.Diagnostics.Debug.WriteLine($"Error in LoadBridgeFilesAsync: {ex}");
             }
+            finally
+            {
+                // Clear loading state to re-enable button
+                IsLoadingBridgeFiles = false;
+                UpdateCanLoadBridgeFiles();
+            }
+        }
+
+        /// <summary>
+        /// Detects what data types have been loaded by scanning the data directory structure
+        /// </summary>
+        private List<(string theme, string type)> GetLoadedDataTypes()
+        {
+            var loadedTypes = new List<(string theme, string type)>();
+
+            // First try to get from selected items (if data is being loaded)
+            var selectedItems = GetSelectedLeafItems();
+            if (selectedItems.Any())
+            {
+                foreach (var item in selectedItems)
+                {
+                    loadedTypes.Add((item.ParentThemeForS3, item.ActualType));
+                }
+                return loadedTypes;
+            }
+
+            // If no selected items, try to detect from loaded data folder structure
+            if (!string.IsNullOrEmpty(_lastLoadedDataPath) && Directory.Exists(_lastLoadedDataPath))
+            {
+                try
+                {
+                    // Look for subdirectories that contain .parquet files
+                    var typeDirectories = Directory.GetDirectories(_lastLoadedDataPath)
+                        .Where(dir => Directory.GetFiles(dir, "*.parquet").Any())
+                        .Select(dir => Path.GetFileName(dir))
+                        .ToList();
+
+                    foreach (var type in typeDirectories)
+                    {
+                        // Map type back to theme using the known structure
+                        string theme = GetThemeForType(type);
+                        if (!string.IsNullOrEmpty(theme))
+                        {
+                            loadedTypes.Add((theme, type));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Error detecting loaded data types: {ex.Message}");
+                }
+            }
+
+            return loadedTypes;
+        }
+
+        /// <summary>
+        /// Maps a data type back to its parent theme
+        /// </summary>
+        private string GetThemeForType(string type)
+        {
+            // Use the reverse mapping from _overtureS3ThemeTypes
+            foreach (var kvp in _overtureS3ThemeTypes)
+            {
+                var types = kvp.Value.Split(',');
+                if (types.Contains(type))
+                {
+                    return kvp.Key;
+                }
+            }
+            return null;
         }
 
         private async Task UpdateAttributionSummaryAsync()
