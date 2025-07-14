@@ -1603,7 +1603,7 @@ namespace DuckDBGeoparquet.Services
                         {
                             Id = reader.GetString("id"),
                             RecordId = reader.GetString("record_id"),
-                            UpdateTime = reader.GetDateTime("update_time"),
+                            UpdateTime = ParseDateTime(reader["update_time"]),
                             Dataset = reader.GetString("dataset"),
                             Theme = reader.GetString("theme"),
                             Type = reader.GetString("type"),
@@ -1893,6 +1893,67 @@ namespace DuckDBGeoparquet.Services
             }
             
             return new double[0];
+        }
+
+        /// <summary>
+        /// Safely parses a DateTime value from various formats that DuckDB might return
+        /// </summary>
+        private static DateTime ParseDateTime(object value)
+        {
+            if (value == null || value == DBNull.Value)
+                return DateTime.MinValue;
+
+            // Handle DateTime type directly
+            if (value is DateTime dateTime)
+                return dateTime;
+
+            // Handle string representation
+            if (value is string stringValue)
+            {
+                // Try common datetime formats
+                if (DateTime.TryParse(stringValue, out DateTime result))
+                    return result;
+
+                // Try ISO format specifically
+                if (DateTime.TryParseExact(stringValue, "yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out result))
+                    return result;
+
+                // Try without microseconds
+                if (DateTime.TryParseExact(stringValue, "yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out result))
+                    return result;
+
+                // Try without timezone
+                if (DateTime.TryParseExact(stringValue, "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.None, out result))
+                    return result;
+            }
+
+            // Handle numeric timestamp (Unix timestamp)
+            if (value is long longValue)
+            {
+                try
+                {
+                    return DateTimeOffset.FromUnixTimeSeconds(longValue).DateTime;
+                }
+                catch
+                {
+                    // If it's not a valid Unix timestamp, return default
+                    return DateTime.MinValue;
+                }
+            }
+
+            if (value is double doubleValue)
+            {
+                try
+                {
+                    return DateTimeOffset.FromUnixTimeSeconds((long)doubleValue).DateTime;
+                }
+                catch
+                {
+                    return DateTime.MinValue;
+                }
+            }
+
+            return DateTime.MinValue;
         }
     }
 }
