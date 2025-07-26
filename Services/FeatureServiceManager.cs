@@ -48,7 +48,7 @@ namespace DuckDBGeoparquet.Services
 
                 _logger?.LogInformation("Starting DuckDB Feature Service Bridge...");
 
-                _featureServiceBridge = new FeatureServiceBridge(_dataProcessor, port, _logger);
+                _featureServiceBridge = new FeatureServiceBridge(_dataProcessor, port, _logger as ILogger<FeatureServiceBridge>);
                 await _featureServiceBridge.StartAsync();
 
                 _isRunning = true;
@@ -147,7 +147,7 @@ namespace DuckDBGeoparquet.Services
             {
                 FrameworkApplication.Current.Dispatcher.Invoke(() =>
                 {
-                    var notification = new ArcGIS.Desktop.Framework.Dialogs.Notification()
+                    var notification = new ArcGIS.Desktop.Framework.Contracts.Notification()
                     {
                         Title = title,
                         Message = message,

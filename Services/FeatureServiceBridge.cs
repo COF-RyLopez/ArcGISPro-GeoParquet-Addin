@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -130,7 +131,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Handles Feature Service root requests - returns service metadata
         /// </summary>
-        private async Task<IResult> HandleServiceMetadata(HttpContext context)
+        private Task<IResult> HandleServiceMetadata(HttpContext context)
         {
             try
             {
@@ -171,7 +172,7 @@ namespace DuckDBGeoparquet.Services
                     },
                     allowGeometryUpdates = false,
                     units = "esriDecimalDegrees",
-                    layers = new[]
+                    layers = new object[]
                     {
                         new { id = 0, name = "Overture Maps Data" }
                     },
@@ -179,7 +180,7 @@ namespace DuckDBGeoparquet.Services
                 };
 
                 var format = context.Request.Query["f"].FirstOrDefault() ?? "json";
-                return await WriteJsonResponse(context, serviceMetadata, format);
+                return WriteJsonResponse(context, serviceMetadata, format);
             }
             catch (Exception ex)
             {
@@ -191,7 +192,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Handles Layer metadata requests
         /// </summary>
-        private async Task<IResult> HandleLayerMetadata(HttpContext context, int layerId)
+        private Task<IResult> HandleLayerMetadata(HttpContext context, int layerId)
         {
             try
             {
@@ -225,7 +226,7 @@ namespace DuckDBGeoparquet.Services
                     objectIdField = "OBJECTID",
                     globalIdField = "",
                     typeIdField = "",
-                    fields = new[]
+                    fields = new object[]
                     {
                         new
                         {
@@ -251,7 +252,7 @@ namespace DuckDBGeoparquet.Services
                 };
 
                 var format = context.Request.Query["f"].FirstOrDefault() ?? "json";
-                return await WriteJsonResponse(context, layerMetadata, format);
+                return WriteJsonResponse(context, layerMetadata, format);
             }
             catch (Exception ex)
             {
@@ -447,8 +448,8 @@ namespace DuckDBGeoparquet.Services
                     var ymax = geoElement.GetProperty("ymax").GetDouble();
                     
                     return $@"
-                        bbox.xmin BETWEEN {xmin.ToString(CultureInfo.InvariantCulture)} AND {xmax.ToString(CultureInfo.InvariantCulture)} AND
-                        bbox.ymin BETWEEN {ymin.ToString(CultureInfo.InvariantCulture)} AND {ymax.ToString(CultureInfo.InvariantCulture)}
+                        bbox.xmin BETWEEN {xmin.ToString("G", CultureInfo.InvariantCulture)} AND {xmax.ToString("G", CultureInfo.InvariantCulture)} AND
+                        bbox.ymin BETWEEN {ymin.ToString("G", CultureInfo.InvariantCulture)} AND {ymax.ToString("G", CultureInfo.InvariantCulture)}
                     ";
                 }
             }
@@ -487,7 +488,7 @@ namespace DuckDBGeoparquet.Services
         /// </summary>
         private object[] GetFieldDefinitions()
         {
-            return new[]
+            return new object[]
             {
                 new
                 {
@@ -508,7 +509,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Writes JSON response in the requested format
         /// </summary>
-        private async Task<IResult> WriteJsonResponse(HttpContext context, object data, string format)
+        private Task<IResult> WriteJsonResponse(HttpContext context, object data, string format)
         {
             string jsonResponse;
             string contentType;
@@ -537,8 +538,7 @@ namespace DuckDBGeoparquet.Services
             context.Response.ContentType = contentType;
             context.Response.Headers.Add("Access-Control-Allow-Origin", "*");
             
-            await context.Response.WriteAsync(jsonResponse);
-            return Results.Empty;
+            return Task.FromResult(Results.Text(jsonResponse, contentType));
         }
 
         public void Dispose()
