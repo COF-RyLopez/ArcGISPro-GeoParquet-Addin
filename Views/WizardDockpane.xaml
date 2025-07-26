@@ -217,6 +217,109 @@
                     </StackPanel>
                 </StackPanel>
             </TabItem>
+            <!-- Feature Service Tab -->
+            <TabItem Header="Feature Service">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="16,12,16,12" Orientation="Vertical">
+                        <TextBlock Text="DuckDB Feature Service Bridge" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,12"/>
+
+                        <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
+                                The Feature Service Bridge creates a local HTTP server that exposes your DuckDB data as an ArcGIS REST Feature Service. This allows you to consume live cloud data in ArcGIS Pro without downloading files.
+                                <LineBreak/><LineBreak/>
+                                <Bold>How to use:</Bold>
+                                <LineBreak/>
+                                1. Load some data first using the "Select Data" tab
+                                <LineBreak/>
+                                2. Start the Feature Service Bridge below
+                                <LineBreak/>
+                                3. In ArcGIS Pro, add a feature service using the provided URL
+                            </TextBlock>
+                        </Border>
+
+                        <!-- Feature Service Controls -->
+                        <TextBlock Text="Service Controls" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <!-- Service Status -->
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Status:" FontWeight="SemiBold" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding FeatureServiceStatusText}" VerticalAlignment="Center" 
+                                               Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
+                                </Grid>
+
+                                <!-- Service URL (when running) -->
+                                <Grid Margin="0,0,0,8" Visibility="{Binding IsFeatureServiceRunning, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Service URL:" FontWeight="SemiBold" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                    <TextBox Grid.Column="1" Text="{Binding FeatureServiceUrl}" IsReadOnly="True" 
+                                             VerticalAlignment="Center" Margin="0,0,4,0" Style="{DynamicResource Esri_TextBox}"/>
+                                    <Button Grid.Column="2" Content="Copy" Width="50" Height="24" 
+                                            Command="{Binding CopyFeatureServiceUrlCommand}" Style="{DynamicResource Esri_Button}"/>
+                                </Grid>
+
+                                <!-- Control Button -->
+                                <Button Content="{Binding ToggleFeatureServiceButtonText}" 
+                                        Command="{Binding ToggleFeatureServiceCommand}" 
+                                        HorizontalAlignment="Left" 
+                                        Width="150"
+                                        Style="{DynamicResource Esri_ButtonBlue}" 
+                                        Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Usage Instructions -->
+                        <TextBlock Text="Usage Instructions" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="Adding Feature Service to ArcGIS Pro:" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
+                                    1. In ArcGIS Pro, go to the Catalog pane
+                                    <LineBreak/>
+                                    2. Right-click on "Servers" → "New ArcGIS Server"
+                                    <LineBreak/>
+                                    3. Choose "Use GIS Services" 
+                                    <LineBreak/>
+                                    4. Enter the Service URL shown above when the service is running
+                                    <LineBreak/>
+                                    5. Browse the available layers and add them to your map
+                                </TextBlock>
+                                
+                                <TextBlock Text="Alternative Method:" FontWeight="SemiBold" Margin="0,8,0,4"/>
+                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,0" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
+                                    • Use "Add Data" → "Data from Path" and paste the Service URL directly
+                                    <LineBreak/>
+                                    • The service provides live access to your cloud data without local downloads
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            
             <!-- Create MFC Tab -->
             <TabItem Header="Create MFC">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">

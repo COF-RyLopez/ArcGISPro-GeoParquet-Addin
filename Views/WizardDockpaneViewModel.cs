@@ -352,6 +352,7 @@ namespace DuckDBGeoparquet.Views
         
         // Feature Service Properties
         public ICommand ToggleFeatureServiceCommand { get; private set; }
+        public ICommand CopyFeatureServiceUrlCommand { get; private set; }
         
         private bool _isFeatureServiceRunning;
         public bool IsFeatureServiceRunning
@@ -437,6 +438,7 @@ namespace DuckDBGeoparquet.Views
 
             LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => GetSelectedLeafItems().Count > 0);
             ToggleFeatureServiceCommand = new RelayCommand(async () => await ToggleFeatureServiceAsync(), () => true);
+            CopyFeatureServiceUrlCommand = new RelayCommand(() => CopyFeatureServiceUrl(), () => IsFeatureServiceRunning && !string.IsNullOrEmpty(FeatureServiceUrl));
             ShowThemeInfoCommand = new RelayCommand(() => ShowThemeInfo(), () => SelectedItemForPreview != null);
             SetCustomExtentCommand = new RelayCommand(() => SetCustomExtent(), () => UseCustomExtent);
             BrowseMfcLocationCommand = new RelayCommand(() => BrowseMfcLocation());
@@ -2423,9 +2425,12 @@ namespace DuckDBGeoparquet.Views
                     
                     AddToLog(status.Message);
                     
-                    // Notify UI that dependent properties have changed
-                    NotifyPropertyChanged(nameof(FeatureServiceStatusText));
-                    NotifyPropertyChanged(nameof(ToggleFeatureServiceButtonText));
+                                            // Notify UI that dependent properties have changed
+                        NotifyPropertyChanged(nameof(FeatureServiceStatusText));
+                        NotifyPropertyChanged(nameof(ToggleFeatureServiceButtonText));
+                        
+                        // Update command states
+                        ((RelayCommand)CopyFeatureServiceUrlCommand).RaiseCanExecuteChanged();
                     
                     if (IsFeatureServiceRunning)
                     {
@@ -2442,6 +2447,26 @@ namespace DuckDBGeoparquet.Views
             {
                 AddToLog($"Error toggling Feature Service: {ex.Message}");
                 System.Diagnostics.Debug.WriteLine($"ToggleFeatureServiceAsync error: {ex}");
+            }
+        }
+
+        /// <summary>
+        /// Copies the Feature Service URL to the clipboard
+        /// </summary>
+        private void CopyFeatureServiceUrl()
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(FeatureServiceUrl))
+                {
+                    System.Windows.Clipboard.SetText(FeatureServiceUrl);
+                    AddToLog($"📋 Feature Service URL copied to clipboard: {FeatureServiceUrl}");
+                }
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"Error copying URL to clipboard: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"CopyFeatureServiceUrl error: {ex}");
             }
         }
     }
