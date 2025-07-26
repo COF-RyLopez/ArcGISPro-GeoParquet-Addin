@@ -55,10 +55,6 @@ namespace DuckDBGeoparquet.Services
 
             var builder = WebApplication.CreateBuilder();
             
-            // Configure logging  
-            builder.Logging.ClearProviders();
-            builder.Logging.AddConsole();
-
             // Configure CORS for ArcGIS Pro
             builder.Services.AddCors(options =>
             {
@@ -110,14 +106,14 @@ namespace DuckDBGeoparquet.Services
         private void ConfigureEndpoints()
         {
             // Feature Service Root - Service metadata
-            _app.MapGet("/arcgis/rest/services/overture/FeatureServer", HandleServiceMetadata);
+            _app.MapGet("/arcgis/rest/services/overture/FeatureServer", (Delegate)HandleServiceMetadata);
 
             // Layer Info - Layer metadata  
-            _app.MapGet("/arcgis/rest/services/overture/FeatureServer/{layerId:int}", HandleLayerMetadata);
+            _app.MapGet("/arcgis/rest/services/overture/FeatureServer/{layerId:int}", (Delegate)HandleLayerMetadata);
 
             // Query Endpoint - The main query interface
-            _app.MapGet("/arcgis/rest/services/overture/FeatureServer/{layerId:int}/query", HandleQuery);
-            _app.MapPost("/arcgis/rest/services/overture/FeatureServer/{layerId:int}/query", HandleQuery);
+            _app.MapGet("/arcgis/rest/services/overture/FeatureServer/{layerId:int}/query", (Delegate)HandleQuery);
+            _app.MapPost("/arcgis/rest/services/overture/FeatureServer/{layerId:int}/query", (Delegate)HandleQuery);
 
             // Health check
             _app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "DuckDB Feature Service Bridge" }));
@@ -274,7 +270,7 @@ namespace DuckDBGeoparquet.Services
                 Debug.WriteLine($"DuckDB query request: WHERE={queryParams.Where}, Geometry={queryParams.HasGeometry}");
 
                 // Convert ArcGIS query to DuckDB parameters
-                var duckDbQuery = await BuildDuckDbQuery(queryParams);
+                var duckDbQuery = BuildDuckDbQuery(queryParams);
                 
                 // Execute DuckDB query via DataProcessor
                 var features = await ExecuteDuckDbQuery(duckDbQuery, queryParams);
@@ -338,7 +334,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Converts ArcGIS query parameters to DuckDB SQL
         /// </summary>
-        private async Task<string> BuildDuckDbQuery(ArcGisQueryParameters parameters)
+        private string BuildDuckDbQuery(ArcGisQueryParameters parameters)
         {
             var whereClause = parameters.Where;
             
@@ -391,7 +387,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Executes DuckDB query and converts results to ArcGIS feature format
         /// </summary>
-        private async Task<List<object>> ExecuteDuckDbQuery(string query, ArcGisQueryParameters parameters)
+        private Task<List<object>> ExecuteDuckDbQuery(string query, ArcGisQueryParameters parameters)
         {
             // Use existing DataProcessor to execute query
             // This would need to be implemented to work with the current_table
@@ -417,7 +413,7 @@ namespace DuckDBGeoparquet.Services
                 } : null
             });
 
-            return features;
+            return Task.FromResult(features);
         }
 
         /// <summary>
@@ -532,7 +528,7 @@ namespace DuckDBGeoparquet.Services
             }
 
             context.Response.ContentType = contentType;
-            context.Response.Headers.Add("Access-Control-Allow-Origin", "*");
+            context.Response.Headers.Append("Access-Control-Allow-Origin", "*");
             
             await context.Response.WriteAsync(jsonResponse);
             return Results.Empty;
