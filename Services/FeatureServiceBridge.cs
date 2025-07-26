@@ -131,7 +131,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Handles Feature Service root requests - returns service metadata
         /// </summary>
-        private Task<IResult> HandleServiceMetadata(HttpContext context)
+        private async Task<IResult> HandleServiceMetadata(HttpContext context)
         {
             try
             {
@@ -180,7 +180,7 @@ namespace DuckDBGeoparquet.Services
                 };
 
                 var format = context.Request.Query["f"].FirstOrDefault() ?? "json";
-                return WriteJsonResponse(context, serviceMetadata, format);
+                return await WriteJsonResponse(context, serviceMetadata, format);
             }
             catch (Exception ex)
             {
@@ -192,7 +192,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Handles Layer metadata requests
         /// </summary>
-        private Task<IResult> HandleLayerMetadata(HttpContext context, int layerId)
+        private async Task<IResult> HandleLayerMetadata(HttpContext context, int layerId)
         {
             try
             {
@@ -252,7 +252,7 @@ namespace DuckDBGeoparquet.Services
                 };
 
                 var format = context.Request.Query["f"].FirstOrDefault() ?? "json";
-                return WriteJsonResponse(context, layerMetadata, format);
+                return await WriteJsonResponse(context, layerMetadata, format);
             }
             catch (Exception ex)
             {
@@ -443,13 +443,14 @@ namespace DuckDBGeoparquet.Services
                 else if (geoElement.TryGetProperty("xmin", out var xmin))
                 {
                     // Envelope geometry
-                    var ymin = geoElement.GetProperty("ymin").GetDouble();
-                    var xmax = geoElement.GetProperty("xmax").GetDouble();
-                    var ymax = geoElement.GetProperty("ymax").GetDouble();
+                    var xminVal = xmin.GetDouble();
+                    var yminVal = geoElement.GetProperty("ymin").GetDouble();
+                    var xmaxVal = geoElement.GetProperty("xmax").GetDouble();
+                    var ymaxVal = geoElement.GetProperty("ymax").GetDouble();
                     
                     return $@"
-                        bbox.xmin BETWEEN {xmin.ToString("G", CultureInfo.InvariantCulture)} AND {xmax.ToString("G", CultureInfo.InvariantCulture)} AND
-                        bbox.ymin BETWEEN {ymin.ToString("G", CultureInfo.InvariantCulture)} AND {ymax.ToString("G", CultureInfo.InvariantCulture)}
+                        bbox.xmin BETWEEN {xminVal.ToString("G", CultureInfo.InvariantCulture)} AND {xmaxVal.ToString("G", CultureInfo.InvariantCulture)} AND
+                        bbox.ymin BETWEEN {yminVal.ToString("G", CultureInfo.InvariantCulture)} AND {ymaxVal.ToString("G", CultureInfo.InvariantCulture)}
                     ";
                 }
             }
@@ -509,7 +510,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Writes JSON response in the requested format
         /// </summary>
-        private Task<IResult> WriteJsonResponse(HttpContext context, object data, string format)
+        private async Task<IResult> WriteJsonResponse(HttpContext context, object data, string format)
         {
             string jsonResponse;
             string contentType;
@@ -538,7 +539,8 @@ namespace DuckDBGeoparquet.Services
             context.Response.ContentType = contentType;
             context.Response.Headers.Add("Access-Control-Allow-Origin", "*");
             
-            return Task.FromResult(Results.Text(jsonResponse, contentType));
+            await context.Response.WriteAsync(jsonResponse);
+            return Results.Empty;
         }
 
         public void Dispose()

@@ -145,19 +145,19 @@ namespace DuckDBGeoparquet.Services
         {
             try
             {
-                FrameworkApplication.Current.Dispatcher.Invoke(() =>
+                // Simple logging approach since Notification class availability varies by ArcGIS Pro version
+                var logMessage = $"{title}: {message}";
+                if (type == NotificationType.Error)
                 {
-                    var notification = new ArcGIS.Desktop.Framework.Contracts.Notification()
-                    {
-                        Title = title,
-                        Message = message,
-                        ImageSource = type == NotificationType.Error ? 
-                            new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/GenericDeleteRed16.png")) :
-                            new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/GenericCheckMark16.png"))
-                    };
-
-                    FrameworkApplication.AddNotification(notification);
-                });
+                    _logger?.LogError(logMessage);
+                }
+                else
+                {
+                    _logger?.LogInformation(logMessage);
+                }
+                
+                // Also output to Debug console for development
+                System.Diagnostics.Debug.WriteLine($"[{type}] {logMessage}");
             }
             catch (Exception ex)
             {
