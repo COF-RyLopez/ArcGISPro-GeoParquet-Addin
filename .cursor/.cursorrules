@@ -14,11 +14,10 @@
 
 ## NuGet Package Versions
 Always use .NET 8.0 compatible versions:
-- `Microsoft.Extensions.Logging`: 8.0.0 
-- `Microsoft.Extensions.Logging.Abstractions`: 8.0.0
 - `Microsoft.AspNetCore.App`: Use FrameworkReference (not PackageReference)
 
 ❌ **NEVER** downgrade to .NET 6.0 packages when targeting .NET 8.0
+❌ **AVOID** external logging dependencies like Microsoft.Extensions.Logging - they cause deployment issues
 
 ## Project Settings
 - **Target Framework**: `net8.0-windows`
@@ -33,6 +32,17 @@ Always use .NET 8.0 compatible versions:
 - Leverage **Task Asynchronous Programming (TAP)**
 - Use **LINQ** for data operations
 - Follow **WPF Binding** patterns
+
+## Logging & Debugging
+**✅ ArcGIS Pro SDK Standard Approach:**
+- Use `System.Diagnostics.Debug.WriteLine()` for development logging
+- Use `ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show()` for user messages
+- Simple console output for ASP.NET Core applications
+
+**❌ NEVER use external logging frameworks:**
+- Microsoft.Extensions.Logging causes FileNotFoundException during add-in deployment
+- External logging libraries don't deploy properly with .esriAddInX packages
+- ArcGIS Pro environment doesn't include all ASP.NET Core logging extensions
 
 ## Assembly References
 Core assemblies (in {ArcGIS Pro Installation}/bin):
@@ -63,8 +73,10 @@ Extension assemblies (in {ArcGIS Pro Installation}/bin/Extensions):
 - Always reference the exact ArcGIS Pro version being targeted
 - Use `QueuedTask.Run()` for operations that must execute on MCT
 - Handle UI operations on the UI thread using `FrameworkApplication.Current.Dispatcher`
-- Implement proper error handling and logging
+- Use `System.Diagnostics.Debug.WriteLine()` for logging (avoid external logging libraries)
 - Follow async patterns throughout the application
+- Minimize external NuGet dependencies to avoid deployment issues
+- Cast ASP.NET Core route handlers to `(Delegate)` to avoid RequestDelegate warnings
 
 ## Version Management
 - Keep add-in `desktopVersion` attribute current with Pro installation
