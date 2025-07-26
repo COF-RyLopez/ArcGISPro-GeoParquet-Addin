@@ -14,7 +14,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 
 namespace DuckDBGeoparquet.Services
 {
@@ -25,7 +25,6 @@ namespace DuckDBGeoparquet.Services
     public class FeatureServiceBridge : IDisposable
     {
         private readonly DataProcessor _dataProcessor;
-        private readonly ILogger<FeatureServiceBridge> _logger;
         private WebApplication _app;
         private readonly CancellationTokenSource _cancellationTokenSource;
         private readonly int _port;
@@ -38,11 +37,10 @@ namespace DuckDBGeoparquet.Services
             WriteIndented = false
         };
 
-        public FeatureServiceBridge(DataProcessor dataProcessor, int port = 8080, ILogger<FeatureServiceBridge> logger = null)
+        public FeatureServiceBridge(DataProcessor dataProcessor, int port = 8080)
         {
             _dataProcessor = dataProcessor ?? throw new ArgumentNullException(nameof(dataProcessor));
             _port = port;
-            _logger = logger;
             _cancellationTokenSource = new CancellationTokenSource();
         }
 
@@ -57,12 +55,9 @@ namespace DuckDBGeoparquet.Services
 
             var builder = WebApplication.CreateBuilder();
             
-            // Configure logging
+            // Configure logging  
             builder.Logging.ClearProviders();
-            if (_logger != null)
-            {
-                builder.Logging.AddProvider(new CustomLoggerProvider(_logger));
-            }
+            builder.Logging.AddConsole();
 
             // Configure CORS for ArcGIS Pro
             builder.Services.AddCors(options =>
@@ -83,12 +78,12 @@ namespace DuckDBGeoparquet.Services
             // Configure ArcGIS REST API endpoints
             ConfigureEndpoints();
 
-            _logger?.LogInformation($"Starting DuckDB Feature Service Bridge on {ServiceUrl}");
+            Debug.WriteLine($"Starting DuckDB Feature Service Bridge on {ServiceUrl}");
             
             await _app.StartAsync(_cancellationTokenSource.Token);
             _isRunning = true;
 
-            _logger?.LogInformation($"✅ Feature Service Bridge ready: {ServiceUrl}");
+            Debug.WriteLine($"✅ Feature Service Bridge ready: {ServiceUrl}");
         }
 
         /// <summary>
@@ -98,7 +93,7 @@ namespace DuckDBGeoparquet.Services
         {
             if (!_isRunning) return;
 
-            _logger?.LogInformation("Stopping DuckDB Feature Service Bridge...");
+            Debug.WriteLine("Stopping DuckDB Feature Service Bridge...");
             
             _cancellationTokenSource.Cancel();
             
@@ -109,7 +104,7 @@ namespace DuckDBGeoparquet.Services
             }
             
             _isRunning = false;
-            _logger?.LogInformation("✅ Feature Service Bridge stopped");
+            Debug.WriteLine("✅ Feature Service Bridge stopped");
         }
 
         private void ConfigureEndpoints()
@@ -184,7 +179,7 @@ namespace DuckDBGeoparquet.Services
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Error handling service metadata request");
+                Debug.WriteLine($"Error handling service metadata request: {ex.Message}");
                 return Results.Problem($"Error: {ex.Message}");
             }
         }
@@ -256,7 +251,7 @@ namespace DuckDBGeoparquet.Services
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Error handling layer metadata request");
+                Debug.WriteLine($"Error handling layer metadata request: {ex.Message}");
                 return Results.Problem($"Error: {ex.Message}");
             }
         }
@@ -276,7 +271,7 @@ namespace DuckDBGeoparquet.Services
                 // Parse query parameters
                 var queryParams = await ParseQueryParameters(context);
                 
-                _logger?.LogInformation($"DuckDB query request: WHERE={queryParams.Where}, Geometry={queryParams.HasGeometry}");
+                Debug.WriteLine($"DuckDB query request: WHERE={queryParams.Where}, Geometry={queryParams.HasGeometry}");
 
                 // Convert ArcGIS query to DuckDB parameters
                 var duckDbQuery = await BuildDuckDbQuery(queryParams);
@@ -300,7 +295,7 @@ namespace DuckDBGeoparquet.Services
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Error handling query request: {Message}", ex.Message);
+                Debug.WriteLine($"Error handling query request: {ex.Message}");
                 return Results.Problem($"Query error: {ex.Message}");
             }
         }
@@ -569,19 +564,5 @@ namespace DuckDBGeoparquet.Services
         public bool HasGeometry => QueryGeometry != null;
     }
 
-    /// <summary>
-    /// Custom logger provider for integration with existing logging
-    /// </summary>
-    public class CustomLoggerProvider : ILoggerProvider
-    {
-        private readonly ILogger _logger;
 
-        public CustomLoggerProvider(ILogger logger)
-        {
-            _logger = logger;
-        }
-
-        public ILogger CreateLogger(string categoryName) => _logger;
-        public void Dispose() { }
-    }
 } 

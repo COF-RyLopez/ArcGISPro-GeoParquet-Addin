@@ -2,7 +2,7 @@ using System;
 using System.Threading.Tasks;
 using ArcGIS.Desktop.Framework;
 using ArcGIS.Desktop.Framework.Contracts;
-using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 
 namespace DuckDBGeoparquet.Services
 {
@@ -14,13 +14,11 @@ namespace DuckDBGeoparquet.Services
     {
         private readonly DataProcessor _dataProcessor;
         private FeatureServiceBridge _featureServiceBridge;
-        private readonly ILogger<FeatureServiceManager> _logger;
         private bool _isRunning;
 
-        public FeatureServiceManager(DataProcessor dataProcessor, ILogger<FeatureServiceManager> logger = null)
+        public FeatureServiceManager(DataProcessor dataProcessor)
         {
             _dataProcessor = dataProcessor ?? throw new ArgumentNullException(nameof(dataProcessor));
-            _logger = logger; // Can be null - we'll handle it gracefully
         }
 
         /// <summary>
@@ -42,18 +40,18 @@ namespace DuckDBGeoparquet.Services
             {
                 if (_isRunning)
                 {
-                    _logger?.LogWarning("Feature Service Bridge is already running");
+                    Debug.WriteLine("Feature Service Bridge is already running");
                     return true;
                 }
 
-                _logger?.LogInformation("Starting DuckDB Feature Service Bridge...");
+                Debug.WriteLine("Starting DuckDB Feature Service Bridge...");
 
-                _featureServiceBridge = new FeatureServiceBridge(_dataProcessor, port, null); // Pass null logger for compatibility
+                _featureServiceBridge = new FeatureServiceBridge(_dataProcessor, port);
                 await _featureServiceBridge.StartAsync();
 
                 _isRunning = true;
 
-                _logger?.LogInformation($"✅ DuckDB Feature Service Bridge started successfully at {ServiceUrl}");
+                Debug.WriteLine($"✅ DuckDB Feature Service Bridge started successfully at {ServiceUrl}");
                 
                 // Show notification in ArcGIS Pro
                 ShowProNotification("DuckDB Feature Service Started", 
@@ -63,7 +61,7 @@ namespace DuckDBGeoparquet.Services
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Failed to start DuckDB Feature Service Bridge");
+                Debug.WriteLine($"Failed to start DuckDB Feature Service Bridge: {ex.Message}");
                 
                 ShowProNotification("Failed to Start Feature Service", 
                     $"Error: {ex.Message}", NotificationType.Error);
@@ -81,11 +79,11 @@ namespace DuckDBGeoparquet.Services
             {
                 if (!_isRunning)
                 {
-                    _logger?.LogWarning("Feature Service Bridge is not running");
+                    Debug.WriteLine("Feature Service Bridge is not running");
                     return true;
                 }
 
-                _logger?.LogInformation("Stopping DuckDB Feature Service Bridge...");
+                Debug.WriteLine("Stopping DuckDB Feature Service Bridge...");
 
                 if (_featureServiceBridge != null)
                 {
@@ -96,7 +94,7 @@ namespace DuckDBGeoparquet.Services
 
                 _isRunning = false;
 
-                _logger?.LogInformation("✅ DuckDB Feature Service Bridge stopped successfully");
+                Debug.WriteLine("✅ DuckDB Feature Service Bridge stopped successfully");
                 
                 ShowProNotification("DuckDB Feature Service Stopped", 
                     "Service is no longer available", NotificationType.Information);
@@ -105,7 +103,7 @@ namespace DuckDBGeoparquet.Services
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Error stopping DuckDB Feature Service Bridge");
+                Debug.WriteLine($"Error stopping DuckDB Feature Service Bridge: {ex.Message}");
                 return false;
             }
         }
@@ -149,11 +147,11 @@ namespace DuckDBGeoparquet.Services
                 var logMessage = $"{title}: {message}";
                 if (type == NotificationType.Error)
                 {
-                    _logger?.LogError(logMessage);
+                    Debug.WriteLine($"ERROR: {logMessage}");
                 }
                 else
                 {
-                    _logger?.LogInformation(logMessage);
+                    Debug.WriteLine($"INFO: {logMessage}");
                 }
                 
                 // Also output to Debug console for development
@@ -161,7 +159,7 @@ namespace DuckDBGeoparquet.Services
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "Failed to show notification in ArcGIS Pro");
+                Debug.WriteLine($"Failed to show notification in ArcGIS Pro: {ex.Message}");
             }
         }
 
@@ -177,7 +175,7 @@ namespace DuckDBGeoparquet.Services
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Error during FeatureServiceManager disposal");
+                Debug.WriteLine($"Error during FeatureServiceManager disposal: {ex.Message}");
             }
         }
     }
