@@ -205,6 +205,7 @@ namespace DuckDBGeoparquet.Views
     {
         private const string _dockPaneID = "DuckDBGeoparquet_Views_WizardDockpane";
         private DataProcessor _dataProcessor;
+        private FeatureServiceManager _featureServiceManager;
         private const string RELEASE_URL = "https://labs.overturemaps.org/data/releases.json";
         private const string S3_BASE_PATH = "s3://overturemaps-us-west-2/release";
         private const string ADDIN_DATA_SUBFOLDER = "OvertureProAddinData"; // Define a subfolder name
@@ -348,6 +349,31 @@ namespace DuckDBGeoparquet.Views
 
         // Properties for TreeView Preview
         public int SelectedLeafItemCount => GetSelectedLeafItems().Count;
+        
+        // Feature Service Properties
+        public ICommand ToggleFeatureServiceCommand { get; private set; }
+        
+        private bool _isFeatureServiceRunning;
+        public bool IsFeatureServiceRunning
+        {
+            get => _isFeatureServiceRunning;
+            set => SetProperty(ref _isFeatureServiceRunning, value);
+        }
+        
+        private string _featureServiceUrl;
+        public string FeatureServiceUrl
+        {
+            get => _featureServiceUrl;
+            set => SetProperty(ref _featureServiceUrl, value);
+        }
+        
+        public string FeatureServiceStatusText => IsFeatureServiceRunning 
+            ? $"Feature Service Running: {FeatureServiceUrl}" 
+            : "Feature Service Stopped";
+            
+        public string ToggleFeatureServiceButtonText => IsFeatureServiceRunning 
+            ? "Stop Feature Service" 
+            : "Start Feature Service";
         public List<SelectableThemeItem> AllSelectedLeafItemsForPreview => GetSelectedLeafItems();
 
         // Public parameterless constructor for XAML Designer
@@ -405,8 +431,12 @@ namespace DuckDBGeoparquet.Views
         {
             System.Diagnostics.Debug.WriteLine("InitializeViewModelForRuntime executing...");
             _dataProcessor = new DataProcessor();
+            
+            // Initialize Feature Service Manager
+            _featureServiceManager = new FeatureServiceManager(_dataProcessor);
 
             LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => GetSelectedLeafItems().Count > 0);
+            ToggleFeatureServiceCommand = new RelayCommand(async () => await ToggleFeatureServiceAsync(), () => true);
             ShowThemeInfoCommand = new RelayCommand(() => ShowThemeInfo(), () => SelectedItemForPreview != null);
             SetCustomExtentCommand = new RelayCommand(() => SetCustomExtent(), () => UseCustomExtent);
             BrowseMfcLocationCommand = new RelayCommand(() => BrowseMfcLocation());
@@ -2366,6 +2396,53 @@ namespace DuckDBGeoparquet.Views
                 leafItems.AddRange(themeItem.SubItems);
             }
             return leafItems.Distinct().ToList(); // Ensure distinct if structure could somehow allow duplicates
+        }
+
+        /// <summary>
+        /// Toggles the DuckDB Feature Service Bridge on/off
+        /// </summary>
+        private async Task ToggleFeatureServiceAsync()
+        {
+            try
+            {
+                if (_featureServiceManager == null)
+                {
+                    AddToLog("Error: Feature Service Manager not initialized");
+                    return;
+                }
+
+                AddToLog($"Toggling Feature Service (currently {(IsFeatureServiceRunning ? "running" : "stopped")})...");
+
+                bool success = await _featureServiceManager.ToggleServiceAsync();
+                
+                if (success)
+                {
+                    var status = _featureServiceManager.GetServiceStatus();
+                    IsFeatureServiceRunning = status.IsRunning;
+                    FeatureServiceUrl = status.ServiceUrl ?? "";
+                    
+                    AddToLog(status.Message);
+                    
+                    // Notify UI that dependent properties have changed
+                    NotifyPropertyChanged(nameof(FeatureServiceStatusText));
+                    NotifyPropertyChanged(nameof(ToggleFeatureServiceButtonText));
+                    
+                    if (IsFeatureServiceRunning)
+                    {
+                        AddToLog($"✅ Feature Service available at: {FeatureServiceUrl}");
+                        AddToLog("Add this URL as a feature service in ArcGIS Pro to access live data");
+                    }
+                }
+                else
+                {
+                    AddToLog("❌ Failed to toggle Feature Service");
+                }
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"Error toggling Feature Service: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"ToggleFeatureServiceAsync error: {ex}");
+            }
         }
     }
 }
