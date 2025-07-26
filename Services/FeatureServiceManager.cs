@@ -20,7 +20,7 @@ namespace DuckDBGeoparquet.Services
         public FeatureServiceManager(DataProcessor dataProcessor, ILogger<FeatureServiceManager> logger = null)
         {
             _dataProcessor = dataProcessor ?? throw new ArgumentNullException(nameof(dataProcessor));
-            _logger = logger;
+            _logger = logger; // Can be null - we'll handle it gracefully
         }
 
         /// <summary>
@@ -48,7 +48,7 @@ namespace DuckDBGeoparquet.Services
 
                 _logger?.LogInformation("Starting DuckDB Feature Service Bridge...");
 
-                _featureServiceBridge = new FeatureServiceBridge(_dataProcessor, port, _logger as ILogger<FeatureServiceBridge>);
+                _featureServiceBridge = new FeatureServiceBridge(_dataProcessor, port, null); // Pass null logger for compatibility
                 await _featureServiceBridge.StartAsync();
 
                 _isRunning = true;

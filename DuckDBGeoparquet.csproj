@@ -27,7 +27,8 @@
 	<ItemGroup>
 		<PackageReference Include="DuckDB.NET.Data.Full" Version="1.2.0" />
 		<PackageReference Include="Esri.ArcGISRuntime" Version="200.6.0" />
-		<PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Logging" Version="6.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="6.0.0" />
 	</ItemGroup>
 	<ItemGroup>
 		<FrameworkReference Include="Microsoft.AspNetCore.App" />
