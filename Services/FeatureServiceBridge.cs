@@ -1299,19 +1299,38 @@ namespace DuckDBGeoparquet.Services
                     
                     try
                     {
-                        // Read all bytes from the memory stream with safety checks
-                        wkbBytes = new byte[memoryStream.Length];
-                        memoryStream.Position = 0;
-                        
-                        int totalBytesRead = 0;
-                        int bytesToRead = (int)memoryStream.Length;
-                        
-                        while (totalBytesRead < bytesToRead)
+                        // Read all bytes from the memory stream with comprehensive safety checks
+                        try
                         {
-                            int bytesRead = memoryStream.Read(wkbBytes, totalBytesRead, bytesToRead - totalBytesRead);
-                            if (bytesRead == 0)
-                                break; // End of stream
-                            totalBytesRead += bytesRead;
+                            wkbBytes = new byte[memoryStream.Length];
+                            memoryStream.Position = 0;
+                            
+                            int totalBytesRead = 0;
+                            int bytesToRead = (int)memoryStream.Length;
+                            
+                            while (totalBytesRead < bytesToRead)
+                            {
+                                int bytesRead = memoryStream.Read(wkbBytes, totalBytesRead, bytesToRead - totalBytesRead);
+                                if (bytesRead == 0)
+                                    break; // End of stream
+                                totalBytesRead += bytesRead;
+                            }
+                            
+                            // Additional safety check - ensure we read what we expected
+                            if (totalBytesRead != bytesToRead)
+                            {
+                                Debug.WriteLine($"🔍 Partial read warning: expected {bytesToRead}, got {totalBytesRead}");
+                            }
+                        }
+                        catch (System.AccessViolationException ex)
+                        {
+                            Debug.WriteLine($"🚨 AccessViolationException during UnmanagedMemoryStream read: {ex.Message}");
+                            return null;
+                        }
+                        catch (System.ExecutionEngineException ex)
+                        {
+                            Debug.WriteLine($"🚨 ExecutionEngineException during UnmanagedMemoryStream read: {ex.Message}");
+                            return null;
                         }
                         
                         Debug.WriteLine($"🔍 Successfully read {totalBytesRead} bytes from UnmanagedMemoryStream");
@@ -1448,10 +1467,19 @@ namespace DuckDBGeoparquet.Services
                 double x = ReadDouble(wkbBytes, ref pos, littleEndian);
                 double y = ReadDouble(wkbBytes, ref pos, littleEndian);
                 
-                // Validate coordinate values are reasonable
+                // Validate coordinate values are reasonable for geographic data
                 if (double.IsNaN(x) || double.IsNaN(y) || double.IsInfinity(x) || double.IsInfinity(y))
                 {
-                    Debug.WriteLine($"🔍 ParseWkbPoint: Invalid coordinates x={x}, y={y}");
+                    Debug.WriteLine($"🔍 ParseWkbPoint: Invalid coordinates (NaN/Infinity) x={x}, y={y}");
+                    return null;
+                }
+                
+                // CRITICAL: Reject astronomical coordinates - indicates wrong format interpretation
+                if (Math.Abs(x) > 360 || Math.Abs(y) > 180 || 
+                    Math.Abs(x) > 1e10 || Math.Abs(y) > 1e10)
+                {
+                    Debug.WriteLine($"🔍 ParseWkbPoint: INVALID coordinates (astronomical values) x={x}, y={y}");
+                    Debug.WriteLine($"🔍 ParseWkbPoint: This suggests wrong WKB format interpretation - rejecting");
                     return null;
                 }
                 
