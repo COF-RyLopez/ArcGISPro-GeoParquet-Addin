@@ -1254,6 +1254,14 @@ namespace DuckDBGeoparquet.Services
                     // Convert hex string to bytes
                     wkbBytes = Convert.FromHexString(hexString);
                 }
+                else if (wkbData is System.IO.UnmanagedMemoryStream memoryStream)
+                {
+                    Debug.WriteLine($"🔍 Got UnmanagedMemoryStream of length: {memoryStream.Length}");
+                    // Read all bytes from the memory stream
+                    wkbBytes = new byte[memoryStream.Length];
+                    memoryStream.Position = 0;
+                    memoryStream.Read(wkbBytes, 0, (int)memoryStream.Length);
+                }
                 else
                 {
                     Debug.WriteLine($"🔍 Unsupported WKB data type: {wkbData.GetType()}, value: {wkbData}");
