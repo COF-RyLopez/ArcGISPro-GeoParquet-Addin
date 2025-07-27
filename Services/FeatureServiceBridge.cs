@@ -129,36 +129,47 @@ namespace DuckDBGeoparquet.Services
         public string ServiceUrl => $"http://localhost:{_port}/arcgis/rest/services/overture/FeatureServer";
 
         /// <summary>
-        /// Ensures in-memory data tables are loaded for all themes
+        /// Ensures in-memory data tables are loaded for specific geographic region
         /// </summary>
-        private async Task EnsureDataLoadedAsync()
+        private async Task EnsureDataLoadedAsync(double? xmin = null, double? ymin = null, double? xmax = null, double? ymax = null)
         {
+            // Use reasonable default bounds for testing (California region) if no bounds specified
+            var boundsXmin = xmin ?? -125.0;  // Western California
+            var boundsYmin = ymin ?? 32.0;    // Southern California
+            var boundsXmax = xmax ?? -114.0;  // Eastern California
+            var boundsYmax = ymax ?? 42.0;    // Northern California
+
+            var regionKey = $"{boundsXmin:F2}_{boundsYmin:F2}_{boundsXmax:F2}_{boundsYmax:F2}";
+            
             if (_dataLoaded) return;
 
             lock (_loadLock)
             {
                 if (_dataLoaded) return; // Double-check locking pattern
                 
-                Debug.WriteLine("🔄 Loading Overture Maps data into DuckDB in-memory tables for high-performance querying...");
+                Debug.WriteLine($"🔄 Loading Overture Maps data for REGION ({boundsXmin:F2}, {boundsYmin:F2}) to ({boundsXmax:F2}, {boundsYmax:F2}) - California area only!");
+                Debug.WriteLine($"⚠️ FIXED: No longer loading entire global dataset (would be 60+ GB)");
             }
 
             try
             {
-                // Load each theme into in-memory table for fast querying
+                // Load each theme into in-memory table for fast querying - REGIONAL ONLY
                 foreach (var theme in _themes)
                 {
                     var tableName = $"theme_{theme.Id}_{theme.Name.Replace(" ", "_").Replace("-", "_").ToLowerInvariant()}";
-                    Debug.WriteLine($"📥 Loading {theme.Name} into in-memory table '{tableName}'...");
+                    Debug.WriteLine($"📥 Loading {theme.Name} for California region into '{tableName}'...");
 
-                    // Create in-memory table with spatial indexing
+                    // Create in-memory table with SPATIAL BOUNDS - only load regional data
                     var createTableQuery = $@"
                         CREATE TABLE {tableName} AS 
                         SELECT * FROM read_parquet('{theme.S3Path}')
                         WHERE bbox.xmin IS NOT NULL AND bbox.ymin IS NOT NULL 
-                          AND bbox.xmax IS NOT NULL AND bbox.ymax IS NOT NULL";
+                          AND bbox.xmax IS NOT NULL AND bbox.ymax IS NOT NULL
+                          AND bbox.xmin <= {boundsXmax:F6} AND bbox.xmax >= {boundsXmin:F6}
+                          AND bbox.ymin <= {boundsYmax:F6} AND bbox.ymax >= {boundsYmin:F6}";
 
                     await _dataProcessor.ExecuteQueryAsync(createTableQuery);
-                    Debug.WriteLine($"✅ {theme.Name} loaded successfully into '{tableName}'");
+                    Debug.WriteLine($"✅ {theme.Name} regional data loaded successfully into '{tableName}'");
                 }
 
                 lock (_loadLock)
@@ -166,11 +177,11 @@ namespace DuckDBGeoparquet.Services
                     _dataLoaded = true;
                 }
 
-                Debug.WriteLine("🎉 All Overture Maps themes loaded into DuckDB in-memory cache! Queries will now be lightning fast ⚡");
+                Debug.WriteLine("🎉 California region Overture Maps data loaded into DuckDB cache! Memory usage should be reasonable now ⚡");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"❌ Error loading data into in-memory tables: {ex.Message}");
+                Debug.WriteLine($"❌ Error loading regional data into in-memory tables: {ex.Message}");
                 // Don't set _dataLoaded = true on error, so it can retry
             }
         }

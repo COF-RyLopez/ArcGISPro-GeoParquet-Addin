@@ -230,19 +230,19 @@
                                 Padding="8"
                                 Margin="0,0,0,12">
                                                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
-                                   The Multi-Layer Feature Service Bridge creates a local HTTP server with DuckDB in-memory caching for lightning-fast performance. Data is loaded once from S3 into memory, then served instantly to ArcGIS Pro.
+                                   The Multi-Layer Feature Service Bridge creates a local HTTP server with regional DuckDB caching for fast performance. California region data is loaded from S3 into memory for reasonable memory usage.
                                    <LineBreak/><LineBreak/>
-                                   <Bold>⚡ HIGH-PERFORMANCE IN-MEMORY WORKFLOW:</Bold>
+                                   <Bold>⚡ REGIONAL IN-MEMORY WORKFLOW:</Bold>
                                    <LineBreak/>
-                                   1. <Bold>START:</Bold> Click "Start Feature Service" - loads all themes into memory
+                                   1. <Bold>START:</Bold> Click "Start Feature Service" - loads California region into memory
                                    <LineBreak/>
                                    2. <Bold>CONNECT:</Bold> Add the service URL to ArcGIS Pro as a Feature Service
                                    <LineBreak/>
                                    3. <Bold>SELECT:</Bold> Choose which layers to display (Places, Buildings, Addresses, etc.)
                                    <LineBreak/>
-                                   4. <Bold>EXPLORE:</Bold> Pan/zoom in Pro → instant responses from in-memory cache!
+                                   4. <Bold>EXPLORE:</Bold> Pan/zoom in California → fast responses from regional cache!
                                    <LineBreak/><LineBreak/>
-                                   <Bold>🚀 All 7 Overture Maps themes cached in-memory for maximum performance!</Bold>
+                                   <Bold>🌎 California region (not global!) cached for reasonable memory usage!</Bold>
                                </TextBlock>
                         </Border>
 
@@ -252,7 +252,7 @@
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="⚡" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
                                 <TextBlock TextWrapping="Wrap" VerticalAlignment="Center" Foreground="#155724">
-                                    <Bold>In-Memory Performance:</Bold> All 7 Overture Maps themes are loaded into DuckDB memory cache for instant queries - no S3 latency!
+                                    <Bold>Regional In-Memory Cache:</Bold> Loads California region data into DuckDB memory for instant queries - reasonable memory usage!
                                 </TextBlock>
                             </StackPanel>
                         </Border>
