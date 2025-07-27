@@ -230,19 +230,19 @@
                                 Padding="8"
                                 Margin="0,0,0,12">
                                                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
-                                   The Multi-Layer Feature Service Bridge creates a local HTTP server with regional DuckDB caching for fast performance. California region data is loaded from S3 into memory for reasonable memory usage.
+                                   The Multi-Layer Feature Service Bridge creates a local HTTP server with viewport-based DuckDB caching. Only data visible in your current map view is loaded into memory, just like the existing data loader functionality.
                                    <LineBreak/><LineBreak/>
-                                   <Bold>⚡ REGIONAL IN-MEMORY WORKFLOW:</Bold>
+                                   <Bold>⚡ VIEWPORT-BASED IN-MEMORY WORKFLOW:</Bold>
                                    <LineBreak/>
-                                   1. <Bold>START:</Bold> Click "Start Feature Service" - loads California region into memory
+                                   1. <Bold>START:</Bold> Click "Start Feature Service" - loads current viewport data into memory
                                    <LineBreak/>
                                    2. <Bold>CONNECT:</Bold> Add the service URL to ArcGIS Pro as a Feature Service
                                    <LineBreak/>
                                    3. <Bold>SELECT:</Bold> Choose which layers to display (Places, Buildings, Addresses, etc.)
                                    <LineBreak/>
-                                   4. <Bold>EXPLORE:</Bold> Pan/zoom in California → fast responses from regional cache!
+                                   4. <Bold>EXPLORE:</Bold> Pan/zoom in current area → instant responses from viewport cache!
                                    <LineBreak/><LineBreak/>
-                                   <Bold>🌎 California region (not global!) cached for reasonable memory usage!</Bold>
+                                   <Bold>🎯 Only your current map viewport cached - minimal memory usage!</Bold>
                                </TextBlock>
                         </Border>
 
@@ -252,7 +252,7 @@
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="⚡" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
                                 <TextBlock TextWrapping="Wrap" VerticalAlignment="Center" Foreground="#155724">
-                                    <Bold>Regional In-Memory Cache:</Bold> Loads California region data into DuckDB memory for instant queries - reasonable memory usage!
+                                    <Bold>Viewport-Based Cache:</Bold> Loads only data for your current map view into memory - minimal memory usage like existing data loader!
                                 </TextBlock>
                             </StackPanel>
                         </Border>

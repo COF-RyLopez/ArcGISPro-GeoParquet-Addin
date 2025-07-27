@@ -10,6 +10,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
 using ArcGIS.Core.Geometry;
+using ArcGIS.Desktop.Framework.Threading;
+using ArcGIS.Desktop.Mapping;
 using System.Diagnostics;
 
 namespace DuckDBGeoparquet.Services
@@ -129,47 +131,78 @@ namespace DuckDBGeoparquet.Services
         public string ServiceUrl => $"http://localhost:{_port}/arcgis/rest/services/overture/FeatureServer";
 
         /// <summary>
-        /// Ensures in-memory data tables are loaded for specific geographic region
+        /// Ensures in-memory data tables are loaded for current map viewport (like existing data loader)
         /// </summary>
-        private async Task EnsureDataLoadedAsync(double? xmin = null, double? ymin = null, double? xmax = null, double? ymax = null)
+        private async Task EnsureDataLoadedAsync()
         {
-            // Use reasonable default bounds for testing (California region) if no bounds specified
-            var boundsXmin = xmin ?? -125.0;  // Western California
-            var boundsYmin = ymin ?? 32.0;    // Southern California
-            var boundsXmax = xmax ?? -114.0;  // Eastern California
-            var boundsYmax = ymax ?? 42.0;    // Northern California
-
-            var regionKey = $"{boundsXmin:F2}_{boundsYmin:F2}_{boundsXmax:F2}_{boundsYmax:F2}";
-            
             if (_dataLoaded) return;
 
             lock (_loadLock)
             {
                 if (_dataLoaded) return; // Double-check locking pattern
-                
-                Debug.WriteLine($"🔄 Loading Overture Maps data for REGION ({boundsXmin:F2}, {boundsYmin:F2}) to ({boundsXmax:F2}, {boundsYmax:F2}) - California area only!");
-                Debug.WriteLine($"⚠️ FIXED: No longer loading entire global dataset (would be 60+ GB)");
+                Debug.WriteLine($"🔄 Getting current map viewport to determine caching region (like existing data loader)...");
             }
 
             try
             {
-                // Load each theme into in-memory table for fast querying - REGIONAL ONLY
+                // Get current map extent - same approach as existing data loader
+                ArcGIS.Core.Geometry.Envelope extent = null;
+                await QueuedTask.Run(() =>
+                {
+                    if (MapView.Active != null)
+                    {
+                        var mapExtent = MapView.Active.Extent;
+                        if (mapExtent != null)
+                        {
+                            // Project to WGS84 if needed (same as existing data loader)
+                            var wgs84 = SpatialReferenceBuilder.CreateSpatialReference(4326);
+                            if (mapExtent.SpatialReference == null || mapExtent.SpatialReference.Wkid != 4326)
+                            {
+                                extent = GeometryEngine.Instance.Project(mapExtent, wgs84) as ArcGIS.Core.Geometry.Envelope;
+                            }
+                            else
+                            {
+                                extent = mapExtent;
+                            }
+                        }
+                    }
+                });
+
+                if (extent == null)
+                {
+                    Debug.WriteLine($"❌ No active map view found - cannot determine viewport for caching");
+                    return;
+                }
+
+                // Add small buffer around viewport for better user experience
+                var buffer = 0.01; // ~1km buffer
+                var boundsXmin = extent.XMin - buffer;
+                var boundsYmin = extent.YMin - buffer;
+                var boundsXmax = extent.XMax + buffer;
+                var boundsYmax = extent.YMax + buffer;
+
+                Debug.WriteLine($"🎯 Loading data for CURRENT VIEWPORT: ({boundsXmin:F4}, {boundsYmin:F4}) to ({boundsXmax:F4}, {boundsYmax:F4})");
+                Debug.WriteLine($"📏 Viewport size: {(boundsXmax - boundsXmin):F4}° × {(boundsYmax - boundsYmin):F4}° - much smaller than California!");
+
+                // Load each theme into in-memory table for fast querying - VIEWPORT ONLY
                 foreach (var theme in _themes)
                 {
                     var tableName = $"theme_{theme.Id}_{theme.Name.Replace(" ", "_").Replace("-", "_").ToLowerInvariant()}";
-                    Debug.WriteLine($"📥 Loading {theme.Name} for California region into '{tableName}'...");
+                    Debug.WriteLine($"📥 Loading {theme.Name} for current viewport into '{tableName}'...");
 
-                    // Create in-memory table with SPATIAL BOUNDS - only load regional data
+                    // Create in-memory table with VIEWPORT BOUNDS - same pattern as existing data loader
                     var createTableQuery = $@"
                         CREATE TABLE {tableName} AS 
                         SELECT * FROM read_parquet('{theme.S3Path}')
                         WHERE bbox.xmin IS NOT NULL AND bbox.ymin IS NOT NULL 
                           AND bbox.xmax IS NOT NULL AND bbox.ymax IS NOT NULL
-                          AND bbox.xmin <= {boundsXmax:F6} AND bbox.xmax >= {boundsXmin:F6}
-                          AND bbox.ymin <= {boundsYmax:F6} AND bbox.ymax >= {boundsYmin:F6}";
+                          AND bbox.xmin <= {boundsXmax.ToString("G", CultureInfo.InvariantCulture)} 
+                          AND bbox.xmax >= {boundsXmin.ToString("G", CultureInfo.InvariantCulture)}
+                          AND bbox.ymin <= {boundsYmax.ToString("G", CultureInfo.InvariantCulture)} 
+                          AND bbox.ymax >= {boundsYmin.ToString("G", CultureInfo.InvariantCulture)}";
 
                     await _dataProcessor.ExecuteQueryAsync(createTableQuery);
-                    Debug.WriteLine($"✅ {theme.Name} regional data loaded successfully into '{tableName}'");
+                    Debug.WriteLine($"✅ {theme.Name} viewport data loaded successfully into '{tableName}'");
                 }
 
                 lock (_loadLock)
@@ -177,11 +210,11 @@ namespace DuckDBGeoparquet.Services
                     _dataLoaded = true;
                 }
 
-                Debug.WriteLine("🎉 California region Overture Maps data loaded into DuckDB cache! Memory usage should be reasonable now ⚡");
+                Debug.WriteLine("🎉 Current viewport data loaded into DuckDB cache! Memory usage should be very reasonable now ⚡");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"❌ Error loading regional data into in-memory tables: {ex.Message}");
+                Debug.WriteLine($"❌ Error loading viewport data into in-memory tables: {ex.Message}");
                 // Don't set _dataLoaded = true on error, so it can retry
             }
         }
