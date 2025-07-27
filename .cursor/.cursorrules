@@ -18,6 +18,7 @@ Always use .NET 8.0 compatible versions:
 
 ❌ **NEVER** downgrade to .NET 6.0 packages when targeting .NET 8.0
 ❌ **AVOID** external logging dependencies like Microsoft.Extensions.Logging - they cause deployment issues
+❌ **NEVER use ASP.NET Core** in ArcGIS Pro add-ins - assemblies are not available at runtime
 
 ## Project Settings
 - **Target Framework**: `net8.0-windows`
@@ -76,7 +77,8 @@ Extension assemblies (in {ArcGIS Pro Installation}/bin/Extensions):
 - Use `System.Diagnostics.Debug.WriteLine()` for logging (avoid external logging libraries)
 - Follow async patterns throughout the application
 - Minimize external NuGet dependencies to avoid deployment issues
-- Cast ASP.NET Core route handlers to `(Delegate)` to avoid RequestDelegate warnings
+- For HTTP servers, use `System.Net.HttpListener` instead of ASP.NET Core
+- Manual HTTP request routing is preferred over complex web frameworks
 
 ## Version Management
 - Keep add-in `desktopVersion` attribute current with Pro installation

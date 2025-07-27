@@ -28,9 +28,7 @@
 		<PackageReference Include="DuckDB.NET.Data.Full" Version="1.2.0" />
 		<PackageReference Include="Esri.ArcGISRuntime" Version="200.6.0" />
 	</ItemGroup>
-	<ItemGroup>
-		<FrameworkReference Include="Microsoft.AspNetCore.App" />
-	</ItemGroup>
+
 	<ItemGroup>
 		<Reference Include="ArcGIS.Core">
 			<HintPath>C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Core.dll</HintPath>

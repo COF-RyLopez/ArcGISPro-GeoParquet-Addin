@@ -8,29 +8,34 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Web;
 using ArcGIS.Core.Geometry;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using System.Diagnostics;
 
 namespace DuckDBGeoparquet.Services
 {
     /// <summary>
     /// Lightweight HTTP server that bridges ArcGIS Pro requests to DuckDB
-    /// Implements ArcGIS REST API Feature Service specification
+    /// Implements ArcGIS REST API Feature Service specification using HttpListener
     /// </summary>
     public class FeatureServiceBridge : IDisposable
     {
         private readonly DataProcessor _dataProcessor;
-        private WebApplication _app;
+        private HttpListener _listener;
         private readonly CancellationTokenSource _cancellationTokenSource;
         private readonly int _port;
         private bool _isRunning;
+        private Task _listenerTask;
 
-        // ArcGIS Feature Service JSON serialization options
+        // ArcGIS Feature Service constants
+        private const int _maxRecordCount = 1000;
+        private readonly object _spatialReference = new
+        {
+            wkid = 4326,
+            latestWkid = 4326
+        };
+
+        // JSON serialization options
         private readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -53,33 +58,25 @@ namespace DuckDBGeoparquet.Services
         {
             if (_isRunning) return;
 
-            var builder = WebApplication.CreateBuilder();
-            
-            // Configure CORS for ArcGIS Pro
-            builder.Services.AddCors(options =>
+            try
             {
-                options.AddDefaultPolicy(policy =>
-                {
-                    policy.AllowAnyOrigin()
-                          .AllowAnyMethod()
-                          .AllowAnyHeader();
-                });
-            });
+                _listener = new HttpListener();
+                _listener.Prefixes.Add($"http://localhost:{_port}/");
+                _listener.Start();
 
-            builder.WebHost.UseUrls($"http://localhost:{_port}");
+                Debug.WriteLine($"Starting DuckDB Feature Service Bridge on {ServiceUrl}");
 
-            _app = builder.Build();
-            _app.UseCors();
+                // Start listening for requests
+                _listenerTask = Task.Run(async () => await ListenForRequestsAsync(_cancellationTokenSource.Token));
 
-            // Configure ArcGIS REST API endpoints
-            ConfigureEndpoints();
-
-            Debug.WriteLine($"Starting DuckDB Feature Service Bridge on {ServiceUrl}");
-            
-            await _app.StartAsync(_cancellationTokenSource.Token);
-            _isRunning = true;
-
-            Debug.WriteLine($"✅ Feature Service Bridge ready: {ServiceUrl}");
+                _isRunning = true;
+                Debug.WriteLine($"✅ Feature Service Bridge ready: {ServiceUrl}");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to start Feature Service Bridge: {ex.Message}");
+                throw;
+            }
         }
 
         /// <summary>
@@ -90,39 +87,135 @@ namespace DuckDBGeoparquet.Services
             if (!_isRunning) return;
 
             Debug.WriteLine("Stopping DuckDB Feature Service Bridge...");
-            
+
             _cancellationTokenSource.Cancel();
-            
-            if (_app != null)
+
+            if (_listener != null)
             {
-                await _app.StopAsync();
-                await _app.DisposeAsync();
+                _listener.Stop();
+                _listener.Close();
             }
-            
+
+            if (_listenerTask != null)
+            {
+                try
+                {
+                    await _listenerTask;
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected when cancelled
+                }
+            }
+
             _isRunning = false;
             Debug.WriteLine("✅ Feature Service Bridge stopped");
         }
 
-        private void ConfigureEndpoints()
+        /// <summary>
+        /// Main request listening loop
+        /// </summary>
+        private async Task ListenForRequestsAsync(CancellationToken cancellationToken)
         {
-            // Feature Service Root - Service metadata
-            _app.MapGet("/arcgis/rest/services/overture/FeatureServer", (Delegate)HandleServiceMetadata);
+            while (!cancellationToken.IsCancellationRequested && _listener.IsListening)
+            {
+                try
+                {
+                    var contextTask = _listener.GetContextAsync();
+                    var context = await contextTask;
 
-            // Layer Info - Layer metadata  
-            _app.MapGet("/arcgis/rest/services/overture/FeatureServer/{layerId:int}", (Delegate)HandleLayerMetadata);
+                    // Handle request on background thread
+                    _ = Task.Run(async () => await HandleRequestAsync(context), cancellationToken);
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Listener was disposed, exit gracefully
+                    break;
+                }
+                catch (HttpListenerException ex) when (ex.ErrorCode == 995) // WSA_OPERATION_ABORTED
+                {
+                    // Listener was stopped, exit gracefully  
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Error in request listener: {ex.Message}");
+                }
+            }
+        }
 
-            // Query Endpoint - The main query interface
-            _app.MapGet("/arcgis/rest/services/overture/FeatureServer/{layerId:int}/query", (Delegate)HandleQuery);
-            _app.MapPost("/arcgis/rest/services/overture/FeatureServer/{layerId:int}/query", (Delegate)HandleQuery);
+        /// <summary>
+        /// Routes incoming HTTP requests to appropriate handlers
+        /// </summary>
+        private async Task HandleRequestAsync(HttpListenerContext context)
+        {
+            try
+            {
+                var request = context.Request;
+                var response = context.Response;
 
-            // Health check
-            _app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "DuckDB Feature Service Bridge" }));
+                // Add CORS headers
+                response.Headers.Add("Access-Control-Allow-Origin", "*");
+                response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                response.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
+
+                // Handle preflight requests
+                if (request.HttpMethod == "OPTIONS")
+                {
+                    response.StatusCode = 200;
+                    response.Close();
+                    return;
+                }
+
+                var path = request.Url.AbsolutePath.ToLowerInvariant();
+                Debug.WriteLine($"Feature Service Request: {request.HttpMethod} {path}");
+
+                // Route to appropriate handler
+                if (path == "/arcgis/rest/services/overture/featureserver")
+                {
+                    await HandleServiceMetadata(context);
+                }
+                else if (path.StartsWith("/arcgis/rest/services/overture/featureserver/") && path.EndsWith("/query"))
+                {
+                    await HandleQuery(context);
+                }
+                else if (path.StartsWith("/arcgis/rest/services/overture/featureserver/") && !path.EndsWith("/query"))
+                {
+                    await HandleLayerMetadata(context);
+                }
+                else if (path == "/health")
+                {
+                    await HandleHealthCheck(context);
+                }
+                else
+                {
+                    // 404 Not Found
+                    response.StatusCode = 404;
+                    var errorJson = JsonSerializer.Serialize(new { error = new { code = 404, message = "Endpoint not found" } }, _jsonOptions);
+                    await WriteJsonResponse(context, errorJson);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error handling request: {ex.Message}");
+                try
+                {
+                    context.Response.StatusCode = 500;
+                    var errorJson = JsonSerializer.Serialize(new { error = new { code = 500, message = ex.Message } }, _jsonOptions);
+                    await WriteJsonResponse(context, errorJson);
+                }
+                catch
+                {
+                    // If we can't even write an error response, just close the connection
+                    context.Response.Close();
+                }
+            }
         }
 
         /// <summary>
         /// Handles Feature Service root requests - returns service metadata
         /// </summary>
-        private async Task<IResult> HandleServiceMetadata(HttpContext context)
+        private async Task HandleServiceMetadata(HttpListenerContext context)
         {
             try
             {
@@ -135,23 +228,19 @@ namespace DuckDBGeoparquet.Services
                     supportsDatumTransformation = true,
                     supportsReturnDeleteResults = false,
                     hasStaticData = false,
-                    maxRecordCount = 1000,
+                    maxRecordCount = _maxRecordCount,
                     supportedQueryFormats = "JSON,geoJSON,PBF",
                     capabilities = "Query",
                     description = "Live feature service bridge to DuckDB for cloud GeoParquet data",
                     copyrightText = "Data from Overture Maps via DuckDB",
-                    spatialReference = new
-                    {
-                        wkid = 4326,
-                        latestWkid = 4326
-                    },
+                    spatialReference = _spatialReference,
                     initialExtent = new
                     {
                         xmin = -180.0,
                         ymin = -90.0,
                         xmax = 180.0,
                         ymax = 90.0,
-                        spatialReference = new { wkid = 4326, latestWkid = 4326 }
+                        spatialReference = _spatialReference
                     },
                     fullExtent = new
                     {
@@ -159,324 +248,381 @@ namespace DuckDBGeoparquet.Services
                         ymin = -90.0,
                         xmax = 180.0,
                         ymax = 90.0,
-                        spatialReference = new { wkid = 4326, latestWkid = 4326 }
+                        spatialReference = _spatialReference
                     },
                     allowGeometryUpdates = false,
                     units = "esriDecimalDegrees",
                     layers = new object[]
                     {
-                        new { id = 0, name = "Overture Maps Data" }
+                        new { id = 0, name = "Overture Maps Data", type = "Feature Layer" }
                     },
-                    tables = new object[0]
+                    tables = new object[] { }
                 };
 
-                var format = context.Request.Query["f"].FirstOrDefault() ?? "json";
-                return await WriteJsonResponse(context, serviceMetadata, format);
+                var json = JsonSerializer.Serialize(serviceMetadata, _jsonOptions);
+                await WriteJsonResponse(context, json);
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"Error handling service metadata request: {ex.Message}");
-                return Results.Problem($"Error: {ex.Message}");
+                context.Response.StatusCode = 500;
+                var errorJson = JsonSerializer.Serialize(new { error = new { code = 500, message = ex.Message } }, _jsonOptions);
+                await WriteJsonResponse(context, errorJson);
             }
         }
 
         /// <summary>
         /// Handles Layer metadata requests
         /// </summary>
-        private async Task<IResult> HandleLayerMetadata(HttpContext context, int layerId)
+        private async Task HandleLayerMetadata(HttpListenerContext context)
         {
             try
             {
-                if (layerId != 0)
-                {
-                    return Results.NotFound(new { error = new { code = 400, message = "Invalid layer ID" } });
-                }
-
                 var layerMetadata = new
                 {
                     currentVersion = 11.1,
                     id = 0,
                     name = "Overture Maps Data",
                     type = "Feature Layer",
-                    displayField = "id",
-                    description = "Live DuckDB query layer for cloud GeoParquet data",
-                    copyrightText = "Data from Overture Maps via DuckDB",
-                    geometryType = "esriGeometryPoint", // Default - will be dynamic based on query
+                    description = "Live Overture Maps data from DuckDB",
+                    geometryType = "esriGeometryPolygon",
+                    sourceSpatialReference = _spatialReference,
+                    copyrightText = "Overture Maps Foundation",
+                    parentLayer = (object)null,
+                    subLayers = new object[] { },
                     minScale = 0,
                     maxScale = 0,
+                    defaultVisibility = true,
                     extent = new
                     {
                         xmin = -180.0,
                         ymin = -90.0,
                         xmax = 180.0,
                         ymax = 90.0,
-                        spatialReference = new { wkid = 4326, latestWkid = 4326 }
+                        spatialReference = _spatialReference
                     },
                     hasAttachments = false,
-                    htmlPopupType = "esriServerHTMLPopupTypeNone",
-                    objectIdField = "OBJECTID",
-                    globalIdField = "",
-                    typeIdField = "",
-                    fields = new object[]
-                    {
-                        new
-                        {
-                            name = "OBJECTID",
-                            type = "esriFieldTypeOID",
-                            alias = "OBJECTID",
-                            nullable = false,
-                            editable = false
-                        },
-                        new
-                        {
-                            name = "id",
-                            type = "esriFieldTypeString",
-                            alias = "ID",
-                            length = 255,
-                            nullable = true,
-                            editable = false
-                        }
-                    },
+                    htmlPopupType = "esriServerHTMLPopupTypeAsHTMLText",
+                    displayField = "name",
+                    typeIdField = (string)null,
+                    subtypeField = (string)null,
+                    fields = GetFieldDefinitions(),
+                    geometryType = "esriGeometryPolygon",
+                    minScale = 0,
+                    maxScale = 0,
+                    defaultVisibility = true,
+                    canModifyLayer = false,
+                    canScaleSymbols = false,
+                    hasLabels = false,
+                    capabilities = "Query",
+                    maxRecordCount = _maxRecordCount,
+                    supportsStatistics = false,
+                    supportsAdvancedQueries = false,
                     supportedQueryFormats = "JSON,geoJSON,PBF",
-                    maxRecordCount = 1000,
-                    capabilities = "Query"
+                    isDataVersioned = false,
+                    useStandardizedQueries = true,
+                    supportedSpatialRelationships = new string[]
+                    {
+                        "esriSpatialRelIntersects",
+                        "esriSpatialRelContains",
+                        "esriSpatialRelCrosses",
+                        "esriSpatialRelEnvelopeIntersects",
+                        "esriSpatialRelOverlaps",
+                        "esriSpatialRelTouches",
+                        "esriSpatialRelWithin"
+                    },
+                    advancedQueryCapabilities = new
+                    {
+                        useStandardizedQueries = true,
+                        supportsStatistics = false,
+                        supportsPercentileStatistics = false,
+                        supportsHavingClause = false,
+                        supportsCountDistinct = false,
+                        supportsOrderBy = false,
+                        supportsDistinct = false,
+                        supportsPagination = false,
+                        supportsTrueCurve = false,
+                        supportsReturningQueryExtent = true,
+                        supportsQueryWithDistance = false,
+                        supportsSqlExpression = false
+                    }
                 };
 
-                var format = context.Request.Query["f"].FirstOrDefault() ?? "json";
-                return await WriteJsonResponse(context, layerMetadata, format);
+                var json = JsonSerializer.Serialize(layerMetadata, _jsonOptions);
+                await WriteJsonResponse(context, json);
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"Error handling layer metadata request: {ex.Message}");
-                return Results.Problem($"Error: {ex.Message}");
+                context.Response.StatusCode = 500;
+                var errorJson = JsonSerializer.Serialize(new { error = new { code = 500, message = ex.Message } }, _jsonOptions);
+                await WriteJsonResponse(context, errorJson);
             }
         }
 
         /// <summary>
-        /// Handles query requests - the main feature data interface
+        /// Handles feature queries - the main data retrieval endpoint
         /// </summary>
-        private async Task<IResult> HandleQuery(HttpContext context, int layerId)
+        private async Task HandleQuery(HttpListenerContext context)
         {
             try
             {
-                if (layerId != 0)
-                {
-                    return Results.NotFound(new { error = new { code = 400, message = "Invalid layer ID" } });
-                }
-
-                // Parse query parameters
-                var queryParams = await ParseQueryParameters(context);
+                var queryParams = ParseQueryParameters(context.Request);
                 
-                Debug.WriteLine($"DuckDB query request: WHERE={queryParams.Where}, Geometry={queryParams.HasGeometry}");
+                // Extract query parameters
+                var whereClause = GetQueryParam(queryParams, "where") ?? "1=1";
+                var outFields = GetQueryParam(queryParams, "outFields") ?? "*";
+                var geometryParam = GetQueryParam(queryParams, "geometry");
+                var spatialRel = GetQueryParam(queryParams, "spatialRel") ?? "esriSpatialRelIntersects";
+                var returnGeometry = GetQueryParam(queryParams, "returnGeometry")?.ToLowerInvariant() != "false";
+                var maxRecords = int.TryParse(GetQueryParam(queryParams, "resultRecordCount"), out var max) ? max : _maxRecordCount;
+                var format = GetQueryParam(queryParams, "f") ?? "json";
 
-                // Convert ArcGIS query to DuckDB parameters
-                var duckDbQuery = BuildDuckDbQuery(queryParams);
+                Debug.WriteLine($"Query parameters: where={whereClause}, outFields={outFields}, geometry={geometryParam}, spatialRel={spatialRel}");
+
+                // Build DuckDB query
+                var duckDbQuery = BuildDuckDbQuery(whereClause, geometryParam, spatialRel, outFields, maxRecords);
                 
-                // Execute DuckDB query via DataProcessor
-                var features = await ExecuteDuckDbQuery(duckDbQuery, queryParams);
+                // Execute query
+                var features = await ExecuteDuckDbQuery(duckDbQuery);
 
-                // Return ArcGIS-compatible response
+                // Build ArcGIS response
                 var response = new
                 {
                     objectIdFieldName = "OBJECTID",
+                    uniqueIdField = new { name = "OBJECTID", isSystemMaintained = true },
                     globalIdFieldName = "",
-                    geometryType = queryParams.GeometryType ?? "esriGeometryPoint",
-                    spatialReference = new { wkid = 4326, latestWkid = 4326 },
-                    fields = GetFieldDefinitions(),
+                    geometryType = "esriGeometryPolygon",
+                    spatialReference = _spatialReference,
+                    hasZ = false,
+                    hasM = false,
                     features = features,
-                    exceededTransferLimit = features.Count >= (queryParams.ResultRecordCount ?? 1000)
+                    exceededTransferLimit = features.Count >= maxRecords
                 };
 
-                return await WriteJsonResponse(context, response, queryParams.Format);
+                var json = JsonSerializer.Serialize(response, _jsonOptions);
+                await WriteJsonResponse(context, json);
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"Error handling query request: {ex.Message}");
-                return Results.Problem($"Query error: {ex.Message}");
+                context.Response.StatusCode = 500;
+                var errorJson = JsonSerializer.Serialize(new { error = new { code = 500, message = ex.Message } }, _jsonOptions);
+                await WriteJsonResponse(context, errorJson);
             }
         }
 
         /// <summary>
-        /// Parses ArcGIS REST API query parameters
+        /// Health check endpoint
         /// </summary>
-        private async Task<ArcGisQueryParameters> ParseQueryParameters(HttpContext context)
+        private async Task HandleHealthCheck(HttpListenerContext context)
         {
-            var query = context.Request.Query;
-            var form = context.Request.HasFormContentType ? await context.Request.ReadFormAsync() : null;
-            
-            // Helper to get parameter from query or form
-            string GetParameter(string key) => query[key].FirstOrDefault() ?? form?[key].FirstOrDefault();
-
-            var parameters = new ArcGisQueryParameters
-            {
-                Where = GetParameter("where") ?? "1=1",
-                OutFields = GetParameter("outFields") ?? "*",
-                ReturnGeometry = GetParameter("returnGeometry")?.ToLowerInvariant() != "false",
-                Format = GetParameter("f") ?? "json",
-                ResultRecordCount = int.TryParse(GetParameter("resultRecordCount"), out int count) ? count : 1000,
-                ResultOffset = int.TryParse(GetParameter("resultOffset"), out int offset) ? offset : 0,
-                OrderByFields = GetParameter("orderByFields"),
-                GeometryType = GetParameter("geometryType")
-            };
-
-            // Parse spatial parameters
-            var geometryParam = GetParameter("geometry");
-            if (!string.IsNullOrEmpty(geometryParam))
-            {
-                parameters.QueryGeometry = ParseGeometryParameter(geometryParam);
-                parameters.SpatialRel = GetParameter("spatialRel") ?? "esriSpatialRelIntersects";
-                parameters.InSR = GetParameter("inSR");
-            }
-
-            return parameters;
+            var healthResponse = new { status = "healthy", service = "DuckDB Feature Service Bridge" };
+            var json = JsonSerializer.Serialize(healthResponse, _jsonOptions);
+            await WriteJsonResponse(context, json);
         }
 
         /// <summary>
-        /// Converts ArcGIS query parameters to DuckDB SQL
+        /// Parse query parameters from the request
         /// </summary>
-        private string BuildDuckDbQuery(ArcGisQueryParameters parameters)
+        private Dictionary<string, string> ParseQueryParameters(HttpListenerRequest request)
         {
-            var whereClause = parameters.Where;
-            
-            // Add spatial filter if geometry is provided
-            if (parameters.QueryGeometry != null)
+            var queryParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            // Parse URL query string
+            if (request.Url?.Query != null)
             {
-                var spatialClause = BuildSpatialFilter(parameters.QueryGeometry, parameters.SpatialRel, parameters.InSR);
-                whereClause = $"({whereClause}) AND ({spatialClause})";
+                var query = HttpUtility.ParseQueryString(request.Url.Query);
+                foreach (string key in query.AllKeys)
+                {
+                    if (key != null)
+                    {
+                        queryParams[key] = query[key];
+                    }
+                }
             }
 
-            // Build field list
-            var fields = parameters.OutFields == "*" ? "*" : parameters.OutFields;
-            
-            // Add ROW_NUMBER for OBJECTID if needed
-            if (parameters.ReturnGeometry)
+            // Parse POST body if present
+            if (request.HttpMethod == "POST" && request.HasEntityBody)
             {
-                fields = $"ROW_NUMBER() OVER() as OBJECTID, {fields}, geometry";
+                using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+                {
+                    var body = reader.ReadToEnd();
+                    var postQuery = HttpUtility.ParseQueryString(body);
+                    foreach (string key in postQuery.AllKeys)
+                    {
+                        if (key != null)
+                        {
+                            queryParams[key] = postQuery[key]; // POST params override URL params
+                        }
+                    }
+                }
+            }
+
+            return queryParams;
+        }
+
+        /// <summary>
+        /// Get a query parameter value
+        /// </summary>
+        private string GetQueryParam(Dictionary<string, string> queryParams, string key)
+        {
+            return queryParams.TryGetValue(key, out var value) ? value : null;
+        }
+
+        /// <summary>
+        /// Build DuckDB SQL query from ArcGIS parameters
+        /// </summary>
+        private string BuildDuckDbQuery(string whereClause, string geometryParam, string spatialRel, string outFields, int maxRecords)
+        {
+            var query = new StringBuilder();
+            query.Append("SELECT ");
+
+            // Handle output fields
+            if (outFields == "*")
+            {
+                query.Append("id, \"bbox.xmin\", \"bbox.ymin\", \"bbox.xmax\", \"bbox.ymax\", name, place_type, ST_AsText(geometry) as geometry_wkt");
             }
             else
             {
-                fields = $"ROW_NUMBER() OVER() as OBJECTID, {fields}";
+                query.Append(outFields);
             }
 
-            var query = $@"
-                SELECT {fields}
-                FROM current_table 
-                WHERE {whereClause}
-            ";
+            query.Append(" FROM current_table");
 
-            // Add ordering
-            if (!string.IsNullOrEmpty(parameters.OrderByFields))
+            var conditions = new List<string>();
+
+            // Handle WHERE clause
+            if (!string.IsNullOrEmpty(whereClause) && whereClause != "1=1")
             {
-                query += $" ORDER BY {parameters.OrderByFields}";
+                // Basic WHERE clause translation (this could be expanded)
+                conditions.Add($"({whereClause})");
             }
 
-            // Add paging
-            if (parameters.ResultOffset > 0)
+            // Handle spatial geometry filtering
+            if (!string.IsNullOrEmpty(geometryParam))
             {
-                query += $" OFFSET {parameters.ResultOffset}";
-            }
-            
-            if (parameters.ResultRecordCount.HasValue)
-            {
-                query += $" LIMIT {parameters.ResultRecordCount.Value}";
-            }
-
-            return query;
-        }
-
-        /// <summary>
-        /// Executes DuckDB query and converts results to ArcGIS feature format
-        /// </summary>
-        private Task<List<object>> ExecuteDuckDbQuery(string query, ArcGisQueryParameters parameters)
-        {
-            // Use existing DataProcessor to execute query
-            // This would need to be implemented to work with the current_table
-            // For now, return sample data structure
-            
-            var features = new List<object>();
-            
-            // TODO: Execute actual DuckDB query via _dataProcessor
-            // var results = await _dataProcessor.ExecuteQueryAsync(query);
-            
-            // Sample feature for demonstration
-            features.Add(new
-            {
-                attributes = new
+                var spatialCondition = ConvertArcGISGeometryToSql(geometryParam, spatialRel);
+                if (!string.IsNullOrEmpty(spatialCondition))
                 {
-                    OBJECTID = 1,
-                    id = "sample_feature_1"
-                },
-                geometry = parameters.ReturnGeometry ? new
-                {
-                    x = -118.2437,
-                    y = 34.0522
-                } : null
-            });
-
-            return Task.FromResult(features);
-        }
-
-        /// <summary>
-        /// Builds spatial filter SQL for DuckDB
-        /// </summary>
-        private string BuildSpatialFilter(object geometry, string spatialRel, string inSR)
-        {
-            // Convert ArcGIS spatial query to DuckDB spatial SQL
-            // This is a simplified version - would need full implementation
-            
-            if (geometry is JsonElement geoElement)
-            {
-                if (geoElement.TryGetProperty("x", out var x) && geoElement.TryGetProperty("y", out var y))
-                {
-                    // Point geometry
-                    return $"ST_DWithin(geometry, ST_Point({x.GetDouble()}, {y.GetDouble()}), 1000)";
-                }
-                else if (geoElement.TryGetProperty("xmin", out var xmin))
-                {
-                    // Envelope geometry
-                    var xminVal = xmin.GetDouble();
-                    var yminVal = geoElement.GetProperty("ymin").GetDouble();
-                    var xmaxVal = geoElement.GetProperty("xmax").GetDouble();
-                    var ymaxVal = geoElement.GetProperty("ymax").GetDouble();
-                    
-                    return $@"
-                        bbox.xmin BETWEEN {xminVal.ToString("G", CultureInfo.InvariantCulture)} AND {xmaxVal.ToString("G", CultureInfo.InvariantCulture)} AND
-                        bbox.ymin BETWEEN {yminVal.ToString("G", CultureInfo.InvariantCulture)} AND {ymaxVal.ToString("G", CultureInfo.InvariantCulture)}
-                    ";
+                    conditions.Add(spatialCondition);
                 }
             }
 
-            return "1=1"; // Default to no spatial filter
+            if (conditions.Count > 0)
+            {
+                query.Append(" WHERE ");
+                query.Append(string.Join(" AND ", conditions));
+            }
+
+            query.Append($" LIMIT {maxRecords}");
+
+            return query.ToString();
         }
 
         /// <summary>
-        /// Parses geometry parameter from request
+        /// Convert ArcGIS geometry to DuckDB spatial SQL
         /// </summary>
-        private object ParseGeometryParameter(string geometryParam)
+        private string ConvertArcGISGeometryToSql(string geometryJson, string spatialRel)
         {
             try
             {
-                return JsonSerializer.Deserialize<JsonElement>(geometryParam);
-            }
-            catch
-            {
-                // Try simple envelope format: xmin,ymin,xmax,ymax
-                var parts = geometryParam.Split(',');
-                if (parts.Length == 4 && 
-                    double.TryParse(parts[0], out double xmin) &&
-                    double.TryParse(parts[1], out double ymin) &&
-                    double.TryParse(parts[2], out double xmax) &&
-                    double.TryParse(parts[3], out double ymax))
+                using (var doc = JsonDocument.Parse(geometryJson))
                 {
-                    return new { xmin, ymin, xmax, ymax };
+                    var root = doc.RootElement;
+
+                    if (root.TryGetProperty("xmin", out var xminProp) &&
+                        root.TryGetProperty("ymin", out var yminProp) &&
+                        root.TryGetProperty("xmax", out var xmaxProp) &&
+                        root.TryGetProperty("ymax", out var ymaxProp))
+                    {
+                        // Envelope geometry
+                        var xmin = xminProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
+                        var ymin = yminProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
+                        var xmax = xmaxProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
+                        var ymax = ymaxProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
+
+                        return spatialRel.ToLowerInvariant() switch
+                        {
+                            "esrispatialrelintersects" or "esrispatialrelenvelopeintersects" =>
+                                $"(\"bbox.xmin\" <= {xmax} AND \"bbox.xmax\" >= {xmin} AND \"bbox.ymin\" <= {ymax} AND \"bbox.ymax\" >= {ymin})",
+                            "esrispatialrelcontains" =>
+                                $"(\"bbox.xmin\" >= {xmin} AND \"bbox.xmax\" <= {xmax} AND \"bbox.ymin\" >= {ymin} AND \"bbox.ymax\" <= {ymax})",
+                            "esrispatialrelwithin" =>
+                                $"(\"bbox.xmin\" <= {xmin} AND \"bbox.xmax\" >= {xmax} AND \"bbox.ymin\" <= {ymin} AND \"bbox.ymax\" >= {ymax})",
+                            _ => $"(\"bbox.xmin\" <= {xmax} AND \"bbox.xmax\" >= {xmin} AND \"bbox.ymin\" <= {ymax} AND \"bbox.ymax\" >= {ymin})"
+                        };
+                    }
                 }
-                
-                return null;
             }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error parsing geometry JSON: {ex.Message}");
+            }
+
+            return string.Empty;
         }
 
         /// <summary>
-        /// Gets field definitions for the response
+        /// Execute DuckDB query and return features
+        /// </summary>
+        private async Task<List<object>> ExecuteDuckDbQuery(string query)
+        {
+            var features = new List<object>();
+
+            try
+            {
+                Debug.WriteLine($"Executing DuckDB query: {query}");
+
+                using (var connection = _dataProcessor.CreateConnection())
+                {
+                    await connection.OpenAsync();
+                    using (var command = connection.CreateCommand())
+                    {
+                        command.CommandText = query;
+                        using (var reader = await command.ExecuteReaderAsync())
+                        {
+                            var objectId = 1;
+                            while (await reader.ReadAsync())
+                            {
+                                var attributes = new Dictionary<string, object>
+                                {
+                                    ["OBJECTID"] = objectId++
+                                };
+
+                                // Read all columns
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                {
+                                    var fieldName = reader.GetName(i);
+                                    var value = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                                    attributes[fieldName] = value;
+                                }
+
+                                var feature = new
+                                {
+                                    attributes = attributes,
+                                    geometry = (object)null // For now, we'll return null geometry
+                                };
+
+                                features.Add(feature);
+                            }
+                        }
+                    }
+                }
+
+                Debug.WriteLine($"Returned {features.Count} features");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error executing DuckDB query: {ex.Message}");
+                throw;
+            }
+
+            return features;
+        }
+
+        /// <summary>
+        /// Get field definitions for the layer
         /// </summary>
         private object[] GetFieldDefinitions()
         {
@@ -486,79 +632,107 @@ namespace DuckDBGeoparquet.Services
                 {
                     name = "OBJECTID",
                     type = "esriFieldTypeOID",
-                    alias = "OBJECTID"
+                    alias = "Object ID",
+                    domain = (object)null,
+                    editable = false,
+                    nullable = false
                 },
                 new
                 {
                     name = "id",
                     type = "esriFieldTypeString",
                     alias = "ID",
-                    length = 255
+                    length = 255,
+                    domain = (object)null,
+                    editable = false,
+                    nullable = true
+                },
+                new
+                {
+                    name = "bbox.xmin",
+                    type = "esriFieldTypeDouble",
+                    alias = "BBox XMin",
+                    domain = (object)null,
+                    editable = false,
+                    nullable = true
+                },
+                new
+                {
+                    name = "bbox.ymin",
+                    type = "esriFieldTypeDouble",
+                    alias = "BBox YMin",
+                    domain = (object)null,
+                    editable = false,
+                    nullable = true
+                },
+                new
+                {
+                    name = "bbox.xmax",
+                    type = "esriFieldTypeDouble",
+                    alias = "BBox XMax",
+                    domain = (object)null,
+                    editable = false,
+                    nullable = true
+                },
+                new
+                {
+                    name = "bbox.ymax",
+                    type = "esriFieldTypeDouble",
+                    alias = "BBox YMax",
+                    domain = (object)null,
+                    editable = false,
+                    nullable = true
+                },
+                new
+                {
+                    name = "name",
+                    type = "esriFieldTypeString",
+                    alias = "Name",
+                    length = 255,
+                    domain = (object)null,
+                    editable = false,
+                    nullable = true
+                },
+                new
+                {
+                    name = "place_type",
+                    type = "esriFieldTypeString",
+                    alias = "Place Type",
+                    length = 255,
+                    domain = (object)null,
+                    editable = false,
+                    nullable = true
                 }
             };
         }
 
         /// <summary>
-        /// Writes JSON response in the requested format
+        /// Write JSON response to HTTP context
         /// </summary>
-        private async Task<IResult> WriteJsonResponse(HttpContext context, object data, string format)
+        private async Task WriteJsonResponse(HttpListenerContext context, string json)
         {
-            string jsonResponse;
-            string contentType;
+            var response = context.Response;
+            response.ContentType = "application/json";
+            response.StatusCode = 200;
 
-            switch (format.ToLowerInvariant())
-            {
-                case "pjson":
-                    // Pretty-printed JSON
-                    var prettyOptions = new JsonSerializerOptions(_jsonOptions) { WriteIndented = true };
-                    jsonResponse = JsonSerializer.Serialize(data, prettyOptions);
-                    contentType = "application/json";
-                    break;
-                
-                case "geojson":
-                    // TODO: Convert to GeoJSON format
-                    jsonResponse = JsonSerializer.Serialize(data, _jsonOptions);
-                    contentType = "application/geo+json";
-                    break;
-                
-                default: // json
-                    jsonResponse = JsonSerializer.Serialize(data, _jsonOptions);
-                    contentType = "application/json";
-                    break;
-            }
+            var buffer = Encoding.UTF8.GetBytes(json);
+            response.ContentLength64 = buffer.Length;
 
-            context.Response.ContentType = contentType;
-            context.Response.Headers.Append("Access-Control-Allow-Origin", "*");
-            
-            await context.Response.WriteAsync(jsonResponse);
-            return Results.Empty;
+            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+            response.Close();
         }
+
+        public bool IsRunning => _isRunning;
 
         public void Dispose()
         {
-            _ = Task.Run(async () => await StopAsync());
+            if (_isRunning)
+            {
+                StopAsync().Wait();
+            }
+
             _cancellationTokenSource?.Dispose();
+            _listener?.Close();
         }
     }
-
-    /// <summary>
-    /// Parsed ArcGIS REST API query parameters
-    /// </summary>
-    public class ArcGisQueryParameters
-    {
-        public string Where { get; set; } = "1=1";
-        public string OutFields { get; set; } = "*";
-        public bool ReturnGeometry { get; set; } = true;
-        public string Format { get; set; } = "json";
-        public int? ResultRecordCount { get; set; }
-        public int ResultOffset { get; set; }
-        public string OrderByFields { get; set; }
-        public string GeometryType { get; set; }
-        public object QueryGeometry { get; set; }
-        public string SpatialRel { get; set; }
-        public string InSR { get; set; }
-        public bool HasGeometry => QueryGeometry != null;
-    }
-
-
 } 
