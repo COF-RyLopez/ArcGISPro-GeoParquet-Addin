@@ -115,6 +115,10 @@ namespace DuckDBGeoparquet.Services
             }
         };
 
+        // In-memory cache status
+        private bool _dataLoaded = false;
+        private readonly object _loadLock = new object();
+
         public FeatureServiceBridge(DataProcessor dataProcessor, int port = 8080)
         {
             _dataProcessor = dataProcessor ?? throw new ArgumentNullException(nameof(dataProcessor));
@@ -125,11 +129,66 @@ namespace DuckDBGeoparquet.Services
         public string ServiceUrl => $"http://localhost:{_port}/arcgis/rest/services/overture/FeatureServer";
 
         /// <summary>
+        /// Ensures in-memory data tables are loaded for all themes
+        /// </summary>
+        private async Task EnsureDataLoadedAsync()
+        {
+            if (_dataLoaded) return;
+
+            lock (_loadLock)
+            {
+                if (_dataLoaded) return; // Double-check locking pattern
+                
+                Debug.WriteLine("🔄 Loading Overture Maps data into DuckDB in-memory tables for high-performance querying...");
+            }
+
+            try
+            {
+                // Load each theme into in-memory table for fast querying
+                foreach (var theme in _themes)
+                {
+                    var tableName = $"theme_{theme.Id}_{theme.Name.Replace(" ", "_").Replace("-", "_").ToLowerInvariant()}";
+                    Debug.WriteLine($"📥 Loading {theme.Name} into in-memory table '{tableName}'...");
+
+                    // Create in-memory table with spatial indexing
+                    var createTableQuery = $@"
+                        CREATE TABLE {tableName} AS 
+                        SELECT * FROM read_parquet('{theme.S3Path}')
+                        WHERE bbox.xmin IS NOT NULL AND bbox.ymin IS NOT NULL 
+                          AND bbox.xmax IS NOT NULL AND bbox.ymax IS NOT NULL";
+
+                    await _dataProcessor.ExecuteQueryAsync(createTableQuery);
+                    Debug.WriteLine($"✅ {theme.Name} loaded successfully into '{tableName}'");
+                }
+
+                lock (_loadLock)
+                {
+                    _dataLoaded = true;
+                }
+
+                Debug.WriteLine("🎉 All Overture Maps themes loaded into DuckDB in-memory cache! Queries will now be lightning fast ⚡");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"❌ Error loading data into in-memory tables: {ex.Message}");
+                // Don't set _dataLoaded = true on error, so it can retry
+            }
+        }
+
+        /// <summary>
+        /// Gets the in-memory table name for a theme
+        /// </summary>
+        private string GetTableName(ThemeDefinition theme)
+        {
+            return $"theme_{theme.Id}_{theme.Name.Replace(" ", "_").Replace("-", "_").ToLowerInvariant()}";
+        }
+
+        /// <summary>
         /// Starts the HTTP server
         /// </summary>
-        public Task StartAsync()
+        public async Task StartAsync()
         {
-            if (_isRunning) return Task.CompletedTask;
+            if (_isRunning) return;
 
             try
             {
@@ -144,12 +203,14 @@ namespace DuckDBGeoparquet.Services
 
                 _isRunning = true;
                 Debug.WriteLine($"✅ Feature Service Bridge ready: {ServiceUrl}");
-                return Task.CompletedTask;
+                
+                // Initialize in-memory data tables in background for better performance
+                _ = Task.Run(async () => await EnsureDataLoadedAsync());
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"Failed to start Feature Service Bridge: {ex.Message}");
-                return Task.FromException(ex);
+                throw;
             }
         }
 
@@ -491,6 +552,9 @@ namespace DuckDBGeoparquet.Services
                     return;
                 }
 
+                // Ensure data is loaded into in-memory tables
+                await EnsureDataLoadedAsync();
+
                 var queryParams = ParseQueryParameters(context.Request);
                 
                 // Extract query parameters
@@ -595,7 +659,7 @@ namespace DuckDBGeoparquet.Services
         }
 
         /// <summary>
-        /// Build DuckDB SQL query from ArcGIS parameters - Cloud-native S3 querying with theme-specific fields
+        /// Build DuckDB SQL query from ArcGIS parameters - In-memory high-performance querying
         /// </summary>
         private string BuildDuckDbQuery(ThemeDefinition theme, string whereClause, string geometryParam, string spatialRel, string outFields, int maxRecords)
         {
@@ -631,8 +695,19 @@ namespace DuckDBGeoparquet.Services
                 query.Append(outFields);
             }
 
-            // CLOUD-NATIVE: Query S3 directly using theme-specific path
-            query.Append($" FROM read_parquet('{theme.S3Path}')");
+            // Check if in-memory table exists, otherwise fallback to S3
+            var tableName = GetTableName(theme);
+            if (_dataLoaded)
+            {
+                // IN-MEMORY: Query from pre-loaded in-memory table for lightning-fast performance
+                query.Append($" FROM {tableName}");
+            }
+            else
+            {
+                // FALLBACK: Direct S3 query if in-memory data not loaded yet
+                query.Append($" FROM read_parquet('{theme.S3Path}')");
+                Debug.WriteLine($"⚠️ Fallback to S3 for {theme.Name} - in-memory data not loaded yet");
+            }
 
             var conditions = new List<string>();
 
@@ -661,7 +736,15 @@ namespace DuckDBGeoparquet.Services
 
             query.Append($" LIMIT {maxRecords}");
 
-            Debug.WriteLine($"Cloud-native query for {theme.Name}: {query}");
+            if (_dataLoaded)
+            {
+                Debug.WriteLine($"⚡ In-memory query for {theme.Name} (table: {tableName}): {query}");
+            }
+            else
+            {
+                Debug.WriteLine($"📡 S3 fallback query for {theme.Name}: {query}");
+            }
+            
             return query.ToString();
         }
 

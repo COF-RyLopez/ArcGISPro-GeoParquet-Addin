@@ -230,29 +230,29 @@
                                 Padding="8"
                                 Margin="0,0,0,12">
                                                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
-                                   The Multi-Layer Feature Service Bridge creates a local HTTP server that queries live cloud data from S3 as an ArcGIS REST Feature Service. This allows you to consume cloud-native data in ArcGIS Pro without downloading files.
+                                   The Multi-Layer Feature Service Bridge creates a local HTTP server with DuckDB in-memory caching for lightning-fast performance. Data is loaded once from S3 into memory, then served instantly to ArcGIS Pro.
                                    <LineBreak/><LineBreak/>
-                                   <Bold>🚀 TRUE CLOUD-NATIVE MULTI-LAYER WORKFLOW:</Bold>
+                                   <Bold>⚡ HIGH-PERFORMANCE IN-MEMORY WORKFLOW:</Bold>
                                    <LineBreak/>
-                                   1. <Bold>START:</Bold> Click "Start Feature Service" below (no download needed!)
+                                   1. <Bold>START:</Bold> Click "Start Feature Service" - loads all themes into memory
                                    <LineBreak/>
                                    2. <Bold>CONNECT:</Bold> Add the service URL to ArcGIS Pro as a Feature Service
                                    <LineBreak/>
                                    3. <Bold>SELECT:</Bold> Choose which layers to display (Places, Buildings, Addresses, etc.)
                                    <LineBreak/>
-                                   4. <Bold>EXPLORE:</Bold> Pan/zoom in Pro → service fetches live data from S3 on-demand
+                                   4. <Bold>EXPLORE:</Bold> Pan/zoom in Pro → instant responses from in-memory cache!
                                    <LineBreak/><LineBreak/>
-                                   <Bold>💡 All 7 Overture Maps themes available as separate layers - toggle them on/off in ArcGIS Pro!</Bold>
+                                   <Bold>🚀 All 7 Overture Maps themes cached in-memory for maximum performance!</Bold>
                                </TextBlock>
                         </Border>
 
-                        <!-- Multi-Layer Info -->
-                        <Border Background="#FFF3CD" BorderBrush="#FFEAA7" BorderThickness="1" 
+                        <!-- Performance Info -->
+                        <Border Background="#D4EDDA" BorderBrush="#C3E6CB" BorderThickness="1" 
                                 CornerRadius="4" Padding="8" Margin="0,0,0,12">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="🌟" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                <TextBlock TextWrapping="Wrap" VerticalAlignment="Center" Foreground="#856404">
-                                    <Bold>Multi-Layer Service:</Bold> All 7 Overture Maps themes are included as separate layers that you can toggle on/off in ArcGIS Pro.
+                                <TextBlock Text="⚡" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                <TextBlock TextWrapping="Wrap" VerticalAlignment="Center" Foreground="#155724">
+                                    <Bold>In-Memory Performance:</Bold> All 7 Overture Maps themes are loaded into DuckDB memory cache for instant queries - no S3 latency!
                                 </TextBlock>
                             </StackPanel>
                         </Border>
