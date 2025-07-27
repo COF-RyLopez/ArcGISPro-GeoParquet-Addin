@@ -232,13 +232,15 @@
                             <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
                                 The Feature Service Bridge creates a local HTTP server that exposes your DuckDB data as an ArcGIS REST Feature Service. This allows you to consume live cloud data in ArcGIS Pro without downloading files.
                                 <LineBreak/><LineBreak/>
-                                <Bold>How to use:</Bold>
+                                <Bold>⚠️ IMPORTANT WORKFLOW:</Bold>
                                 <LineBreak/>
-                                1. Load some data first using the "Select Data" tab
+                                1. <Bold>FIRST:</Bold> Load data using the "Select Data" tab (select themes → choose area → Load Data)
                                 <LineBreak/>
-                                2. Start the Feature Service Bridge below
+                                2. <Bold>THEN:</Bold> Start the Feature Service Bridge below
                                 <LineBreak/>
-                                3. In ArcGIS Pro, add a feature service using the provided URL
+                                3. <Bold>FINALLY:</Bold> In ArcGIS Pro, add the feature service using the provided URL
+                                <LineBreak/><LineBreak/>
+                                <Bold>💡 The service serves whatever data you've loaded into DuckDB. No data loaded = empty service!</Bold>
                             </TextBlock>
                         </Border>
 
@@ -275,6 +277,18 @@
                                     <Button Grid.Column="2" Content="Copy" Width="50" Height="24" 
                                             Command="{Binding CopyFeatureServiceUrlCommand}" Style="{DynamicResource Esri_Button}"/>
                                 </Grid>
+
+                                <!-- Data Status Warning -->
+                                <Border Background="#FFF3CD" BorderBrush="#FFEAA4" BorderThickness="1" 
+                                        CornerRadius="4" Padding="8" Margin="0,0,0,8"
+                                        Visibility="{Binding ShowDataWarning, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="⚠️" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                        <TextBlock TextWrapping="Wrap" VerticalAlignment="Center" Foreground="#856404">
+                                            <Bold>No data loaded!</Bold> Go to "Select Data" tab and load themes before starting the service.
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
 
                                 <!-- Control Button -->
                                 <Button Content="{Binding ToggleFeatureServiceButtonText}" 

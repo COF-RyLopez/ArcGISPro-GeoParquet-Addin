@@ -375,6 +375,20 @@ namespace DuckDBGeoparquet.Views
         public string ToggleFeatureServiceButtonText => IsFeatureServiceRunning 
             ? "Stop Feature Service" 
             : "Start Feature Service";
+
+        private bool _hasDataLoaded;
+        public bool HasDataLoaded
+        {
+            get => _hasDataLoaded;
+            set 
+            { 
+                SetProperty(ref _hasDataLoaded, value);
+                NotifyPropertyChanged(nameof(ShowDataWarning));
+            }
+        }
+
+        public bool ShowDataWarning => !HasDataLoaded;
+
         public List<SelectableThemeItem> AllSelectedLeafItemsForPreview => GetSelectedLeafItems();
 
         // Public parameterless constructor for XAML Designer
@@ -1465,6 +1479,9 @@ namespace DuckDBGeoparquet.Views
                 // Switch to status tab
                 SelectedTabIndex = 1;
 
+                // Reset data loaded status at start of loading
+                HasDataLoaded = false;
+
                 StatusText = $"Loading {selectedLeafItems.Count} selected data types...";
                 AddToLog($"Starting to load {selectedLeafItems.Count} data type(s) from release {LatestRelease}");
 
@@ -1736,6 +1753,10 @@ namespace DuckDBGeoparquet.Views
 
                 StatusText = $"Successfully loaded all selected themes from release {LatestRelease}";
                 AddToLog($"All selected themes loaded successfully");
+                
+                // Mark that data has been loaded for Feature Service
+                HasDataLoaded = true;
+                AddToLog("🚀 Data is now available for Feature Service Bridge");
                 AddToLog("----------------");
                 if (extent != null)
                 {
@@ -1749,6 +1770,9 @@ namespace DuckDBGeoparquet.Views
             }
             catch (Exception ex)
             {
+                // Mark data as not loaded on error
+                HasDataLoaded = false;
+
                 // Determine if this is a file access issue
                 bool isFileAccessError = ex.Message.Contains("because it is being used by another process") ||
                                          ex.Message.Contains("access") ||
@@ -2165,6 +2189,9 @@ namespace DuckDBGeoparquet.Views
             // Reset progress and status
             ProgressValue = 0;
             StatusText = "Ready to load Overture Maps data";
+
+            // Reset data loading status for Feature Service
+            HasDataLoaded = false;
 
             // Clear log but keep initialization messages
             LogOutput = new();
