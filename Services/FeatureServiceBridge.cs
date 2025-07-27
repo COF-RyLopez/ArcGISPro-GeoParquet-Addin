@@ -843,18 +843,23 @@ namespace DuckDBGeoparquet.Services
             }
             else if (outFields == "OBJECTID")
             {
-                query.Append("id"); // Use id as the basis for OBJECTID
+                // CRITICAL FIX: Always include geometry for spatial feature services
+                // ArcGIS Pro needs geometry even when requesting only OBJECTID
+                query.Append("id, geometry as geometry_wkb"); // Use id as the basis for OBJECTID + geometry
             }
             else
             {
-                // For specific field requests, add geometry if needed
-                if (returnGeometry && !outFields.Contains("geometry"))
+                // For specific field requests, ALWAYS include geometry for spatial layers
+                // Handle OBJECTID to id conversion
+                var processedFields = outFields.Replace("OBJECTID", "id");
+                
+                if (!processedFields.Contains("geometry"))
                 {
-                    query.Append($"{outFields}, geometry as geometry_wkb");
+                    query.Append($"{processedFields}, geometry as geometry_wkb");
                 }
                 else
                 {
-                    query.Append(outFields);
+                    query.Append(processedFields);
                 }
             }
 
