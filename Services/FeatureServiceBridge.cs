@@ -10,7 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
 using ArcGIS.Core.Geometry;
-using ArcGIS.Desktop.Framework.Threading;
+using ArcGIS.Desktop.Framework.Threading.Tasks;
 using ArcGIS.Desktop.Mapping;
 using System.Diagnostics;
 
@@ -230,9 +230,9 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Starts the HTTP server
         /// </summary>
-        public async Task StartAsync()
+        public Task StartAsync()
         {
-            if (_isRunning) return;
+            if (_isRunning) return Task.CompletedTask;
 
             try
             {
@@ -250,11 +250,13 @@ namespace DuckDBGeoparquet.Services
                 
                 // Initialize in-memory data tables in background for better performance
                 _ = Task.Run(async () => await EnsureDataLoadedAsync());
+
+                return Task.CompletedTask;
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"Failed to start Feature Service Bridge: {ex.Message}");
-                throw;
+                return Task.FromException(ex);
             }
         }
 

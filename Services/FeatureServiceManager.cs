@@ -47,7 +47,7 @@ namespace DuckDBGeoparquet.Services
                 Debug.WriteLine("Starting DuckDB Multi-Layer Feature Service Bridge...");
 
                 _featureServiceBridge = new FeatureServiceBridge(_dataProcessor, port);
-                await _featureServiceBridge.StartAsync();
+                await _featureServiceBridge.StartAsync(); // May throw exceptions if startup fails
 
                 _isRunning = true;
 
