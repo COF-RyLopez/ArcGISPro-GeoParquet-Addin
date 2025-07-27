@@ -1262,10 +1262,39 @@ namespace DuckDBGeoparquet.Services
                 else if (wkbData is System.IO.UnmanagedMemoryStream memoryStream)
                 {
                     Debug.WriteLine($"🔍 Got UnmanagedMemoryStream of length: {memoryStream.Length}");
-                    // Read all bytes from the memory stream
-                    wkbBytes = new byte[memoryStream.Length];
-                    memoryStream.Position = 0;
-                    memoryStream.Read(wkbBytes, 0, (int)memoryStream.Length);
+                    
+                    // Safety check for memory stream
+                    if (memoryStream.Length <= 0 || memoryStream.Length > 100000000) // 100MB limit
+                    {
+                        Debug.WriteLine($"🔍 Invalid memory stream length: {memoryStream.Length}");
+                        return null;
+                    }
+                    
+                    try
+                    {
+                        // Read all bytes from the memory stream with safety checks
+                        wkbBytes = new byte[memoryStream.Length];
+                        memoryStream.Position = 0;
+                        
+                        int totalBytesRead = 0;
+                        int bytesToRead = (int)memoryStream.Length;
+                        
+                        while (totalBytesRead < bytesToRead)
+                        {
+                            int bytesRead = memoryStream.Read(wkbBytes, totalBytesRead, bytesToRead - totalBytesRead);
+                            if (bytesRead == 0)
+                                break; // End of stream
+                            totalBytesRead += bytesRead;
+                        }
+                        
+                        Debug.WriteLine($"🔍 Successfully read {totalBytesRead} bytes from UnmanagedMemoryStream");
+                        Debug.WriteLine($"🔍 First 16 bytes: [{string.Join(",", wkbBytes.Take(Math.Min(16, wkbBytes.Length)).Select(b => b.ToString("X2")))}]");
+                    }
+                    catch (Exception streamEx)
+                    {
+                        Debug.WriteLine($"🔍 Error reading UnmanagedMemoryStream: {streamEx.Message}");
+                        return null;
+                    }
                 }
                 else
                 {
@@ -1273,15 +1302,38 @@ namespace DuckDBGeoparquet.Services
                     return null;
                 }
 
-                if (wkbBytes.Length < 9) // Minimum WKB size
+                // Comprehensive WKB validation
+                if (wkbBytes == null)
+                {
+                    Debug.WriteLine($"🔍 WKB bytes array is null");
                     return null;
+                }
+                
+                if (wkbBytes.Length < 9) // Minimum WKB size
+                {
+                    Debug.WriteLine($"🔍 WKB too short: {wkbBytes.Length} bytes (minimum 9 required)");
+                    return null;
+                }
 
-                // Parse WKB header
+                Debug.WriteLine($"🔍 WKB total length: {wkbBytes.Length} bytes");
+
+                // Parse WKB header with safety checks
                 int pos = 0;
                 byte byteOrder = wkbBytes[pos++];
                 bool littleEndian = byteOrder == 1;
                 
+                Debug.WriteLine($"🔍 WKB byte order: 0x{byteOrder:X2}, little endian: {littleEndian}");
+                
+                // Validate byte order
+                if (byteOrder != 0 && byteOrder != 1)
+                {
+                    Debug.WriteLine($"🔍 Invalid WKB byte order: {byteOrder} (expected 0 or 1)");
+                    return null;
+                }
+                
                 uint geometryType = ReadUInt32(wkbBytes, ref pos, littleEndian);
+                
+                Debug.WriteLine($"🔍 WKB geometry type parsed: {geometryType}");
                 
                 // Handle basic geometry types
                 switch (geometryType)
@@ -1408,17 +1460,41 @@ namespace DuckDBGeoparquet.Services
         /// </summary>
         private uint ReadUInt32(byte[] bytes, ref int pos, bool littleEndian)
         {
-            uint value;
-            if (littleEndian)
+            // Safety bounds checking to prevent ExecutionEngineException
+            if (bytes == null)
             {
-                value = (uint)(bytes[pos] | (bytes[pos + 1] << 8) | (bytes[pos + 2] << 16) | (bytes[pos + 3] << 24));
+                Debug.WriteLine($"🔍 ReadUInt32: bytes array is null");
+                throw new ArgumentNullException(nameof(bytes));
             }
-            else
+            
+            if (pos < 0 || pos + 4 > bytes.Length)
             {
-                value = (uint)((bytes[pos] << 24) | (bytes[pos + 1] << 16) | (bytes[pos + 2] << 8) | bytes[pos + 3]);
+                Debug.WriteLine($"🔍 ReadUInt32: Invalid position {pos}, array length {bytes.Length}");
+                throw new ArgumentOutOfRangeException(nameof(pos), $"Position {pos} out of bounds for array length {bytes.Length}");
             }
-            pos += 4;
-            return value;
+            
+            try
+            {
+                uint value;
+                if (littleEndian)
+                {
+                    value = (uint)(bytes[pos] | (bytes[pos + 1] << 8) | (bytes[pos + 2] << 16) | (bytes[pos + 3] << 24));
+                }
+                else
+                {
+                    value = (uint)((bytes[pos] << 24) | (bytes[pos + 1] << 16) | (bytes[pos + 2] << 8) | bytes[pos + 3]);
+                }
+                
+                Debug.WriteLine($"🔍 ReadUInt32 at pos {pos}: bytes=[{bytes[pos]:X2},{bytes[pos+1]:X2},{bytes[pos+2]:X2},{bytes[pos+3]:X2}], value={value}, littleEndian={littleEndian}");
+                
+                pos += 4;
+                return value;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"🔍 ReadUInt32 exception at pos {pos}: {ex.Message}");
+                throw;
+            }
         }
 
         /// <summary>
