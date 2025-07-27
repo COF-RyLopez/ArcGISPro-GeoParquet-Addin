@@ -1063,6 +1063,40 @@ namespace DuckDBGeoparquet.Services
             _pendingLayers.Clear();
         }
 
+        /// <summary>
+        /// Executes a SQL query against the current DuckDB connection and returns results
+        /// </summary>
+        public async Task<List<Dictionary<string, object>>> ExecuteQueryAsync(string sqlQuery)
+        {
+            var results = new List<Dictionary<string, object>>();
+
+            try
+            {
+                using var command = _connection.CreateCommand();
+                command.CommandText = sqlQuery;
+                using var reader = await command.ExecuteReaderAsync();
+
+                while (await reader.ReadAsync())
+                {
+                    var row = new Dictionary<string, object>();
+                    for (int i = 0; i < reader.FieldCount; i++)
+                    {
+                        var fieldName = reader.GetName(i);
+                        var value = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                        row[fieldName] = value;
+                    }
+                    results.Add(row);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error executing query: {ex.Message}");
+                throw;
+            }
+
+            return results;
+        }
+
         public void Dispose()
         {
             _connection?.Dispose();

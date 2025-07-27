@@ -54,9 +54,9 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Starts the HTTP server
         /// </summary>
-        public async Task StartAsync()
+        public Task StartAsync()
         {
-            if (_isRunning) return;
+            if (_isRunning) return Task.CompletedTask;
 
             try
             {
@@ -71,11 +71,12 @@ namespace DuckDBGeoparquet.Services
 
                 _isRunning = true;
                 Debug.WriteLine($"✅ Feature Service Bridge ready: {ServiceUrl}");
+                return Task.CompletedTask;
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"Failed to start Feature Service Bridge: {ex.Message}");
-                throw;
+                return Task.FromException(ex);
             }
         }
 
@@ -307,10 +308,6 @@ namespace DuckDBGeoparquet.Services
                     typeIdField = (string)null,
                     subtypeField = (string)null,
                     fields = GetFieldDefinitions(),
-                    geometryType = "esriGeometryPolygon",
-                    minScale = 0,
-                    maxScale = 0,
-                    defaultVisibility = true,
                     canModifyLayer = false,
                     canScaleSymbols = false,
                     hasLabels = false,
@@ -574,40 +571,29 @@ namespace DuckDBGeoparquet.Services
             {
                 Debug.WriteLine($"Executing DuckDB query: {query}");
 
-                using (var connection = _dataProcessor.CreateConnection())
+                var queryResults = await _dataProcessor.ExecuteQueryAsync(query);
+                
+                var objectId = 1;
+                foreach (var row in queryResults)
                 {
-                    await connection.OpenAsync();
-                    using (var command = connection.CreateCommand())
+                    var attributes = new Dictionary<string, object>
                     {
-                        command.CommandText = query;
-                        using (var reader = await command.ExecuteReaderAsync())
-                        {
-                            var objectId = 1;
-                            while (await reader.ReadAsync())
-                            {
-                                var attributes = new Dictionary<string, object>
-                                {
-                                    ["OBJECTID"] = objectId++
-                                };
+                        ["OBJECTID"] = objectId++
+                    };
 
-                                // Read all columns
-                                for (int i = 0; i < reader.FieldCount; i++)
-                                {
-                                    var fieldName = reader.GetName(i);
-                                    var value = reader.IsDBNull(i) ? null : reader.GetValue(i);
-                                    attributes[fieldName] = value;
-                                }
-
-                                var feature = new
-                                {
-                                    attributes = attributes,
-                                    geometry = (object)null // For now, we'll return null geometry
-                                };
-
-                                features.Add(feature);
-                            }
-                        }
+                    // Add all columns from the query result
+                    foreach (var kvp in row)
+                    {
+                        attributes[kvp.Key] = kvp.Value;
                     }
+
+                    var feature = new
+                    {
+                        attributes = attributes,
+                        geometry = (object)null // For now, we'll return null geometry
+                    };
+
+                    features.Add(feature);
                 }
 
                 Debug.WriteLine($"Returned {features.Count} features");
