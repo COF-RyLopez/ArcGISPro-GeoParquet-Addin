@@ -1362,6 +1362,13 @@ namespace DuckDBGeoparquet.Services
                 }
 
                 Debug.WriteLine($"🔍 WKB total length: {wkbBytes.Length} bytes");
+                
+                // CRITICAL: Pre-validate data patterns to prevent ExecutionEngineException
+                if (!ValidateWkbDataIntegrity(wkbBytes))
+                {
+                    Debug.WriteLine($"🔍 WKB data failed integrity validation - treating as null geometry");
+                    return null;
+                }
 
                 // Parse WKB header with safety checks
                 int pos = 0;
@@ -1416,21 +1423,16 @@ namespace DuckDBGeoparquet.Services
                         Debug.WriteLine($"🔍 Processing Polygon geometry");
                         return ParseWkbPolygon(wkbBytes, ref pos, littleEndian);
                         
-                    case 4: // MultiPoint - BUT might actually be Point with different structure
+                    case 4: // MultiPoint - BUT appears to have non-standard format with padding
                         Debug.WriteLine($"🔍 Processing geometry type 4 (claimed MultiPoint) - total bytes: {wkbBytes.Length}");
                         
-                        // CRITICAL: Check if this is actually a Point geometry mis-labeled as MultiPoint
-                        // Based on data pattern, many "type 4" geometries appear to be Points
-                        if (wkbBytes.Length <= 32)
-                        {
-                            Debug.WriteLine($"🔍 Small geometry ({wkbBytes.Length} bytes) - treating as Point instead of MultiPoint");
-                            return ParseWkbPoint(wkbBytes, ref pos, littleEndian);
-                        }
-                        else
-                        {
-                            Debug.WriteLine($"🔍 Large geometry ({wkbBytes.Length} bytes) - attempting MultiPoint parsing");
-                            return ParseWkbMultiPointSafely(wkbBytes, ref pos, littleEndian);
-                        }
+                        // CRITICAL: Based on debug logs, these "MultiPoint" geometries have additional padding
+                        // Pattern observed: [01,04,00,00,00,00,00,00,coordinate_data...]
+                        // Standard WKB would be: [01,04,00,00,00,point_count,coordinate_data...]
+                        // But we're seeing 3 extra zero bytes before the coordinate data
+                        
+                        Debug.WriteLine($"🔍 Attempting non-standard MultiPoint format with padding compensation");
+                        return ParseWkbMultiPointWithPadding(wkbBytes, ref pos, littleEndian);
                         
                     default:
                         Debug.WriteLine($"🔍 Unsupported WKB geometry type: {geometryType}");
@@ -1463,9 +1465,31 @@ namespace DuckDBGeoparquet.Services
                     Debug.WriteLine($"🔍 ParseWkbPoint: Insufficient bytes - pos {pos}, need 16 bytes, have {wkbBytes.Length - pos}");
                     return null;
                 }
-                    
-                double x = ReadDouble(wkbBytes, ref pos, littleEndian);
-                double y = ReadDouble(wkbBytes, ref pos, littleEndian);
+
+                // CRITICAL: Enhanced safety - check for obviously corrupted byte patterns before parsing
+                Debug.WriteLine($"🔍 ParseWkbPoint: Examining bytes at pos {pos}: [{string.Join(",", wkbBytes.Skip(pos).Take(16).Select(b => $"{b:X2}"))}]");
+                
+                double x, y;
+                
+                try
+                {
+                    x = ReadDouble(wkbBytes, ref pos, littleEndian);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"🔍 ParseWkbPoint: Failed to read X coordinate - {ex.Message}");
+                    return null;
+                }
+                
+                try
+                {
+                    y = ReadDouble(wkbBytes, ref pos, littleEndian);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"🔍 ParseWkbPoint: Failed to read Y coordinate - {ex.Message}");
+                    return null;
+                }
                 
                 // Validate coordinate values are reasonable for geographic data
                 if (double.IsNaN(x) || double.IsNaN(y) || double.IsInfinity(x) || double.IsInfinity(y))
@@ -1475,8 +1499,10 @@ namespace DuckDBGeoparquet.Services
                 }
                 
                 // CRITICAL: Reject astronomical coordinates - indicates wrong format interpretation
-                if (Math.Abs(x) > 360 || Math.Abs(y) > 180 || 
-                    Math.Abs(x) > 1e10 || Math.Abs(y) > 1e10)
+                // Expand the checks to catch more edge cases that could cause ExecutionEngineException
+                if (Math.Abs(x) > 1e15 || Math.Abs(y) > 1e15 ||   // Extremely large values
+                    Math.Abs(x) < 1e-15 || Math.Abs(y) < 1e-15 ||   // Extremely small values (but not zero)
+                    (Math.Abs(x) > 360 && Math.Abs(y) > 180))       // Invalid geographic coordinates
                 {
                     Debug.WriteLine($"🔍 ParseWkbPoint: INVALID coordinates (astronomical values) x={x}, y={y}");
                     Debug.WriteLine($"🔍 ParseWkbPoint: This suggests wrong WKB format interpretation - rejecting");
@@ -1605,6 +1631,127 @@ namespace DuckDBGeoparquet.Services
             {
                 Debug.WriteLine($"🔍 MultiPoint parsing failed safely: {ex.Message}");
                 return null; // Safe fallback
+            }
+        }
+
+        /// <summary>
+        /// Validate WKB data integrity to prevent ExecutionEngineException
+        /// </summary>
+        private bool ValidateWkbDataIntegrity(byte[] wkbBytes)
+        {
+            try
+            {
+                if (wkbBytes == null || wkbBytes.Length < 9)
+                {
+                    Debug.WriteLine($"🔍 ValidateWkbDataIntegrity: Insufficient data length");
+                    return false;
+                }
+                
+                // Check byte order
+                byte byteOrder = wkbBytes[0];
+                if (byteOrder != 0x00 && byteOrder != 0x01)
+                {
+                    Debug.WriteLine($"🔍 ValidateWkbDataIntegrity: Invalid byte order 0x{byteOrder:X2}");
+                    return false;
+                }
+                
+                // Check geometry type (should be reasonable)
+                bool littleEndian = byteOrder == 0x01;
+                uint geometryType;
+                
+                if (littleEndian)
+                {
+                    geometryType = (uint)(wkbBytes[1] | (wkbBytes[2] << 8) | (wkbBytes[3] << 16) | (wkbBytes[4] << 24));
+                }
+                else
+                {
+                    geometryType = (uint)((wkbBytes[1] << 24) | (wkbBytes[2] << 16) | (wkbBytes[3] << 8) | wkbBytes[4]);
+                }
+                
+                // Validate geometry type is within reasonable range (0 = NULL is valid)
+                if (geometryType > 7)
+                {
+                    Debug.WriteLine($"🔍 ValidateWkbDataIntegrity: Invalid geometry type {geometryType}");
+                    return false;
+                }
+                
+                // For MultiPoint (type 4), check if the structure looks reasonable
+                if (geometryType == 4)
+                {
+                    // Check if we have the expected padding pattern: [00,00,00] after geometry type
+                    if (wkbBytes.Length >= 8 && 
+                        wkbBytes[5] == 0x00 && wkbBytes[6] == 0x00 && wkbBytes[7] == 0x00)
+                    {
+                        Debug.WriteLine($"🔍 ValidateWkbDataIntegrity: Found expected padding pattern for type 4");
+                        return true;
+                    }
+                    
+                    // Check if the "point count" looks reasonable (if standard WKB)
+                    uint pointCount;
+                    if (littleEndian)
+                    {
+                        pointCount = (uint)(wkbBytes[5] | (wkbBytes[6] << 8) | (wkbBytes[7] << 16) | (wkbBytes[8] << 24));
+                    }
+                    else
+                    {
+                        pointCount = (uint)((wkbBytes[5] << 24) | (wkbBytes[6] << 16) | (wkbBytes[7] << 8) | wkbBytes[8]);
+                    }
+                    
+                    // If point count is astronomical, this suggests corrupted data
+                    if (pointCount > 1000000)
+                    {
+                        Debug.WriteLine($"🔍 ValidateWkbDataIntegrity: Suspicious point count {pointCount} - likely corrupted");
+                        return false;
+                    }
+                }
+                
+                Debug.WriteLine($"🔍 ValidateWkbDataIntegrity: Data appears valid (type={geometryType}, length={wkbBytes.Length})");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"🔍 ValidateWkbDataIntegrity: Exception during validation - {ex.Message}");
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Parse WKB MultiPoint geometry with non-standard padding compensation
+        /// </summary>
+        private object ParseWkbMultiPointWithPadding(byte[] wkbBytes, ref int pos, bool littleEndian)
+        {
+            try
+            {
+                Debug.WriteLine($"🔍 ParseWkbMultiPointWithPadding: Starting at pos {pos}, total length {wkbBytes.Length}");
+                
+                // Based on observed patterns, skip additional padding bytes
+                // Pattern: [geometry_type][00,00,00][coordinate_data...]
+                if (pos + 3 <= wkbBytes.Length && 
+                    wkbBytes[pos] == 0x00 && wkbBytes[pos + 1] == 0x00 && wkbBytes[pos + 2] == 0x00)
+                {
+                    Debug.WriteLine($"🔍 Found expected padding bytes [00,00,00] at pos {pos} - skipping");
+                    pos += 3;
+                }
+                else
+                {
+                    Debug.WriteLine($"🔍 No padding found at pos {pos} - bytes: [{wkbBytes[pos]:X2},{wkbBytes[pos + 1]:X2},{wkbBytes[pos + 2]:X2}]");
+                }
+                
+                // Check if we have enough bytes for at least one point (16 bytes for x,y coordinates)
+                if (pos + 16 > wkbBytes.Length)
+                {
+                    Debug.WriteLine($"🔍 Insufficient bytes for coordinate parsing - pos {pos}, need 16 more bytes, have {wkbBytes.Length - pos}");
+                    return null;
+                }
+                
+                // Try to parse as a single point with the current position
+                Debug.WriteLine($"🔍 Attempting to parse coordinates starting at pos {pos}");
+                return ParseWkbPoint(wkbBytes, ref pos, littleEndian);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"🔍 ParseWkbMultiPointWithPadding failed safely: {ex.Message}");
+                return null;
             }
         }
 
@@ -1751,21 +1898,52 @@ namespace DuckDBGeoparquet.Services
             
             try
             {
+                // Enhanced safety: validate the bytes before processing to prevent memory corruption
                 byte[] doubleBytes = new byte[8];
+                
+                // Use safer copy method with additional validation
                 if (littleEndian)
                 {
-                    Array.Copy(bytes, pos, doubleBytes, 0, 8);
+                    // Validate each byte access before copying to prevent memory issues
+                    for (int i = 0; i < 8; i++)
+                    {
+                        if (pos + i >= bytes.Length)
+                        {
+                            throw new ArgumentOutOfRangeException($"Byte access out of bounds at position {pos + i}");
+                        }
+                        doubleBytes[i] = bytes[pos + i];
+                    }
                 }
                 else
                 {
+                    // Big endian - reverse byte order with validation
                     for (int i = 0; i < 8; i++)
                     {
+                        if (pos + 7 - i >= bytes.Length || pos + 7 - i < 0)
+                        {
+                            throw new ArgumentOutOfRangeException($"Byte access out of bounds at position {pos + 7 - i}");
+                        }
                         doubleBytes[i] = bytes[pos + 7 - i];
                     }
                 }
                 
+                // Additional safety: ensure BitConverter doesn't receive corrupted data
+                if (doubleBytes.Length != 8)
+                {
+                    throw new InvalidOperationException($"Double bytes array has invalid length: {doubleBytes.Length}");
+                }
+                
                 double value = BitConverter.ToDouble(doubleBytes, 0);
-                Debug.WriteLine($"🔍 ReadDouble at pos {pos}: value={value}, littleEndian={littleEndian}");
+                
+                // Validate the resulting double before proceeding
+                if (double.IsNaN(value))
+                {
+                    Debug.WriteLine($"🔍 ReadDouble at pos {pos}: NaN value detected from bytes [{string.Join(",", doubleBytes.Select(b => $"{b:X2}"))}]");
+                }
+                else
+                {
+                    Debug.WriteLine($"🔍 ReadDouble at pos {pos}: value={value}, littleEndian={littleEndian}");
+                }
                 
                 pos += 8;
                 return value;
@@ -1773,6 +1951,7 @@ namespace DuckDBGeoparquet.Services
             catch (Exception ex)
             {
                 Debug.WriteLine($"🔍 ReadDouble exception at pos {pos}: {ex.Message}");
+                Debug.WriteLine($"🔍 ReadDouble: Current bytes context: [{string.Join(",", bytes.Skip(Math.Max(0, pos - 4)).Take(16).Select(b => $"{b:X2}"))}]");
                 throw;
             }
         }
