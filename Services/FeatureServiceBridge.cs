@@ -964,6 +964,7 @@ namespace DuckDBGeoparquet.Services
             try
             {
                 Debug.WriteLine($"Executing DuckDB query: {query}");
+                Debug.WriteLine($"🔍 Query includes geometry_wkb: {query.Contains("geometry_wkb")}");
 
                 var queryResults = await _dataProcessor.ExecuteQueryAsync(query);
                 
@@ -982,8 +983,14 @@ namespace DuckDBGeoparquet.Services
                     {
                         if (kvp.Key == "geometry_wkb" && kvp.Value != null)
                         {
+                            Debug.WriteLine($"🔍 Found geometry_wkb column with data type: {kvp.Value.GetType()}, length: {(kvp.Value is byte[] bytes ? bytes.Length : kvp.Value.ToString().Length)}");
                             // Parse WKB geometry into ArcGIS geometry format (same as working Data Loader)
                             geometry = ParseWkbToArcGISGeometry(kvp.Value);
+                            Debug.WriteLine($"🔍 Parsed geometry result: {(geometry != null ? "SUCCESS" : "FAILED")}");
+                        }
+                        else if (kvp.Key == "geometry_wkb" && kvp.Value == null)
+                        {
+                            Debug.WriteLine($"🔍 Found geometry_wkb column but value is NULL");
                         }
                         else if (kvp.Key != "geometry_wkb") // Don't include WKB in attributes
                         {
@@ -1025,6 +1032,9 @@ namespace DuckDBGeoparquet.Services
                 }
 
                 Debug.WriteLine($"Returned {features.Count} features");
+                var featuresWithGeometry = features.Count(f => 
+                    f.ToString().Contains("geometry"));
+                Debug.WriteLine($"🔍 Features with geometry: {featuresWithGeometry}/{features.Count}");
             }
             catch (Exception ex)
             {
@@ -1224,23 +1234,29 @@ namespace DuckDBGeoparquet.Services
             try
             {
                 if (wkbData == null || wkbData == DBNull.Value)
+                {
+                    Debug.WriteLine($"🔍 WKB data is null or DBNull");
                     return null;
+                }
 
+                Debug.WriteLine($"🔍 Processing WKB data of type: {wkbData.GetType()}");
                 byte[] wkbBytes;
                 
                 // Handle different possible types of binary data
                 if (wkbData is byte[] bytes)
                 {
                     wkbBytes = bytes;
+                    Debug.WriteLine($"🔍 Got byte array of length: {bytes.Length}");
                 }
                 else if (wkbData is string hexString)
                 {
+                    Debug.WriteLine($"🔍 Got hex string of length: {hexString.Length}");
                     // Convert hex string to bytes
                     wkbBytes = Convert.FromHexString(hexString);
                 }
                 else
                 {
-                    Debug.WriteLine($"Unsupported WKB data type: {wkbData.GetType()}");
+                    Debug.WriteLine($"🔍 Unsupported WKB data type: {wkbData.GetType()}, value: {wkbData}");
                     return null;
                 }
 
