@@ -89,7 +89,7 @@ namespace DuckDBGeoparquet.Services
                 Name = "Transportation - Roads", 
                 S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=segment/*.parquet",
                 GeometryType = "esriGeometryPolyline",
-                Fields = new[] { "id", "names", "road", "level", "subtype", "class", "sources" }
+                Fields = new[] { "id", "names", "routes", "level", "subtype", "class", "sources" }
             },
             new ThemeDefinition 
             { 
@@ -1020,6 +1020,21 @@ namespace DuckDBGeoparquet.Services
                         };
                     }
                 }
+                else if (wkt.StartsWith("MULTIPOINT"))
+                {
+                    // Parse MULTIPOINT((x1 y1), (x2 y2), ...) format
+                    // For simplicity, extract the first point from the multipoint
+                    var coords = ExtractCoordinatesFromWkt(wkt);
+                    if (coords.Count >= 2)
+                    {
+                        return new
+                        {
+                            x = coords[0],
+                            y = coords[1],
+                            spatialReference = _spatialReference
+                        };
+                    }
+                }
                 else if (wkt.StartsWith("LINESTRING"))
                 {
                     // Parse LINESTRING(x1 y1, x2 y2, ...) format
@@ -1039,6 +1054,50 @@ namespace DuckDBGeoparquet.Services
                         spatialReference = _spatialReference
                     };
                 }
+                else if (wkt.StartsWith("MULTILINESTRING"))
+                {
+                    // Parse MULTILINESTRING((x1 y1, x2 y2), (x3 y3, x4 y4)) format
+                    // For simplicity, extract the first linestring from the multilinestring
+                    var firstLineStart = wkt.IndexOf("(");
+                    if (firstLineStart >= 0)
+                    {
+                        var lineStart = firstLineStart + 1;
+                        var parenCount = 1;
+                        var lineEnd = lineStart;
+                        
+                        // Find the matching closing parenthesis for the first linestring
+                        for (int i = lineStart + 1; i < wkt.Length && parenCount > 0; i++)
+                        {
+                            if (wkt[i] == '(') parenCount++;
+                            else if (wkt[i] == ')') parenCount--;
+                            lineEnd = i;
+                        }
+                        
+                        if (parenCount == 0)
+                        {
+                            // Extract first linestring coordinates
+                            var lineWkt = "LINESTRING(" + wkt.Substring(lineStart, lineEnd - lineStart) + ")";
+                            var coords = ExtractCoordinatesFromWkt(lineWkt);
+                            var paths = new List<double[]>();
+                            for (int i = 0; i < coords.Count; i += 2)
+                            {
+                                if (i + 1 < coords.Count)
+                                {
+                                    paths.Add(new double[] { coords[i], coords[i + 1] });
+                                }
+                            }
+                            
+                            return new
+                            {
+                                paths = new[] { paths.ToArray() },
+                                spatialReference = _spatialReference
+                            };
+                        }
+                    }
+                    
+                    Debug.WriteLine($"⚠️ Failed to parse MULTILINESTRING geometry");
+                    return null;
+                }
                 else if (wkt.StartsWith("POLYGON"))
                 {
                     // Parse POLYGON((x1 y1, x2 y2, ..., x1 y1)) format
@@ -1057,6 +1116,51 @@ namespace DuckDBGeoparquet.Services
                         rings = new[] { rings.ToArray() },
                         spatialReference = _spatialReference
                     };
+                }
+                else if (wkt.StartsWith("MULTIPOLYGON"))
+                {
+                    // Parse MULTIPOLYGON(((x1 y1, x2 y2, ..., x1 y1)), ((x1 y1, x2 y2, ..., x1 y1))) format
+                    // For simplicity, extract the first polygon from the multipolygon
+                    // Find the first polygon within the multipolygon
+                    var firstPolygonStart = wkt.IndexOf("((");
+                    if (firstPolygonStart >= 0)
+                    {
+                        var polygonStart = firstPolygonStart + 1; // Start from the inner (
+                        var parenCount = 1;
+                        var polygonEnd = polygonStart;
+                        
+                        // Find the matching closing parenthesis for the first polygon
+                        for (int i = polygonStart + 1; i < wkt.Length && parenCount > 0; i++)
+                        {
+                            if (wkt[i] == '(') parenCount++;
+                            else if (wkt[i] == ')') parenCount--;
+                            polygonEnd = i;
+                        }
+                        
+                        if (parenCount == 0)
+                        {
+                            // Extract first polygon coordinates
+                            var polygonWkt = "POLYGON" + wkt.Substring(polygonStart, polygonEnd - polygonStart + 1);
+                            var coords = ExtractCoordinatesFromWkt(polygonWkt);
+                            var rings = new List<double[]>();
+                            for (int i = 0; i < coords.Count; i += 2)
+                            {
+                                if (i + 1 < coords.Count)
+                                {
+                                    rings.Add(new double[] { coords[i], coords[i + 1] });
+                                }
+                            }
+                            
+                            return new
+                            {
+                                rings = new[] { rings.ToArray() },
+                                spatialReference = _spatialReference
+                            };
+                        }
+                    }
+                    
+                    Debug.WriteLine($"⚠️ Failed to parse MULTIPOLYGON geometry");
+                    return null;
                 }
 
                 Debug.WriteLine($"⚠️ Unsupported WKT geometry type: {wkt.Substring(0, Math.Min(50, wkt.Length))}...");
