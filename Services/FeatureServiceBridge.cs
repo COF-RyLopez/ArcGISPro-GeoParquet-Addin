@@ -73,7 +73,7 @@ namespace DuckDBGeoparquet.Services
                 Name = "Buildings", 
                 S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=buildings/type=building/*.parquet",
                 GeometryType = "esriGeometryPolygon",
-                Fields = new[] { "id", "names", "level", "height", "num_floors", "class", "sources" }
+                Fields = new[] { "id", "names", "height", "num_floors", "class", "sources" }
             },
             new ThemeDefinition 
             { 
@@ -81,7 +81,7 @@ namespace DuckDBGeoparquet.Services
                 Name = "Addresses", 
                 S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=addresses/type=address/*.parquet",
                 GeometryType = "esriGeometryPoint",
-                Fields = new[] { "id", "number", "address_levels", "version", "sources" }
+                Fields = new[] { "id", "number", "address_levels", "sources" }
             },
             new ThemeDefinition 
             { 
@@ -89,7 +89,7 @@ namespace DuckDBGeoparquet.Services
                 Name = "Transportation - Roads", 
                 S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=segment/*.parquet",
                 GeometryType = "esriGeometryPolyline",
-                Fields = new[] { "id", "names", "routes", "level", "subtype", "class", "sources" }
+                Fields = new[] { "id", "names", "routes", "subtype", "class", "sources" }
             },
             new ThemeDefinition 
             { 
@@ -105,7 +105,7 @@ namespace DuckDBGeoparquet.Services
                 Name = "Base - Land", 
                 S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=base/type=land/*.parquet",
                 GeometryType = "esriGeometryPolygon",
-                Fields = new[] { "id", "names", "class", "subtype", "level", "sources" }
+                Fields = new[] { "id", "names", "class", "subtype", "sources" }
             },
             new ThemeDefinition 
             { 
@@ -714,12 +714,12 @@ namespace DuckDBGeoparquet.Services
                 Debug.WriteLine($"Layer {layerId} ({theme.Name}) Query: where={whereClause}, outFields={outFields}, geometry={geometryParam}, spatialRel={spatialRel}");
 
                 // Build DuckDB query
-                var duckDbQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, maxRecords);
+                var duckDbQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, maxRecords, returnGeometry);
                 
                 // Execute query
                 var features = await ExecuteDuckDbQuery(duckDbQuery);
 
-                // Build ArcGIS response
+                // Build ArcGIS REST API compliant response
                 var response = new
                 {
                     objectIdFieldName = "OBJECTID",
@@ -729,11 +729,18 @@ namespace DuckDBGeoparquet.Services
                     spatialReference = _spatialReference,
                     hasZ = false,
                     hasM = false,
+                    fields = GetFieldDefinitions(theme),
+                    displayFieldName = "id",
                     features = features,
                     exceededTransferLimit = features.Count >= maxRecords
                 };
 
                 var json = JsonSerializer.Serialize(response, _jsonOptions);
+                
+                // Debug: Log a sample of the response for troubleshooting
+                var debugJson = json.Length > 500 ? json.Substring(0, 500) + "..." : json;
+                Debug.WriteLine($"🔍 Layer {layerId} JSON Response Sample: {debugJson}");
+                
                 await WriteJsonResponse(context, json);
             }
             catch (Exception ex)
@@ -806,7 +813,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Build DuckDB SQL query from ArcGIS parameters - In-memory high-performance querying
         /// </summary>
-        private string BuildDuckDbQuery(ThemeDefinition theme, string whereClause, string geometryParam, string spatialRel, string outFields, int maxRecords)
+        private string BuildDuckDbQuery(ThemeDefinition theme, string whereClause, string geometryParam, string spatialRel, string outFields, int maxRecords, bool returnGeometry)
         {
             var query = new StringBuilder();
             query.Append("SELECT ");
@@ -826,8 +833,11 @@ namespace DuckDBGeoparquet.Services
                     fieldList.Add(field);
                 }
                 
-                // Add geometry
-                fieldList.Add("ST_AsText(geometry) as geometry_wkt");
+                // Add geometry only if requested
+                if (returnGeometry)
+                {
+                    fieldList.Add("ST_AsText(geometry) as geometry_wkt");
+                }
                 
                 query.Append(string.Join(", ", fieldList));
             }
@@ -837,7 +847,15 @@ namespace DuckDBGeoparquet.Services
             }
             else
             {
-                query.Append(outFields);
+                // For specific field requests, add geometry if needed
+                if (returnGeometry && !outFields.Contains("geometry"))
+                {
+                    query.Append($"{outFields}, ST_AsText(geometry) as geometry_wkt");
+                }
+                else
+                {
+                    query.Append(outFields);
+                }
             }
 
             // Check if in-memory table exists, otherwise fallback to S3
@@ -969,15 +987,39 @@ namespace DuckDBGeoparquet.Services
                         }
                         else if (kvp.Key != "geometry_wkt") // Don't include WKT in attributes
                         {
-                            attributes[kvp.Key] = kvp.Value;
+                            // Clean attribute values for JSON serialization
+                            var cleanValue = kvp.Value;
+                            if (cleanValue == null || cleanValue == DBNull.Value)
+                            {
+                                cleanValue = null;
+                            }
+                            else if (cleanValue is string str && string.IsNullOrEmpty(str))
+                            {
+                                cleanValue = null;
+                            }
+                            
+                            attributes[kvp.Key] = cleanValue;
                         }
                     }
 
-                    var feature = new
+                    // Build ArcGIS REST API compliant feature
+                    object feature;
+                    if (geometry != null)
                     {
-                        attributes = attributes,
-                        geometry = geometry
-                    };
+                        feature = new
+                        {
+                            attributes = attributes,
+                            geometry = geometry
+                        };
+                    }
+                    else
+                    {
+                        // For features without geometry, omit geometry field entirely
+                        feature = new
+                        {
+                            attributes = attributes
+                        };
+                    }
 
                     features.Add(feature);
                 }
@@ -1298,17 +1340,7 @@ namespace DuckDBGeoparquet.Services
                 });
             }
 
-            // Add geometry field
-            fields.Add(new
-            {
-                name = "geometry_wkt",
-                type = "esriFieldTypeString",
-                alias = "Geometry WKT",
-                length = 4000,
-                domain = (object)null,
-                editable = false,
-                nullable = true
-            });
+            // Don't add geometry_wkt as a field - geometry is returned separately in ArcGIS REST API
 
             return fields.ToArray();
         }
