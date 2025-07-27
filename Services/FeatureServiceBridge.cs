@@ -24,6 +24,8 @@ namespace DuckDBGeoparquet.Services
         private HttpListener _listener;
         private readonly CancellationTokenSource _cancellationTokenSource;
         private readonly int _port;
+        private readonly string _s3DataPath;
+        private readonly string _themeName;
         private bool _isRunning;
         private Task _listenerTask;
 
@@ -42,9 +44,11 @@ namespace DuckDBGeoparquet.Services
             WriteIndented = false
         };
 
-        public FeatureServiceBridge(DataProcessor dataProcessor, int port = 8080)
+        public FeatureServiceBridge(DataProcessor dataProcessor, string s3DataPath, string themeName, int port = 8080)
         {
             _dataProcessor = dataProcessor ?? throw new ArgumentNullException(nameof(dataProcessor));
+            _s3DataPath = s3DataPath ?? throw new ArgumentNullException(nameof(s3DataPath));
+            _themeName = themeName ?? throw new ArgumentNullException(nameof(themeName));
             _port = port;
             _cancellationTokenSource = new CancellationTokenSource();
         }
@@ -223,7 +227,7 @@ namespace DuckDBGeoparquet.Services
                 var serviceMetadata = new
                 {
                     currentVersion = 11.1,
-                    serviceDescription = "DuckDB GeoParquet Feature Service Bridge",
+                    serviceDescription = $"DuckDB GeoParquet Feature Service - {_themeName}",
                     hasVersionedData = false,
                     supportsDisconnectedEditing = false,
                     supportsDatumTransformation = true,
@@ -232,8 +236,8 @@ namespace DuckDBGeoparquet.Services
                     maxRecordCount = _maxRecordCount,
                     supportedQueryFormats = "JSON,geoJSON,PBF",
                     capabilities = "Query",
-                    description = "Live feature service bridge to DuckDB for cloud GeoParquet data",
-                    copyrightText = "Data from Overture Maps via DuckDB",
+                    description = $"Live cloud-native access to Overture Maps {_themeName} data via DuckDB",
+                    copyrightText = "Data from Overture Maps Foundation via DuckDB",
                     spatialReference = _spatialReference,
                     initialExtent = new
                     {
@@ -255,7 +259,7 @@ namespace DuckDBGeoparquet.Services
                     units = "esriDecimalDegrees",
                     layers = new object[]
                     {
-                        new { id = 0, name = "Overture Maps Data", type = "Feature Layer" }
+                        new { id = 0, name = $"Overture Maps - {_themeName}", type = "Feature Layer" }
                     },
                     tables = new object[] { }
                 };
@@ -279,13 +283,26 @@ namespace DuckDBGeoparquet.Services
         {
             try
             {
+                // Add CORS headers for HEAD requests
+                context.Response.Headers.Add("Access-Control-Allow-Origin", "*");
+                context.Response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, HEAD, OPTIONS");
+                context.Response.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
+
+                // Handle HEAD requests without body
+                if (context.Request.HttpMethod == "HEAD")
+                {
+                    context.Response.StatusCode = 200;
+                    context.Response.Close();
+                    return;
+                }
+
                 var layerMetadata = new
                 {
                     currentVersion = 11.1,
                     id = 0,
-                    name = "Overture Maps Data",
+                    name = $"Overture Maps - {_themeName}",
                     type = "Feature Layer",
-                    description = "Live Overture Maps data from DuckDB",
+                    description = $"Live cloud-native {_themeName} data from Overture Maps via DuckDB",
                     geometryType = "esriGeometryPolygon",
                     sourceSpatialReference = _spatialReference,
                     copyrightText = "Overture Maps Foundation",
@@ -489,10 +506,8 @@ namespace DuckDBGeoparquet.Services
                 query.Append(outFields);
             }
 
-            // CLOUD-NATIVE: Query S3 directly instead of requiring local current_table
-            // Default to places theme for now - this could be made configurable
-            var s3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=places/type=place/*.parquet";
-            query.Append($" FROM read_parquet('{s3Path}')");
+            // CLOUD-NATIVE: Query S3 directly using selected theme
+            query.Append($" FROM read_parquet('{_s3DataPath}')");
 
             var conditions = new List<string>();
 

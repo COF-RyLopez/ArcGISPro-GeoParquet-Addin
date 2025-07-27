@@ -376,7 +376,77 @@ namespace DuckDBGeoparquet.Views
             ? "Stop Feature Service" 
             : "Start Feature Service";
 
-        // HasDataLoaded removed - Feature Service now queries S3 directly without local data requirement
+        // Feature Service Theme Selection
+        public class FeatureServiceTheme
+        {
+            public string DisplayName { get; set; }
+            public string Value { get; set; }
+            public string S3Path { get; set; }
+        }
+
+        private List<FeatureServiceTheme> _featureServiceThemes;
+        public List<FeatureServiceTheme> FeatureServiceThemes
+        {
+            get
+            {
+                if (_featureServiceThemes == null)
+                {
+                    _featureServiceThemes = new List<FeatureServiceTheme>
+                    {
+                        new FeatureServiceTheme 
+                        { 
+                            DisplayName = "Places (Points of Interest)", 
+                            Value = "places", 
+                            S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=places/type=place/*.parquet"
+                        },
+                        new FeatureServiceTheme 
+                        { 
+                            DisplayName = "Buildings", 
+                            Value = "buildings", 
+                            S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=buildings/type=building/*.parquet"
+                        },
+                        new FeatureServiceTheme 
+                        { 
+                            DisplayName = "Transportation - Roads", 
+                            Value = "transportation_segment", 
+                            S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=segment/*.parquet"
+                        },
+                        new FeatureServiceTheme 
+                        { 
+                            DisplayName = "Transportation - Connectors", 
+                            Value = "transportation_connector", 
+                            S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=connector/*.parquet"
+                        },
+                        new FeatureServiceTheme 
+                        { 
+                            DisplayName = "Addresses", 
+                            Value = "addresses", 
+                            S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=addresses/type=address/*.parquet"
+                        },
+                        new FeatureServiceTheme 
+                        { 
+                            DisplayName = "Base - Land", 
+                            Value = "base_land", 
+                            S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=base/type=land/*.parquet"
+                        },
+                        new FeatureServiceTheme 
+                        { 
+                            DisplayName = "Base - Water", 
+                            Value = "base_water", 
+                            S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=base/type=water/*.parquet"
+                        }
+                    };
+                }
+                return _featureServiceThemes;
+            }
+        }
+
+        private FeatureServiceTheme _selectedFeatureServiceTheme;
+        public FeatureServiceTheme SelectedFeatureServiceTheme
+        {
+            get => _selectedFeatureServiceTheme ?? FeatureServiceThemes.FirstOrDefault();
+            set => SetProperty(ref _selectedFeatureServiceTheme, value);
+        }
 
         public List<SelectableThemeItem> AllSelectedLeafItemsForPreview => GetSelectedLeafItems();
 
@@ -2422,9 +2492,16 @@ namespace DuckDBGeoparquet.Views
                     return;
                 }
 
-                AddToLog($"Toggling Feature Service (currently {(IsFeatureServiceRunning ? "running" : "stopped")})...");
+                var selectedTheme = SelectedFeatureServiceTheme;
+                if (selectedTheme == null)
+                {
+                    AddToLog("Error: No theme selected for Feature Service");
+                    return;
+                }
 
-                bool success = await _featureServiceManager.ToggleServiceAsync();
+                AddToLog($"Toggling Feature Service for {selectedTheme.DisplayName} (currently {(IsFeatureServiceRunning ? "running" : "stopped")})...");
+
+                bool success = await _featureServiceManager.ToggleServiceAsync(selectedTheme.S3Path, selectedTheme.DisplayName);
                 
                 if (success)
                 {

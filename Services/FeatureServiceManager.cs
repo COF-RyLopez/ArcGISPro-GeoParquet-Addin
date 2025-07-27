@@ -34,7 +34,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Starts the DuckDB Feature Service Bridge
         /// </summary>
-        public async Task<bool> StartServiceAsync(int port = 8080)
+        public async Task<bool> StartServiceAsync(string s3DataPath, string themeName, int port = 8080)
         {
             try
             {
@@ -44,9 +44,9 @@ namespace DuckDBGeoparquet.Services
                     return true;
                 }
 
-                Debug.WriteLine("Starting DuckDB Feature Service Bridge...");
+                Debug.WriteLine($"Starting DuckDB Feature Service Bridge for {themeName}...");
 
-                _featureServiceBridge = new FeatureServiceBridge(_dataProcessor, port);
+                _featureServiceBridge = new FeatureServiceBridge(_dataProcessor, s3DataPath, themeName, port);
                 await _featureServiceBridge.StartAsync();
 
                 _isRunning = true;
@@ -111,7 +111,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Toggles the service on/off
         /// </summary>
-        public async Task<bool> ToggleServiceAsync(int port = 8080)
+        public async Task<bool> ToggleServiceAsync(string s3DataPath, string themeName, int port = 8080)
         {
             if (_isRunning)
             {
@@ -119,7 +119,7 @@ namespace DuckDBGeoparquet.Services
             }
             else
             {
-                return await StartServiceAsync(port);
+                return await StartServiceAsync(s3DataPath, themeName, port);
             }
         }
 

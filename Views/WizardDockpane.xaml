@@ -244,6 +244,26 @@
                             </TextBlock>
                         </Border>
 
+                        <!-- Dataset Selection -->
+                        <TextBlock Text="Dataset Selection" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="Choose which Overture Maps theme to serve:" Margin="0,0,0,4"/>
+                                <ComboBox SelectedItem="{Binding SelectedFeatureServiceTheme}" 
+                                          ItemsSource="{Binding FeatureServiceThemes}"
+                                          DisplayMemberPath="DisplayName"
+                                          SelectedValuePath="Value"
+                                          Width="250"
+                                          HorizontalAlignment="Left"
+                                          Style="{DynamicResource Esri_ComboBox}"/>
+                            </StackPanel>
+                        </Border>
+
                         <!-- Feature Service Controls -->
                         <TextBlock Text="Service Controls" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
                         <Border 
