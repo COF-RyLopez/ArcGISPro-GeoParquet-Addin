@@ -1324,10 +1324,20 @@ namespace DuckDBGeoparquet.Services
                 
                 Debug.WriteLine($"🔍 WKB byte order: 0x{byteOrder:X2}, little endian: {littleEndian}");
                 
-                // Validate byte order
+                // Handle mixed data types - some "geometries" are actually metadata/IDs
                 if (byteOrder != 0 && byteOrder != 1)
                 {
-                    Debug.WriteLine($"🔍 Invalid WKB byte order: {byteOrder} (expected 0 or 1)");
+                    Debug.WriteLine($"🔍 Invalid WKB byte order: {byteOrder} (expected 0 or 1) - this appears to be non-geometry data");
+                    
+                    // CRITICAL: This is likely a feature ID or metadata, not actual geometry
+                    // Common pattern: 32-byte records starting with 0x24 are not WKB geometries
+                    if (wkbBytes.Length == 32 && byteOrder == 0x24)
+                    {
+                        Debug.WriteLine($"🔍 Detected 32-byte non-WKB data pattern - treating as null geometry");
+                        return null; // Safely return null instead of crashing
+                    }
+                    
+                    Debug.WriteLine($"🔍 Unknown data format - treating as null geometry for safety");
                     return null;
                 }
                 
@@ -1363,18 +1373,45 @@ namespace DuckDBGeoparquet.Services
         /// </summary>
         private object ParseWkbPoint(byte[] wkbBytes, ref int pos, bool littleEndian)
         {
-            if (wkbBytes.Length < pos + 16) // Need 2 doubles (8 bytes each)
-                return null;
-                
-            double x = ReadDouble(wkbBytes, ref pos, littleEndian);
-            double y = ReadDouble(wkbBytes, ref pos, littleEndian);
-            
-            return new
+            try
             {
-                x = x,
-                y = y,
-                spatialReference = _spatialReference
-            };
+                // Safety bounds checking  
+                if (wkbBytes == null)
+                {
+                    Debug.WriteLine($"🔍 ParseWkbPoint: bytes array is null");
+                    return null;
+                }
+                
+                if (pos < 0 || pos + 16 > wkbBytes.Length) // Need 2 doubles (8 bytes each)
+                {
+                    Debug.WriteLine($"🔍 ParseWkbPoint: Insufficient bytes - pos {pos}, need 16 bytes, have {wkbBytes.Length - pos}");
+                    return null;
+                }
+                    
+                double x = ReadDouble(wkbBytes, ref pos, littleEndian);
+                double y = ReadDouble(wkbBytes, ref pos, littleEndian);
+                
+                // Validate coordinate values are reasonable
+                if (double.IsNaN(x) || double.IsNaN(y) || double.IsInfinity(x) || double.IsInfinity(y))
+                {
+                    Debug.WriteLine($"🔍 ParseWkbPoint: Invalid coordinates x={x}, y={y}");
+                    return null;
+                }
+                
+                Debug.WriteLine($"🔍 ParseWkbPoint: Successfully parsed point ({x}, {y})");
+                
+                return new
+                {
+                    x = x,
+                    y = y,
+                    spatialReference = _spatialReference
+                };
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"🔍 ParseWkbPoint failed safely: {ex.Message}");
+                return null; // Safe fallback
+            }
         }
 
         /// <summary>
@@ -1443,16 +1480,47 @@ namespace DuckDBGeoparquet.Services
         /// </summary>
         private object ParseWkbMultiPoint(byte[] wkbBytes, ref int pos, bool littleEndian)
         {
-            uint numPoints = ReadUInt32(wkbBytes, ref pos, littleEndian);
-            
-            if (numPoints > 0)
+            try
             {
-                // Skip byte order and geometry type for first point
+                // Safety bounds check
+                if (wkbBytes == null || pos < 0 || pos + 4 > wkbBytes.Length)
+                {
+                    Debug.WriteLine($"🔍 MultiPoint: Invalid bounds - pos {pos}, array length {wkbBytes?.Length ?? 0}");
+                    return null;
+                }
+                
+                uint numPoints = ReadUInt32(wkbBytes, ref pos, littleEndian);
+                Debug.WriteLine($"🔍 MultiPoint: Found {numPoints} points");
+                
+                // CRITICAL: Check for suspicious values that indicate corrupted data
+                if (numPoints == 0)
+                {
+                    Debug.WriteLine($"🔍 MultiPoint: No points - returning null");
+                    return null;
+                }
+                
+                if (numPoints > 1000000) // 1M points is unreasonable - indicates corruption
+                {
+                    Debug.WriteLine($"🔍 MultiPoint: Suspicious point count {numPoints} - likely corrupted data, treating as null");
+                    return null;
+                }
+                
+                // Check if we have enough bytes for the first point (5 byte header + 16 bytes for coordinates)
+                if (pos + 21 > wkbBytes.Length)
+                {
+                    Debug.WriteLine($"🔍 MultiPoint: Insufficient bytes for first point - pos {pos}, need 21 more bytes, have {wkbBytes.Length - pos}");
+                    return null;
+                }
+                
+                // Skip byte order and geometry type for first point (5 bytes)
                 pos += 5;
                 return ParseWkbPoint(wkbBytes, ref pos, littleEndian);
             }
-            
-            return null;
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"🔍 MultiPoint parsing failed safely: {ex.Message}");
+                return null; // Safe fallback
+            }
         }
 
         /// <summary>
@@ -1502,20 +1570,45 @@ namespace DuckDBGeoparquet.Services
         /// </summary>
         private double ReadDouble(byte[] bytes, ref int pos, bool littleEndian)
         {
-            byte[] doubleBytes = new byte[8];
-            if (littleEndian)
+            // Critical safety bounds checking to prevent ExecutionEngineException
+            if (bytes == null)
             {
-                Array.Copy(bytes, pos, doubleBytes, 0, 8);
+                Debug.WriteLine($"🔍 ReadDouble: bytes array is null");
+                throw new ArgumentNullException(nameof(bytes));
             }
-            else
+            
+            if (pos < 0 || pos + 8 > bytes.Length)
             {
-                for (int i = 0; i < 8; i++)
+                Debug.WriteLine($"🔍 ReadDouble: Invalid position {pos}, array length {bytes.Length}, need 8 bytes");
+                throw new ArgumentOutOfRangeException(nameof(pos), $"Position {pos} out of bounds for array length {bytes.Length}");
+            }
+            
+            try
+            {
+                byte[] doubleBytes = new byte[8];
+                if (littleEndian)
                 {
-                    doubleBytes[i] = bytes[pos + 7 - i];
+                    Array.Copy(bytes, pos, doubleBytes, 0, 8);
                 }
+                else
+                {
+                    for (int i = 0; i < 8; i++)
+                    {
+                        doubleBytes[i] = bytes[pos + 7 - i];
+                    }
+                }
+                
+                double value = BitConverter.ToDouble(doubleBytes, 0);
+                Debug.WriteLine($"🔍 ReadDouble at pos {pos}: value={value}, littleEndian={littleEndian}");
+                
+                pos += 8;
+                return value;
             }
-            pos += 8;
-            return BitConverter.ToDouble(doubleBytes, 0);
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"🔍 ReadDouble exception at pos {pos}: {ex.Message}");
+                throw;
+            }
         }
 
         /// <summary>
