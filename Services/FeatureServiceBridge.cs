@@ -117,8 +117,9 @@ namespace DuckDBGeoparquet.Services
             }
         };
 
-        // In-memory cache status
+        // In-memory cache status - Thread-safe async synchronization
         private bool _dataLoaded = false;
+        private readonly SemaphoreSlim _loadSemaphore = new SemaphoreSlim(1, 1);
         private readonly object _loadLock = new object();
 
         public FeatureServiceBridge(DataProcessor dataProcessor, int port = 8080)
@@ -132,19 +133,22 @@ namespace DuckDBGeoparquet.Services
 
         /// <summary>
         /// Ensures in-memory data tables are loaded for current map viewport (like existing data loader)
+        /// Thread-safe async implementation to prevent race conditions
         /// </summary>
         private async Task EnsureDataLoadedAsync()
         {
+            // Fast path - if already loaded, return immediately
             if (_dataLoaded) return;
 
-            lock (_loadLock)
+            // Thread-safe async synchronization - only one thread can load data at a time
+            await _loadSemaphore.WaitAsync();
+            try 
             {
-                if (_dataLoaded) return; // Double-check locking pattern
-                Debug.WriteLine($"🔄 Getting current map viewport to determine caching region (like existing data loader)...");
-            }
+                // Double-check after acquiring semaphore - another thread might have loaded data
+                if (_dataLoaded) return;
 
-            try
-            {
+                Debug.WriteLine($"🔄 Getting current map viewport to determine caching region (like existing data loader)...");
+
                 // Get current map extent - same approach as existing data loader
                 ArcGIS.Core.Geometry.Envelope extent = null;
                 await QueuedTask.Run(() =>
@@ -184,38 +188,95 @@ namespace DuckDBGeoparquet.Services
                 Debug.WriteLine($"🎯 Loading data for CURRENT VIEWPORT: ({boundsXmin:F4}, {boundsYmin:F4}) to ({boundsXmax:F4}, {boundsYmax:F4})");
                 Debug.WriteLine($"📏 Viewport size: {(boundsXmax - boundsXmin):F4}° × {(boundsYmax - boundsYmin):F4}° - much smaller than California!");
 
+                // Validate DuckDB connection before proceeding
+                try
+                {
+                    await ValidateDuckDbConnectionAsync();
+                }
+                catch (Exception connEx)
+                {
+                    Debug.WriteLine($"❌ DuckDB connection validation failed: {connEx.Message}");
+                    throw new InvalidOperationException("DuckDB connection is not available", connEx);
+                }
+
                 // Load each theme into in-memory table for fast querying - VIEWPORT ONLY
+                int successfulTables = 0;
                 foreach (var theme in _themes)
                 {
                     var tableName = $"theme_{theme.Id}_{theme.Name.Replace(" ", "_").Replace("-", "_").ToLowerInvariant()}";
                     Debug.WriteLine($"📥 Loading {theme.Name} for current viewport into '{tableName}'...");
 
-                    // Create in-memory table with VIEWPORT BOUNDS - same pattern as existing data loader
-                    var createTableQuery = $@"
-                        CREATE OR REPLACE TABLE {tableName} AS 
-                        SELECT * FROM read_parquet('{theme.S3Path}')
-                        WHERE bbox.xmin IS NOT NULL AND bbox.ymin IS NOT NULL 
-                          AND bbox.xmax IS NOT NULL AND bbox.ymax IS NOT NULL
-                          AND bbox.xmin <= {boundsXmax.ToString("G", CultureInfo.InvariantCulture)} 
-                          AND bbox.xmax >= {boundsXmin.ToString("G", CultureInfo.InvariantCulture)}
-                          AND bbox.ymin <= {boundsYmax.ToString("G", CultureInfo.InvariantCulture)} 
-                          AND bbox.ymax >= {boundsYmin.ToString("G", CultureInfo.InvariantCulture)}";
+                    try
+                    {
+                        // Create in-memory table with VIEWPORT BOUNDS - same pattern as existing data loader
+                        var createTableQuery = $@"
+                            CREATE OR REPLACE TABLE {tableName} AS 
+                            SELECT * FROM read_parquet('{theme.S3Path}')
+                            WHERE bbox.xmin IS NOT NULL AND bbox.ymin IS NOT NULL 
+                              AND bbox.xmax IS NOT NULL AND bbox.ymax IS NOT NULL
+                              AND bbox.xmin <= {boundsXmax.ToString("G", CultureInfo.InvariantCulture)} 
+                              AND bbox.xmax >= {boundsXmin.ToString("G", CultureInfo.InvariantCulture)}
+                              AND bbox.ymin <= {boundsYmax.ToString("G", CultureInfo.InvariantCulture)} 
+                              AND bbox.ymax >= {boundsYmin.ToString("G", CultureInfo.InvariantCulture)}";
 
-                    await _dataProcessor.ExecuteQueryAsync(createTableQuery);
-                    Debug.WriteLine($"✅ {theme.Name} viewport data loaded successfully into '{tableName}'");
+                        await _dataProcessor.ExecuteQueryAsync(createTableQuery);
+                        Debug.WriteLine($"✅ {theme.Name} viewport data loaded successfully into '{tableName}'");
+                        successfulTables++;
+                    }
+                    catch (Exception tableEx)
+                    {
+                        Debug.WriteLine($"⚠️ Failed to load {theme.Name} into table '{tableName}': {tableEx.Message}");
+                        // Continue with other themes even if one fails
+                    }
                 }
 
-                lock (_loadLock)
+                // Only mark as loaded if at least one table was created successfully
+                if (successfulTables > 0)
                 {
                     _dataLoaded = true;
+                    Debug.WriteLine($"🎉 Current viewport data loaded into DuckDB cache! ({successfulTables}/{_themes.Count} themes loaded successfully) ⚡");
                 }
-
-                Debug.WriteLine("🎉 Current viewport data loaded into DuckDB cache! Memory usage should be very reasonable now ⚡");
+                else
+                {
+                    Debug.WriteLine($"❌ No themes loaded successfully - data will fallback to S3 queries");
+                }
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"❌ Error loading viewport data into in-memory tables: {ex.Message}");
+                Debug.WriteLine($"❌ Critical error loading viewport data into in-memory tables: {ex.Message}");
+                Debug.WriteLine($"   Exception type: {ex.GetType().Name}");
+                if (ex.InnerException != null)
+                {
+                    Debug.WriteLine($"   Inner exception: {ex.InnerException.Message}");
+                }
                 // Don't set _dataLoaded = true on error, so it can retry
+                throw; // Re-throw to allow caller to handle
+            }
+            finally 
+            {
+                _loadSemaphore.Release();
+            }
+        }
+
+        /// <summary>
+        /// Validates that the DuckDB connection is healthy and ready for queries
+        /// </summary>
+        private async Task ValidateDuckDbConnectionAsync()
+        {
+            try
+            {
+                // Simple query to test connection health
+                var testResults = await _dataProcessor.ExecuteQueryAsync("SELECT 1 as test");
+                if (testResults == null || testResults.Count == 0)
+                {
+                    throw new InvalidOperationException("DuckDB connection test failed - no results returned");
+                }
+                Debug.WriteLine("✅ DuckDB connection validation successful");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"❌ DuckDB connection validation failed: {ex.Message}");
+                throw;
             }
         }
 
@@ -249,7 +310,19 @@ namespace DuckDBGeoparquet.Services
                 Debug.WriteLine($"✅ Feature Service Bridge ready: {ServiceUrl}");
                 
                 // Initialize in-memory data tables in background for better performance
-                _ = Task.Run(async () => await EnsureDataLoadedAsync());
+                _ = Task.Run(async () => 
+                {
+                    try
+                    {
+                        await EnsureDataLoadedAsync();
+                        Debug.WriteLine("📦 Background in-memory cache initialization completed successfully");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"⚠️ Background in-memory cache initialization failed: {ex.Message}");
+                        Debug.WriteLine($"   Service will use S3 fallback queries for all requests");
+                    }
+                });
 
                 return Task.CompletedTask;
             }
@@ -615,8 +688,17 @@ namespace DuckDBGeoparquet.Services
                     return;
                 }
 
-                // Ensure data is loaded into in-memory tables
-                await EnsureDataLoadedAsync();
+                // Ensure data is loaded into in-memory tables with graceful fallback
+                try
+                {
+                    await EnsureDataLoadedAsync();
+                }
+                catch (Exception loadEx)
+                {
+                    Debug.WriteLine($"⚠️ Failed to load in-memory cache for layer {layerId} ({theme.Name}): {loadEx.Message}");
+                    Debug.WriteLine($"   Will use S3 fallback queries instead");
+                    // Continue with S3 fallback - don't fail the entire request
+                }
 
                 var queryParams = ParseQueryParameters(context.Request);
                 
@@ -1155,6 +1237,7 @@ namespace DuckDBGeoparquet.Services
 
             _cancellationTokenSource?.Dispose();
             _listener?.Close();
+            _loadSemaphore?.Dispose();
         }
     }
 } 
