@@ -73,7 +73,7 @@ namespace DuckDBGeoparquet.Services
                 Name = "Buildings", 
                 S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=buildings/type=building/*.parquet",
                 GeometryType = "esriGeometryPolygon",
-                Fields = new[] { "id", "names", "level", "height", "numfloors", "class", "sources" }
+                Fields = new[] { "id", "names", "level", "height", "num_floors", "class", "sources" }
             },
             new ThemeDefinition 
             { 
@@ -192,7 +192,7 @@ namespace DuckDBGeoparquet.Services
 
                     // Create in-memory table with VIEWPORT BOUNDS - same pattern as existing data loader
                     var createTableQuery = $@"
-                        CREATE TABLE {tableName} AS 
+                        CREATE OR REPLACE TABLE {tableName} AS 
                         SELECT * FROM read_parquet('{theme.S3Path}')
                         WHERE bbox.xmin IS NOT NULL AND bbox.ymin IS NOT NULL 
                           AND bbox.xmax IS NOT NULL AND bbox.ymax IS NOT NULL
@@ -303,10 +303,27 @@ namespace DuckDBGeoparquet.Services
                 try
                 {
                     var contextTask = _listener.GetContextAsync();
-                    var context = await contextTask;
+                    
+                    // Add timeout to prevent hanging connections
+                    using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+                    using (var combined = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, cts.Token))
+                    {
+                        var context = await contextTask.ConfigureAwait(false);
 
-                    // Handle request on background thread
-                    _ = Task.Run(async () => await HandleRequestAsync(context), cancellationToken);
+                        // Handle request on background thread with timeout
+                        _ = Task.Run(async () => 
+                        {
+                            try
+                            {
+                                await HandleRequestAsync(context);
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.WriteLine($"⚠️ Background request handling failed: {ex.Message}");
+                                try { context.Response.Close(); } catch { }
+                            }
+                        }, combined.Token);
+                    }
                 }
                 catch (ObjectDisposedException)
                 {
@@ -858,16 +875,26 @@ namespace DuckDBGeoparquet.Services
                         ["OBJECTID"] = objectId++
                     };
 
-                    // Add all columns from the query result
+                    object geometry = null;
+
+                    // Add all columns from the query result and extract geometry
                     foreach (var kvp in row)
                     {
-                        attributes[kvp.Key] = kvp.Value;
+                        if (kvp.Key == "geometry_wkt" && kvp.Value != null)
+                        {
+                            // Parse WKT geometry into ArcGIS geometry format
+                            geometry = ParseWktToArcGISGeometry(kvp.Value.ToString());
+                        }
+                        else if (kvp.Key != "geometry_wkt") // Don't include WKT in attributes
+                        {
+                            attributes[kvp.Key] = kvp.Value;
+                        }
                     }
 
                     var feature = new
                     {
                         attributes = attributes,
-                        geometry = (object)null // For now, we'll return null geometry
+                        geometry = geometry
                     };
 
                     features.Add(feature);
@@ -882,6 +909,128 @@ namespace DuckDBGeoparquet.Services
             }
 
             return features;
+        }
+
+        /// <summary>
+        /// Parse WKT geometry string into ArcGIS REST API geometry format
+        /// </summary>
+        private object ParseWktToArcGISGeometry(string wkt)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(wkt))
+                    return null;
+
+                // Simple WKT parsing for basic geometry types
+                wkt = wkt.Trim().ToUpperInvariant();
+
+                if (wkt.StartsWith("POINT"))
+                {
+                    // Parse POINT(x y) format
+                    var coords = ExtractCoordinatesFromWkt(wkt);
+                    if (coords.Count >= 2)
+                    {
+                        return new
+                        {
+                            x = coords[0],
+                            y = coords[1],
+                            spatialReference = _spatialReference
+                        };
+                    }
+                }
+                else if (wkt.StartsWith("LINESTRING"))
+                {
+                    // Parse LINESTRING(x1 y1, x2 y2, ...) format
+                    var coords = ExtractCoordinatesFromWkt(wkt);
+                    var paths = new List<double[]>();
+                    for (int i = 0; i < coords.Count; i += 2)
+                    {
+                        if (i + 1 < coords.Count)
+                        {
+                            paths.Add(new double[] { coords[i], coords[i + 1] });
+                        }
+                    }
+                    
+                    return new
+                    {
+                        paths = new[] { paths.ToArray() },
+                        spatialReference = _spatialReference
+                    };
+                }
+                else if (wkt.StartsWith("POLYGON"))
+                {
+                    // Parse POLYGON((x1 y1, x2 y2, ..., x1 y1)) format
+                    var coords = ExtractCoordinatesFromWkt(wkt);
+                    var rings = new List<double[]>();
+                    for (int i = 0; i < coords.Count; i += 2)
+                    {
+                        if (i + 1 < coords.Count)
+                        {
+                            rings.Add(new double[] { coords[i], coords[i + 1] });
+                        }
+                    }
+                    
+                    return new
+                    {
+                        rings = new[] { rings.ToArray() },
+                        spatialReference = _spatialReference
+                    };
+                }
+
+                Debug.WriteLine($"⚠️ Unsupported WKT geometry type: {wkt.Substring(0, Math.Min(50, wkt.Length))}...");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error parsing WKT geometry: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Extract coordinate values from WKT string
+        /// </summary>
+        private List<double> ExtractCoordinatesFromWkt(string wkt)
+        {
+            var coords = new List<double>();
+            
+            // Find coordinates between parentheses
+            var start = wkt.IndexOf('(');
+            var end = wkt.LastIndexOf(')');
+            
+            if (start >= 0 && end > start)
+            {
+                var coordString = wkt.Substring(start + 1, end - start - 1);
+                
+                // Handle nested parentheses for POLYGON
+                if (coordString.StartsWith("("))
+                {
+                    var innerStart = coordString.IndexOf('(');
+                    var innerEnd = coordString.IndexOf(')');
+                    if (innerStart >= 0 && innerEnd > innerStart)
+                    {
+                        coordString = coordString.Substring(innerStart + 1, innerEnd - innerStart - 1);
+                    }
+                }
+                
+                // Parse coordinate pairs
+                var parts = coordString.Split(',');
+                foreach (var part in parts)
+                {
+                    var xy = part.Trim().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (xy.Length >= 2)
+                    {
+                        if (double.TryParse(xy[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double x) &&
+                            double.TryParse(xy[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double y))
+                        {
+                            coords.Add(x);
+                            coords.Add(y);
+                        }
+                    }
+                }
+            }
+            
+            return coords;
         }
 
         /// <summary>
