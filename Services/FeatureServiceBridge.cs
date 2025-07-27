@@ -833,10 +833,10 @@ namespace DuckDBGeoparquet.Services
                     fieldList.Add(field);
                 }
                 
-                // Add geometry only if requested
+                // Add geometry only if requested (use WKB format like working Data Loader)
                 if (returnGeometry)
                 {
-                    fieldList.Add("ST_AsText(geometry) as geometry_wkt");
+                    fieldList.Add("ST_AsBinary(geometry) as geometry_wkb");
                 }
                 
                 query.Append(string.Join(", ", fieldList));
@@ -850,7 +850,7 @@ namespace DuckDBGeoparquet.Services
                 // For specific field requests, add geometry if needed
                 if (returnGeometry && !outFields.Contains("geometry"))
                 {
-                    query.Append($"{outFields}, ST_AsText(geometry) as geometry_wkt");
+                    query.Append($"{outFields}, ST_AsBinary(geometry) as geometry_wkb");
                 }
                 else
                 {
@@ -980,12 +980,12 @@ namespace DuckDBGeoparquet.Services
                     // Add all columns from the query result and extract geometry
                     foreach (var kvp in row)
                     {
-                        if (kvp.Key == "geometry_wkt" && kvp.Value != null)
+                        if (kvp.Key == "geometry_wkb" && kvp.Value != null)
                         {
-                            // Parse WKT geometry into ArcGIS geometry format
-                            geometry = ParseWktToArcGISGeometry(kvp.Value.ToString());
+                            // Parse WKB geometry into ArcGIS geometry format (same as working Data Loader)
+                            geometry = ParseWkbToArcGISGeometry(kvp.Value);
                         }
-                        else if (kvp.Key != "geometry_wkt") // Don't include WKT in attributes
+                        else if (kvp.Key != "geometry_wkb") // Don't include WKB in attributes
                         {
                             // Clean attribute values for JSON serialization
                             var cleanValue = kvp.Value;
@@ -1216,6 +1216,204 @@ namespace DuckDBGeoparquet.Services
         }
 
         /// <summary>
+        /// Parse WKB geometry binary data into ArcGIS REST API geometry format
+        /// Uses the same approach as the working Data Loader
+        /// </summary>
+        private object ParseWkbToArcGISGeometry(object wkbData)
+        {
+            try
+            {
+                if (wkbData == null || wkbData == DBNull.Value)
+                    return null;
+
+                byte[] wkbBytes;
+                
+                // Handle different possible types of binary data
+                if (wkbData is byte[] bytes)
+                {
+                    wkbBytes = bytes;
+                }
+                else if (wkbData is string hexString)
+                {
+                    // Convert hex string to bytes
+                    wkbBytes = Convert.FromHexString(hexString);
+                }
+                else
+                {
+                    Debug.WriteLine($"Unsupported WKB data type: {wkbData.GetType()}");
+                    return null;
+                }
+
+                if (wkbBytes.Length < 9) // Minimum WKB size
+                    return null;
+
+                // Parse WKB header
+                int pos = 0;
+                byte byteOrder = wkbBytes[pos++];
+                bool littleEndian = byteOrder == 1;
+                
+                uint geometryType = ReadUInt32(wkbBytes, ref pos, littleEndian);
+                
+                // Handle basic geometry types
+                switch (geometryType)
+                {
+                    case 1: // Point
+                        return ParseWkbPoint(wkbBytes, ref pos, littleEndian);
+                    case 2: // LineString  
+                        return ParseWkbLineString(wkbBytes, ref pos, littleEndian);
+                    case 3: // Polygon
+                        return ParseWkbPolygon(wkbBytes, ref pos, littleEndian);
+                    case 4: // MultiPoint
+                        return ParseWkbMultiPoint(wkbBytes, ref pos, littleEndian);
+                    default:
+                        Debug.WriteLine($"Unsupported WKB geometry type: {geometryType}");
+                        return null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error parsing WKB geometry: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Parse WKB Point geometry
+        /// </summary>
+        private object ParseWkbPoint(byte[] wkbBytes, ref int pos, bool littleEndian)
+        {
+            if (wkbBytes.Length < pos + 16) // Need 2 doubles (8 bytes each)
+                return null;
+                
+            double x = ReadDouble(wkbBytes, ref pos, littleEndian);
+            double y = ReadDouble(wkbBytes, ref pos, littleEndian);
+            
+            return new
+            {
+                x = x,
+                y = y,
+                spatialReference = _spatialReference
+            };
+        }
+
+        /// <summary>
+        /// Parse WKB LineString geometry
+        /// </summary>
+        private object ParseWkbLineString(byte[] wkbBytes, ref int pos, bool littleEndian)
+        {
+            uint numPoints = ReadUInt32(wkbBytes, ref pos, littleEndian);
+            var paths = new List<List<double[]>>();
+            var path = new List<double[]>();
+            
+            for (int i = 0; i < numPoints; i++)
+            {
+                if (wkbBytes.Length < pos + 16)
+                    break;
+                    
+                double x = ReadDouble(wkbBytes, ref pos, littleEndian);
+                double y = ReadDouble(wkbBytes, ref pos, littleEndian);
+                path.Add(new double[] { x, y });
+            }
+            
+            paths.Add(path);
+            
+            return new
+            {
+                paths = paths,
+                spatialReference = _spatialReference
+            };
+        }
+
+        /// <summary>
+        /// Parse WKB Polygon geometry
+        /// </summary>
+        private object ParseWkbPolygon(byte[] wkbBytes, ref int pos, bool littleEndian)
+        {
+            uint numRings = ReadUInt32(wkbBytes, ref pos, littleEndian);
+            var rings = new List<List<double[]>>();
+            
+            for (int r = 0; r < numRings; r++)
+            {
+                uint numPoints = ReadUInt32(wkbBytes, ref pos, littleEndian);
+                var ring = new List<double[]>();
+                
+                for (int i = 0; i < numPoints; i++)
+                {
+                    if (wkbBytes.Length < pos + 16)
+                        break;
+                        
+                    double x = ReadDouble(wkbBytes, ref pos, littleEndian);
+                    double y = ReadDouble(wkbBytes, ref pos, littleEndian);
+                    ring.Add(new double[] { x, y });
+                }
+                
+                rings.Add(ring);
+            }
+            
+            return new
+            {
+                rings = rings,
+                spatialReference = _spatialReference
+            };
+        }
+
+        /// <summary>
+        /// Parse WKB MultiPoint geometry (simplified to first point)
+        /// </summary>
+        private object ParseWkbMultiPoint(byte[] wkbBytes, ref int pos, bool littleEndian)
+        {
+            uint numPoints = ReadUInt32(wkbBytes, ref pos, littleEndian);
+            
+            if (numPoints > 0)
+            {
+                // Skip byte order and geometry type for first point
+                pos += 5;
+                return ParseWkbPoint(wkbBytes, ref pos, littleEndian);
+            }
+            
+            return null;
+        }
+
+        /// <summary>
+        /// Read 32-bit unsigned integer from WKB bytes
+        /// </summary>
+        private uint ReadUInt32(byte[] bytes, ref int pos, bool littleEndian)
+        {
+            uint value;
+            if (littleEndian)
+            {
+                value = (uint)(bytes[pos] | (bytes[pos + 1] << 8) | (bytes[pos + 2] << 16) | (bytes[pos + 3] << 24));
+            }
+            else
+            {
+                value = (uint)((bytes[pos] << 24) | (bytes[pos + 1] << 16) | (bytes[pos + 2] << 8) | bytes[pos + 3]);
+            }
+            pos += 4;
+            return value;
+        }
+
+        /// <summary>
+        /// Read 64-bit double from WKB bytes
+        /// </summary>
+        private double ReadDouble(byte[] bytes, ref int pos, bool littleEndian)
+        {
+            byte[] doubleBytes = new byte[8];
+            if (littleEndian)
+            {
+                Array.Copy(bytes, pos, doubleBytes, 0, 8);
+            }
+            else
+            {
+                for (int i = 0; i < 8; i++)
+                {
+                    doubleBytes[i] = bytes[pos + 7 - i];
+                }
+            }
+            pos += 8;
+            return BitConverter.ToDouble(doubleBytes, 0);
+        }
+
+        /// <summary>
         /// Extract coordinate values from WKT string
         /// </summary>
         private List<double> ExtractCoordinatesFromWkt(string wkt)
@@ -1340,7 +1538,7 @@ namespace DuckDBGeoparquet.Services
                 });
             }
 
-            // Don't add geometry_wkt as a field - geometry is returned separately in ArcGIS REST API
+            // Don't add geometry_wkb as a field - geometry is returned separately in ArcGIS REST API
 
             return fields.ToArray();
         }
