@@ -1241,9 +1241,9 @@ namespace DuckDBGeoparquet.Services
             {
                 return ParseWkbGeometryInternal(wkbData);
             }
-            catch (System.ExecutionEngineException ex)
+            catch (System.Exception ex) when (ex.GetType().Name == "ExecutionEngineException")
             {
-                Debug.WriteLine($"🚨 CRITICAL: ExecutionEngineException caught and prevented! {ex.Message}");
+                Debug.WriteLine($"🚨 CRITICAL: Critical runtime exception caught and prevented! {ex.Message}");
                 return null; // Safe fallback - NEVER let this crash the service
             }
             catch (System.AccessViolationException ex)
@@ -1300,13 +1300,13 @@ namespace DuckDBGeoparquet.Services
                     try
                     {
                         // Read all bytes from the memory stream with comprehensive safety checks
+                        int totalBytesRead = 0;
+                        int bytesToRead = (int)memoryStream.Length;
+                        
                         try
                         {
                             wkbBytes = new byte[memoryStream.Length];
                             memoryStream.Position = 0;
-                            
-                            int totalBytesRead = 0;
-                            int bytesToRead = (int)memoryStream.Length;
                             
                             while (totalBytesRead < bytesToRead)
                             {
@@ -1315,22 +1315,22 @@ namespace DuckDBGeoparquet.Services
                                     break; // End of stream
                                 totalBytesRead += bytesRead;
                             }
-                            
-                            // Additional safety check - ensure we read what we expected
-                            if (totalBytesRead != bytesToRead)
-                            {
-                                Debug.WriteLine($"🔍 Partial read warning: expected {bytesToRead}, got {totalBytesRead}");
-                            }
                         }
                         catch (System.AccessViolationException ex)
                         {
                             Debug.WriteLine($"🚨 AccessViolationException during UnmanagedMemoryStream read: {ex.Message}");
                             return null;
                         }
-                        catch (System.ExecutionEngineException ex)
+                        catch (System.Exception ex) when (ex.GetType().Name == "ExecutionEngineException")
                         {
-                            Debug.WriteLine($"🚨 ExecutionEngineException during UnmanagedMemoryStream read: {ex.Message}");
+                            Debug.WriteLine($"🚨 Critical runtime exception during UnmanagedMemoryStream read: {ex.Message}");
                             return null;
+                        }
+                        
+                        // Additional safety check - ensure we read what we expected
+                        if (totalBytesRead != bytesToRead)
+                        {
+                            Debug.WriteLine($"🔍 Partial read warning: expected {bytesToRead}, got {totalBytesRead}");
                         }
                         
                         Debug.WriteLine($"🔍 Successfully read {totalBytesRead} bytes from UnmanagedMemoryStream");
