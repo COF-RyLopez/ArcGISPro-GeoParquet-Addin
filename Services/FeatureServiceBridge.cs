@@ -833,10 +833,10 @@ namespace DuckDBGeoparquet.Services
                     fieldList.Add(field);
                 }
                 
-                // Add geometry only if requested (use WKB format like working Data Loader)
+                // Add geometry only if requested (geometry is already in WKB format in parquet files)
                 if (returnGeometry)
                 {
-                    fieldList.Add("ST_AsBinary(geometry) as geometry_wkb");
+                    fieldList.Add("geometry as geometry_wkb");
                 }
                 
                 query.Append(string.Join(", ", fieldList));
@@ -850,7 +850,7 @@ namespace DuckDBGeoparquet.Services
                 // For specific field requests, add geometry if needed
                 if (returnGeometry && !outFields.Contains("geometry"))
                 {
-                    query.Append($"{outFields}, ST_AsBinary(geometry) as geometry_wkb");
+                    query.Append($"{outFields}, geometry as geometry_wkb");
                 }
                 else
                 {
