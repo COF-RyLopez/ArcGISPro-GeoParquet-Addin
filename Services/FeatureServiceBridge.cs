@@ -468,24 +468,31 @@ namespace DuckDBGeoparquet.Services
         }
 
         /// <summary>
-        /// Build DuckDB SQL query from ArcGIS parameters
+        /// Build DuckDB SQL query from ArcGIS parameters - Cloud-native S3 querying
         /// </summary>
         private string BuildDuckDbQuery(string whereClause, string geometryParam, string spatialRel, string outFields, int maxRecords)
         {
             var query = new StringBuilder();
             query.Append("SELECT ");
 
-            // Handle output fields
+            // Handle output fields - Updated for Overture Maps bbox struct
             if (outFields == "*")
             {
-                query.Append("id, \"bbox.xmin\", \"bbox.ymin\", \"bbox.xmax\", \"bbox.ymax\", name, place_type, ST_AsText(geometry) as geometry_wkt");
+                query.Append("id, bbox.xmin as bbox_xmin, bbox.ymin as bbox_ymin, bbox.xmax as bbox_xmax, bbox.ymax as bbox_ymax, names, sources, ST_AsText(geometry) as geometry_wkt");
+            }
+            else if (outFields == "OBJECTID")
+            {
+                query.Append("id"); // Use id as the basis for OBJECTID
             }
             else
             {
                 query.Append(outFields);
             }
 
-            query.Append(" FROM current_table");
+            // CLOUD-NATIVE: Query S3 directly instead of requiring local current_table
+            // Default to places theme for now - this could be made configurable
+            var s3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=places/type=place/*.parquet";
+            query.Append($" FROM read_parquet('{s3Path}')");
 
             var conditions = new List<string>();
 
@@ -514,6 +521,7 @@ namespace DuckDBGeoparquet.Services
 
             query.Append($" LIMIT {maxRecords}");
 
+            Debug.WriteLine($"Cloud-native query: {query}");
             return query.ToString();
         }
 
@@ -533,7 +541,7 @@ namespace DuckDBGeoparquet.Services
                         root.TryGetProperty("xmax", out var xmaxProp) &&
                         root.TryGetProperty("ymax", out var ymaxProp))
                     {
-                        // Envelope geometry
+                        // Envelope geometry - Updated for Overture Maps bbox struct
                         var xmin = xminProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
                         var ymin = yminProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
                         var xmax = xmaxProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
@@ -542,12 +550,12 @@ namespace DuckDBGeoparquet.Services
                         return spatialRel.ToLowerInvariant() switch
                         {
                             "esrispatialrelintersects" or "esrispatialrelenvelopeintersects" =>
-                                $"(\"bbox.xmin\" <= {xmax} AND \"bbox.xmax\" >= {xmin} AND \"bbox.ymin\" <= {ymax} AND \"bbox.ymax\" >= {ymin})",
+                                $"(bbox.xmin <= {xmax} AND bbox.xmax >= {xmin} AND bbox.ymin <= {ymax} AND bbox.ymax >= {ymin})",
                             "esrispatialrelcontains" =>
-                                $"(\"bbox.xmin\" >= {xmin} AND \"bbox.xmax\" <= {xmax} AND \"bbox.ymin\" >= {ymin} AND \"bbox.ymax\" <= {ymax})",
+                                $"(bbox.xmin >= {xmin} AND bbox.xmax <= {xmax} AND bbox.ymin >= {ymin} AND bbox.ymax <= {ymax})",
                             "esrispatialrelwithin" =>
-                                $"(\"bbox.xmin\" <= {xmin} AND \"bbox.xmax\" >= {xmax} AND \"bbox.ymin\" <= {ymin} AND \"bbox.ymax\" >= {ymax})",
-                            _ => $"(\"bbox.xmin\" <= {xmax} AND \"bbox.xmax\" >= {xmin} AND \"bbox.ymin\" <= {ymax} AND \"bbox.ymax\" >= {ymin})"
+                                $"(bbox.xmin <= {xmin} AND bbox.xmax >= {xmax} AND bbox.ymin <= {ymin} AND bbox.ymax >= {ymax})",
+                            _ => $"(bbox.xmin <= {xmax} AND bbox.xmax >= {xmin} AND bbox.ymin <= {ymax} AND bbox.ymax >= {ymin})"
                         };
                     }
                 }
@@ -608,7 +616,7 @@ namespace DuckDBGeoparquet.Services
         }
 
         /// <summary>
-        /// Get field definitions for the layer
+        /// Get field definitions for the layer - Updated for Overture Maps schema
         /// </summary>
         private object[] GetFieldDefinitions()
         {
@@ -635,7 +643,7 @@ namespace DuckDBGeoparquet.Services
                 },
                 new
                 {
-                    name = "bbox.xmin",
+                    name = "bbox_xmin",
                     type = "esriFieldTypeDouble",
                     alias = "BBox XMin",
                     domain = (object)null,
@@ -644,7 +652,7 @@ namespace DuckDBGeoparquet.Services
                 },
                 new
                 {
-                    name = "bbox.ymin",
+                    name = "bbox_ymin",
                     type = "esriFieldTypeDouble",
                     alias = "BBox YMin",
                     domain = (object)null,
@@ -653,7 +661,7 @@ namespace DuckDBGeoparquet.Services
                 },
                 new
                 {
-                    name = "bbox.xmax",
+                    name = "bbox_xmax",
                     type = "esriFieldTypeDouble",
                     alias = "BBox XMax",
                     domain = (object)null,
@@ -662,7 +670,7 @@ namespace DuckDBGeoparquet.Services
                 },
                 new
                 {
-                    name = "bbox.ymax",
+                    name = "bbox_ymax",
                     type = "esriFieldTypeDouble",
                     alias = "BBox YMax",
                     domain = (object)null,
@@ -671,20 +679,30 @@ namespace DuckDBGeoparquet.Services
                 },
                 new
                 {
-                    name = "name",
+                    name = "names",
                     type = "esriFieldTypeString",
-                    alias = "Name",
-                    length = 255,
+                    alias = "Names",
+                    length = 1000,
                     domain = (object)null,
                     editable = false,
                     nullable = true
                 },
                 new
                 {
-                    name = "place_type",
+                    name = "sources",
                     type = "esriFieldTypeString",
-                    alias = "Place Type",
-                    length = 255,
+                    alias = "Sources",
+                    length = 1000,
+                    domain = (object)null,
+                    editable = false,
+                    nullable = true
+                },
+                new
+                {
+                    name = "geometry_wkt",
+                    type = "esriFieldTypeString",
+                    alias = "Geometry WKT",
+                    length = 4000,
                     domain = (object)null,
                     editable = false,
                     nullable = true
@@ -702,7 +720,8 @@ namespace DuckDBGeoparquet.Services
             response.StatusCode = 200;
 
             var buffer = Encoding.UTF8.GetBytes(json);
-            response.ContentLength64 = buffer.Length;
+            // Don't set ContentLength64 - let HttpListener handle it automatically to avoid mismatch
+            // response.ContentLength64 = buffer.Length;
 
             await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
             response.Close();

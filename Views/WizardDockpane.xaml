@@ -230,17 +230,17 @@
                                 Padding="8"
                                 Margin="0,0,0,12">
                             <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
-                                The Feature Service Bridge creates a local HTTP server that exposes your DuckDB data as an ArcGIS REST Feature Service. This allows you to consume live cloud data in ArcGIS Pro without downloading files.
+                                The Feature Service Bridge creates a local HTTP server that queries live cloud data from S3 as an ArcGIS REST Feature Service. This allows you to consume cloud-native data in ArcGIS Pro without downloading files.
                                 <LineBreak/><LineBreak/>
-                                <Bold>⚠️ IMPORTANT WORKFLOW:</Bold>
+                                <Bold>🚀 TRUE CLOUD-NATIVE WORKFLOW:</Bold>
                                 <LineBreak/>
-                                1. <Bold>FIRST:</Bold> Load data using the "Select Data" tab (select themes → choose area → Load Data)
+                                1. <Bold>START:</Bold> Click "Start Feature Service" below (no download needed!)
                                 <LineBreak/>
-                                2. <Bold>THEN:</Bold> Start the Feature Service Bridge below
+                                2. <Bold>CONNECT:</Bold> Add the service URL to ArcGIS Pro
                                 <LineBreak/>
-                                3. <Bold>FINALLY:</Bold> In ArcGIS Pro, add the feature service using the provided URL
+                                3. <Bold>QUERY:</Bold> Pan/zoom in Pro → service fetches live data from S3 on-demand
                                 <LineBreak/><LineBreak/>
-                                <Bold>💡 The service serves whatever data you've loaded into DuckDB. No data loaded = empty service!</Bold>
+                                <Bold>💡 Live queries against S3 data - zoom to your area of interest and data streams in real-time!</Bold>
                             </TextBlock>
                         </Border>
 
@@ -278,14 +278,13 @@
                                             Command="{Binding CopyFeatureServiceUrlCommand}" Style="{DynamicResource Esri_Button}"/>
                                 </Grid>
 
-                                <!-- Data Status Warning -->
-                                <Border Background="#FFF3CD" BorderBrush="#FFEAA4" BorderThickness="1" 
-                                        CornerRadius="4" Padding="8" Margin="0,0,0,8"
-                                        Visibility="{Binding ShowDataWarning, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <!-- Cloud-Native Status Info -->
+                                <Border Background="#D1ECF1" BorderBrush="#BEE5EB" BorderThickness="1" 
+                                        CornerRadius="4" Padding="8" Margin="0,0,0,8">
                                     <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="⚠️" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                        <TextBlock TextWrapping="Wrap" VerticalAlignment="Center" Foreground="#856404">
-                                            <Bold>No data loaded!</Bold> Go to "Select Data" tab and load themes before starting the service.
+                                        <TextBlock Text="☁️" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                        <TextBlock TextWrapping="Wrap" VerticalAlignment="Center" Foreground="#0C5460">
+                                            <Bold>Cloud-Native Ready!</Bold> Service queries live S3 data on-demand - no local storage required.
                                         </TextBlock>
                                     </StackPanel>
                                 </Border>
@@ -309,7 +308,7 @@
                                 Padding="8"
                                 Margin="0,0,0,12">
                             <StackPanel>
-                                <TextBlock Text="Adding Feature Service to ArcGIS Pro:" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                <TextBlock Text="Adding Cloud Feature Service to ArcGIS Pro:" FontWeight="SemiBold" Margin="0,0,0,4"/>
                                 <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
                                     1. In ArcGIS Pro, go to the Catalog pane
                                     <LineBreak/>
@@ -320,13 +319,17 @@
                                     4. Enter the Service URL shown above when the service is running
                                     <LineBreak/>
                                     5. Browse the available layers and add them to your map
+                                    <LineBreak/>
+                                    6. Zoom/pan to your area of interest - data loads on-demand from S3!
                                 </TextBlock>
                                 
-                                <TextBlock Text="Alternative Method:" FontWeight="SemiBold" Margin="0,8,0,4"/>
+                                <TextBlock Text="How It Works:" FontWeight="SemiBold" Margin="0,8,0,4"/>
                                 <TextBlock TextWrapping="Wrap" Margin="0,0,0,0" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
-                                    • Use "Add Data" → "Data from Path" and paste the Service URL directly
+                                    • Live Queries: Pro sends your map extent to the service
                                     <LineBreak/>
-                                    • The service provides live access to your cloud data without local downloads
+                                    • S3 Data: Service queries Overture Maps data directly from cloud storage
+                                    <LineBreak/>
+                                    • Real-time: Data streams in as you navigate - no local files needed!
                                 </TextBlock>
                             </StackPanel>
                         </Border>
