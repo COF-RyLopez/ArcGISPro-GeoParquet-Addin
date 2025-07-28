@@ -829,10 +829,11 @@ namespace DuckDBGeoparquet.Services
                     fieldList.Add(field);
                 }
                 
-                // Add geometry only if requested (geometry is already in WKB format in parquet files)
+                // Add geometry only if requested - use DuckDB spatial functions to properly convert WKB
                 if (returnGeometry)
                 {
-                    fieldList.Add("geometry as geometry_wkb");
+                    // CRITICAL: Use DuckDB spatial function to convert WKB to proper geometry format
+                    fieldList.Add("ST_AsWKB(ST_GeomFromWkb(geometry)) as geometry_wkb");
                 }
                 
                 query.Append(string.Join(", ", fieldList));
@@ -841,7 +842,7 @@ namespace DuckDBGeoparquet.Services
             {
                 // CRITICAL FIX: Always include geometry for spatial feature services
                 // ArcGIS Pro needs geometry even when requesting only OBJECTID
-                query.Append("id, geometry as geometry_wkb"); // Use id as the basis for OBJECTID + geometry
+                query.Append("id, ST_AsWKB(ST_GeomFromWkb(geometry)) as geometry_wkb"); // Use id as the basis for OBJECTID + geometry
             }
             else
             {
@@ -851,11 +852,11 @@ namespace DuckDBGeoparquet.Services
                 
                 if (!processedFields.Contains("geometry"))
                 {
-                    query.Append($"{processedFields}, geometry as geometry_wkb");
+                    query.Append($"{processedFields}, ST_AsWKB(ST_GeomFromWkb(geometry)) as geometry_wkb");
                 }
                 else
                 {
-                    query.Append(processedFields);
+                    query.Append(processedFields.Replace("geometry", "ST_AsWKB(ST_GeomFromWkb(geometry)) as geometry_wkb"));
                 }
             }
 
