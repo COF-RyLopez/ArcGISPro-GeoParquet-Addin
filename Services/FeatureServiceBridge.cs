@@ -688,17 +688,13 @@ namespace DuckDBGeoparquet.Services
                     return;
                 }
 
-                // Ensure data is loaded into in-memory tables with graceful fallback
-                try
-                {
-                    await EnsureDataLoadedAsync();
-                }
-                catch (Exception loadEx)
-                {
-                    Debug.WriteLine($"⚠️ Failed to load in-memory cache for layer {layerId} ({theme.Name}): {loadEx.Message}");
-                    Debug.WriteLine($"   Will use S3 fallback queries instead");
-                    // Continue with S3 fallback - don't fail the entire request
-                }
+                // KOOP-STYLE PASS-THROUGH: Skip in-memory caching for large curated datasets like Overture Maps
+                // This prevents viewport filtering from excluding valid geometry data
+                Debug.WriteLine($"🚀 Using direct S3 pass-through for {theme.Name} (Koop-style approach)");
+                Debug.WriteLine($"   Bypassing viewport-based filtering to ensure geometry data is preserved");
+                
+                // Force S3 fallback to avoid geometry loss from viewport filtering
+                _dataLoaded = false;
 
                 var queryParams = ParseQueryParameters(context.Request);
                 
@@ -874,7 +870,7 @@ namespace DuckDBGeoparquet.Services
             {
                 // FALLBACK: Direct S3 query if in-memory data not loaded yet
                 query.Append($" FROM read_parquet('{theme.S3Path}')");
-                Debug.WriteLine($"⚠️ Fallback to S3 for {theme.Name} - in-memory data not loaded yet");
+                Debug.WriteLine($"🌐 Direct S3 query for {theme.Name} - ensuring geometry data preservation");
             }
 
             var conditions = new List<string>();
@@ -970,6 +966,7 @@ namespace DuckDBGeoparquet.Services
             {
                 Debug.WriteLine($"Executing DuckDB query: {query}");
                 Debug.WriteLine($"🔍 Query includes geometry_wkb: {query.Contains("geometry_wkb")}");
+                Debug.WriteLine($"🔍 Full query text: {query}");
 
                 var queryResults = await _dataProcessor.ExecuteQueryAsync(query);
                 
@@ -989,6 +986,23 @@ namespace DuckDBGeoparquet.Services
                         if (kvp.Key == "geometry_wkb" && kvp.Value != null)
                         {
                             Debug.WriteLine($"🔍 Found geometry_wkb column with data type: {kvp.Value.GetType()}, length: {(kvp.Value is byte[] bytes ? bytes.Length : kvp.Value.ToString().Length)}");
+                            
+                            // ENHANCED DEBUGGING: Show raw geometry data structure
+                            if (kvp.Value is System.IO.UnmanagedMemoryStream stream)
+                            {
+                                Debug.WriteLine($"🔍 Geometry is UnmanagedMemoryStream - Length: {stream.Length}, Position: {stream.Position}");
+                            }
+                            else if (kvp.Value is byte[] byteArray)
+                            {
+                                var preview = string.Join(",", byteArray.Take(16).Select(b => $"{b:X2}"));
+                                Debug.WriteLine($"🔍 Geometry is byte array - First 16 bytes: [{preview}]");
+                            }
+                            else
+                            {
+                                Debug.WriteLine($"🔍 Geometry has unexpected type: {kvp.Value.GetType().FullName}");
+                                Debug.WriteLine($"🔍 Raw value preview: {kvp.Value.ToString().Substring(0, Math.Min(100, kvp.Value.ToString().Length))}");
+                            }
+                            
                             // Parse WKB geometry into ArcGIS geometry format (same as working Data Loader)
                             geometry = ParseWkbToArcGISGeometry(kvp.Value);
                             Debug.WriteLine($"🔍 Parsed geometry result: {(geometry != null ? "SUCCESS" : "FAILED")}");
@@ -996,6 +1010,10 @@ namespace DuckDBGeoparquet.Services
                         else if (kvp.Key == "geometry_wkb" && kvp.Value == null)
                         {
                             Debug.WriteLine($"🔍 Found geometry_wkb column but value is NULL");
+                        }
+                        else if (kvp.Key == "geometry_wkb")
+                        {
+                            Debug.WriteLine($"🔍 Found geometry_wkb column with unexpected null-like value: {kvp.Value} (type: {kvp.Value?.GetType()})");
                         }
                         else if (kvp.Key != "geometry_wkb") // Don't include WKB in attributes
                         {
