@@ -101,6 +101,27 @@ namespace DuckDBGeoparquet.Services
         // Cache of materialized export tables for heavy outFields=* paging
         private readonly Dictionary<string, string> _materializedExports = new Dictionary<string, string>();
 
+        // Helper: split a STRUCT member list by top-level commas (ignores commas inside nested parentheses)
+        private static IEnumerable<string> SplitTopLevelComma(string s)
+        {
+            var parts = new List<string>();
+            if (string.IsNullOrEmpty(s)) return parts;
+            int depth = 0; int start = 0;
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (c == '(') depth++;
+                else if (c == ')') depth = Math.Max(0, depth - 1);
+                else if (c == ',' && depth == 0)
+                {
+                    parts.Add(s.Substring(start, i - start).Trim());
+                    start = i + 1;
+                }
+            }
+            if (start < s.Length) parts.Add(s.Substring(start).Trim());
+            return parts.Where(p => !string.IsNullOrEmpty(p));
+        }
+
         private async Task EnsureThemeFieldsDiscoveredAsync(ThemeDefinition theme)
         {
             if (_discoveredFields.ContainsKey(theme.Id)) return;
@@ -142,13 +163,15 @@ namespace DuckDBGeoparquet.Services
                         var closeIdx = inner.LastIndexOf(')');
                         if (closeIdx >= 0)
                             inner = inner.Substring(0, closeIdx);
-                        var parts = inner.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                        var parts = SplitTopLevelComma(inner);
                         foreach (var p in parts)
                         {
                             var spaceIdx = p.IndexOf(' ');
                             if (spaceIdx <= 0) continue;
                             var member = p.Substring(0, spaceIdx).Trim().Trim('"');
                             var mType = p.Substring(spaceIdx + 1).Trim();
+                            var upperMemberType = mType.ToUpperInvariant();
+                            if (upperMemberType.StartsWith("STRUCT(") || upperMemberType.StartsWith("LIST(")) continue;
                             if (!allowedTypes.Contains(mType.ToUpperInvariant())) continue;
                             var fieldName = $"{colName}_{member}";
                             var expr = $"struct_extract(list_extract({colName}, 1), '{member}') as {fieldName}";
@@ -167,7 +190,7 @@ namespace DuckDBGeoparquet.Services
                         var closeIdx = inner.LastIndexOf(')');
                         if (closeIdx >= 0)
                             inner = inner.Substring(0, closeIdx);
-                        var parts = inner.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                        var parts = SplitTopLevelComma(inner);
                         foreach (var p in parts)
                         {
                             // p format: name TYPE
