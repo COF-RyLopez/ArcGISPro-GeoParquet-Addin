@@ -1013,23 +1013,29 @@ namespace DuckDBGeoparquet.Services
                 }
                 catch { }
 
-                // Append geometry
-                var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, {outWkid.Value})" : "geometry";
-                var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
-                var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
-                var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
-
-                // If caller explicitly requested geometry in outFields, replace it with our GeoJSON expression; otherwise always include it
-                bool requestedGeometry = fieldParts.Any(p => p.Trim().Equals("geometry", StringComparison.OrdinalIgnoreCase));
-                if (requestedGeometry)
+                // Append geometry only when requested by the client (respect returnGeometry)
+                if (returnGeometry)
                 {
-                    // Replace any raw geometry token with our encoded geometry
-                    var withGeometry = translatedFields.Select(tf => tf.Equals("geometry", StringComparison.OrdinalIgnoreCase) ? $"ST_AsGeoJSON({filtered}) as geometry_geojson" : tf).ToList();
-                    query.Append(string.Join(", ", withGeometry));
+                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, {outWkid.Value})" : "geometry";
+                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
+                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
+                    var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
+
+                    bool requestedGeometry = fieldParts.Any(p => p.Trim().Equals("geometry", StringComparison.OrdinalIgnoreCase));
+                    if (requestedGeometry)
+                    {
+                        var withGeometry = translatedFields.Select(tf => tf.Equals("geometry", StringComparison.OrdinalIgnoreCase) ? $"ST_AsGeoJSON({filtered}) as geometry_geojson" : tf).ToList();
+                        query.Append(string.Join(", ", withGeometry));
+                    }
+                    else
+                    {
+                        translatedFields.Add($"ST_AsGeoJSON({filtered}) as geometry_geojson");
+                        query.Append(string.Join(", ", translatedFields));
+                    }
                 }
                 else
                 {
-                    translatedFields.Add($"ST_AsGeoJSON({filtered}) as geometry_geojson");
+                    // No geometry requested; just project the translated fields
                     query.Append(string.Join(", ", translatedFields));
                 }
             }
