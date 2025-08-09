@@ -792,7 +792,8 @@ namespace DuckDBGeoparquet.Services
                     var idsQuery = duckDbQuery.Replace("SELECT id,", "SELECT id ")
                                               .Replace(", ST_AsGeoJSON(geometry) as geometry_geojson", "")
                                               .Replace(" LIMIT ", " LIMIT ");
-                    var idRows = await _dataProcessor.ExecuteQueryAsync(idsQuery);
+                System.Diagnostics.Debug.WriteLine($"ID-only query SQL: {idsQuery}");
+                var idRows = await _dataProcessor.ExecuteQueryAsync(idsQuery);
                     var objectIds = idRows.Select((r, i) => ComputeObjectId(r.ContainsKey("id") ? r["id"]?.ToString() : i.ToString())).ToArray();
                     var idsJson = JsonSerializer.Serialize(new { objectIdFieldName = "OBJECTID", objectIds = objectIds }, _jsonOptions);
                     await WriteJsonResponse(context, idsJson);
@@ -839,6 +840,7 @@ namespace DuckDBGeoparquet.Services
                 // Debug: Log a sample of the response for troubleshooting
                 var debugJson = json.Length > 500 ? json.Substring(0, 500) + "..." : json;
                 Debug.WriteLine($"🔍 Layer {layerId} JSON Response Sample: {debugJson}");
+                Debug.WriteLine($"Feature count={features.Count}; fields advertised={string.Join(",", GetFieldDefinitions(theme).Select(f => (string)f.GetType().GetProperty("name")?.GetValue(f))) } ");
                 
                 await WriteJsonResponse(context, json);
             }
@@ -1004,6 +1006,12 @@ namespace DuckDBGeoparquet.Services
                     }
                 }
 
+                try
+                {
+                    System.Diagnostics.Debug.WriteLine($"outFields map: original='{outFields}', mapped='{string.Join(", ", translatedFields)}'");
+                }
+                catch { }
+
                 // Append geometry
                 var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, {outWkid.Value})" : "geometry";
                 var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
@@ -1050,6 +1058,10 @@ namespace DuckDBGeoparquet.Services
                 translated = Regex.Replace(translated, @"\bOBJECTID\b", "id", RegexOptions.IgnoreCase);
                 // ArcGIS sometimes quotes field names
                 translated = translated.Replace("\"OBJECTID\"", "id");
+                if (!string.Equals(translated, whereClause, StringComparison.Ordinal))
+                {
+                    System.Diagnostics.Debug.WriteLine($"WHERE translated: '{whereClause}' -> '{translated}'");
+                }
                 conditions.Add($"({translated})");
             }
 
