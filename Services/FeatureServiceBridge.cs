@@ -9,6 +9,8 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
+using System.Security.Cryptography;
+using System.IO.Compression;
 using ArcGIS.Core.Geometry;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
 using ArcGIS.Desktop.Mapping;
@@ -42,7 +44,7 @@ namespace DuckDBGeoparquet.Services
         private Task _listenerTask;
 
         // ArcGIS Feature Service constants
-        private const int _maxRecordCount = 1000;
+        private const int _maxRecordCount = 10000;
         private readonly object _spatialReference = new
         {
             wkid = 4326,
@@ -56,77 +58,46 @@ namespace DuckDBGeoparquet.Services
             WriteIndented = false
         };
 
-        // Multi-layer theme definitions
-        private readonly List<ThemeDefinition> _themes = new List<ThemeDefinition>
-        {
-            new ThemeDefinition 
-            { 
-                Id = 0, 
-                Name = "Places", 
-                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=places/type=place/*.parquet",
-                GeometryType = "esriGeometryPoint",
-                Fields = new[] { "id", "names", "categories", "websites", "emails", "phones", "brand", "addresses", "sources" }
-            },
-            new ThemeDefinition 
-            { 
-                Id = 1, 
-                Name = "Buildings", 
-                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=buildings/type=building/*.parquet",
-                GeometryType = "esriGeometryPolygon",
-                Fields = new[] { "id", "names", "height", "num_floors", "class", "sources" }
-            },
-            new ThemeDefinition 
-            { 
-                Id = 2, 
-                Name = "Addresses", 
-                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=addresses/type=address/*.parquet",
-                GeometryType = "esriGeometryPoint",
-                Fields = new[] { "id", "number", "address_levels", "sources" }
-            },
-            new ThemeDefinition 
-            { 
-                Id = 3, 
-                Name = "Transportation - Roads", 
-                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=segment/*.parquet",
-                GeometryType = "esriGeometryPolyline",
-                Fields = new[] { "id", "names", "routes", "subtype", "class", "sources" }
-            },
-            new ThemeDefinition 
-            { 
-                Id = 4, 
-                Name = "Transportation - Connectors", 
-                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=connector/*.parquet",
-                GeometryType = "esriGeometryPoint",
-                Fields = new[] { "id", "sources" }
-            },
-            new ThemeDefinition 
-            { 
-                Id = 5, 
-                Name = "Base - Land", 
-                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=base/type=land/*.parquet",
-                GeometryType = "esriGeometryPolygon",
-                Fields = new[] { "id", "names", "class", "subtype", "sources" }
-            },
-            new ThemeDefinition 
-            { 
-                Id = 6, 
-                Name = "Base - Water", 
-                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=base/type=water/*.parquet",
-                GeometryType = "esriGeometryPolygon",
-                Fields = new[] { "id", "names", "class", "subtype", "sources" }
-            }
-        };
+            // Focus on a single layer for debugging: Transportation - Roads
+            private readonly List<ThemeDefinition> _themes = new List<ThemeDefinition>
+            {
+                new ThemeDefinition
+                {
+                    Id = 0,
+                    Name = "Transportation - Roads",
+                    S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=segment/*.parquet",
+                    GeometryType = "esriGeometryPolyline",
+                    Fields = new[] { "id" }
+                }
+            };
 
         // In-memory cache status - Thread-safe async synchronization
         private bool _dataLoaded = false;
         private readonly SemaphoreSlim _loadSemaphore = new SemaphoreSlim(1, 1);
         private readonly object _loadLock = new object();
+        private readonly SemaphoreSlim _duckSemaphore = new SemaphoreSlim(1, 1);
+        private double _cachedXmin, _cachedYmin, _cachedXmax, _cachedYmax;
+        private const double _cacheBuffer = 0.05; // degrees
 
         public FeatureServiceBridge(DataProcessor dataProcessor, int port = 8080)
         {
             _dataProcessor = dataProcessor ?? throw new ArgumentNullException(nameof(dataProcessor));
             _port = port;
             _cancellationTokenSource = new CancellationTokenSource();
+        }
+
+        private static int ComputeObjectId(string seed)
+        {
+            if (string.IsNullOrEmpty(seed)) return 0;
+            // Stable 32-bit hash
+            using var sha1 = SHA1.Create();
+            var bytes = Encoding.UTF8.GetBytes(seed);
+            var hash = sha1.ComputeHash(bytes);
+            // fold first 4 bytes into positive int
+            int val = (hash[0] | (hash[1] << 8) | (hash[2] << 16) | (hash[3] << 24));
+            if (val < 0) val = ~val;
+            if (val == 0) val = 1;
+            return val;
         }
 
         public string ServiceUrl => $"http://localhost:{_port}/arcgis/rest/services/overture/FeatureServer";
@@ -179,7 +150,7 @@ namespace DuckDBGeoparquet.Services
                 }
 
                 // Add small buffer around viewport for better user experience
-                var buffer = 0.01; // ~1km buffer
+                var buffer = _cacheBuffer; // ~1km buffer
                 var boundsXmin = extent.XMin - buffer;
                 var boundsYmin = extent.YMin - buffer;
                 var boundsXmax = extent.XMax + buffer;
@@ -211,7 +182,8 @@ namespace DuckDBGeoparquet.Services
                         // Create in-memory table with VIEWPORT BOUNDS - same pattern as existing data loader
                         var createTableQuery = $@"
                             CREATE OR REPLACE TABLE {tableName} AS 
-                            SELECT * FROM read_parquet('{theme.S3Path}')
+                            SELECT id, bbox, geometry
+                            FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1)
                             WHERE bbox.xmin IS NOT NULL AND bbox.ymin IS NOT NULL 
                               AND bbox.xmax IS NOT NULL AND bbox.ymax IS NOT NULL
                               AND bbox.xmin <= {boundsXmax.ToString("G", CultureInfo.InvariantCulture)} 
@@ -234,6 +206,11 @@ namespace DuckDBGeoparquet.Services
                 if (successfulTables > 0)
                 {
                     _dataLoaded = true;
+                    // Store cached extent
+                    _cachedXmin = boundsXmin;
+                    _cachedYmin = boundsYmin;
+                    _cachedXmax = boundsXmax;
+                    _cachedYmax = boundsYmax;
                     Debug.WriteLine($"🎉 Current viewport data loaded into DuckDB cache! ({successfulTables}/{_themes.Count} themes loaded successfully) ⚡");
                 }
                 else
@@ -253,6 +230,58 @@ namespace DuckDBGeoparquet.Services
                 throw; // Re-throw to allow caller to handle
             }
             finally 
+            {
+                _loadSemaphore.Release();
+            }
+        }
+
+        private async Task LoadViewportCacheAsync(double xmin, double ymin, double xmax, double ymax)
+        {
+            await _loadSemaphore.WaitAsync();
+            try
+            {
+                var boundsXmin = xmin - _cacheBuffer;
+                var boundsYmin = ymin - _cacheBuffer;
+                var boundsXmax = xmax + _cacheBuffer;
+                var boundsYmax = ymax + _cacheBuffer;
+
+                int successfulTables = 0;
+                foreach (var theme in _themes)
+                {
+                    var tableName = GetTableName(theme);
+                    try
+                    {
+                        var createTableQuery = $@"
+                            CREATE OR REPLACE TABLE {tableName} AS 
+                            SELECT id, bbox, geometry
+                            FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1)
+                            WHERE bbox.xmin IS NOT NULL AND bbox.ymin IS NOT NULL 
+                              AND bbox.xmax IS NOT NULL AND bbox.ymax IS NOT NULL
+                              AND bbox.xmin <= {boundsXmax.ToString("G", CultureInfo.InvariantCulture)} 
+                              AND bbox.xmax >= {boundsXmin.ToString("G", CultureInfo.InvariantCulture)}
+                              AND bbox.ymin <= {boundsYmax.ToString("G", CultureInfo.InvariantCulture)} 
+                              AND bbox.ymax >= {boundsYmin.ToString("G", CultureInfo.InvariantCulture)}";
+
+                        await _dataProcessor.ExecuteQueryAsync(createTableQuery);
+                        successfulTables++;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"⚠️ Cache load failed for {theme.Name}: {ex.Message}");
+                    }
+                }
+
+                if (successfulTables > 0)
+                {
+                    _dataLoaded = true;
+                    _cachedXmin = boundsXmin;
+                    _cachedYmin = boundsYmin;
+                    _cachedXmax = boundsXmax;
+                    _cachedYmax = boundsYmax;
+                    Debug.WriteLine($"📦 Cache reloaded for requested extent: ({_cachedXmin:F4},{_cachedYmin:F4})–({_cachedXmax:F4},{_cachedYmax:F4})");
+                }
+            }
+            finally
             {
                 _loadSemaphore.Release();
             }
@@ -504,7 +533,7 @@ namespace DuckDBGeoparquet.Services
                     supportsReturnDeleteResults = false,
                     hasStaticData = false,
                     maxRecordCount = _maxRecordCount,
-                    supportedQueryFormats = "JSON,geoJSON,PBF",
+                    supportedQueryFormats = "JSON,geoJSON",
                     capabilities = "Query",
                     description = "Live cloud-native access to all Overture Maps themes via DuckDB",
                     copyrightText = "Data from Overture Maps Foundation via DuckDB",
@@ -622,6 +651,20 @@ namespace DuckDBGeoparquet.Services
                     typeIdField = (string)null,
                     subtypeField = (string)null,
                     fields = GetFieldDefinitions(theme),
+                    drawingInfo = new
+                    {
+                        renderer = new
+                        {
+                            type = "simple",
+                            symbol = theme.GeometryType switch
+                            {
+                                "esriGeometryPoint" => (object)new { type = "esriSMS", style = "esriSMSCircle", color = new[] { 0, 122, 194, 255 }, size = 6, outline = new { color = new[] { 255, 255, 255, 255 }, width = 1 } },
+                                "esriGeometryPolyline" => (object)new { type = "esriSLS", style = "esriSLSSolid", color = new[] { 0, 122, 194, 255 }, width = 1.5 },
+                                "esriGeometryPolygon" => (object)new { type = "esriSFS", style = "esriSFSSolid", color = new[] { 0, 122, 194, 64 }, outline = new { color = new[] { 0, 122, 194, 255 }, width = 1 } },
+                                _ => (object)new { type = "esriSLS", style = "esriSLSSolid", color = new[] { 0, 122, 194, 255 }, width = 1 }
+                            }
+                        }
+                    },
                     canModifyLayer = false,
                     canScaleSymbols = false,
                     hasLabels = false,
@@ -629,7 +672,7 @@ namespace DuckDBGeoparquet.Services
                     maxRecordCount = _maxRecordCount,
                     supportsStatistics = false,
                     supportsAdvancedQueries = false,
-                    supportedQueryFormats = "JSON,geoJSON,PBF",
+                    supportedQueryFormats = "JSON,geoJSON",
                     isDataVersioned = false,
                     useStandardizedQueries = true,
                     supportedSpatialRelationships = new string[]
@@ -651,7 +694,7 @@ namespace DuckDBGeoparquet.Services
                         supportsCountDistinct = false,
                         supportsOrderBy = false,
                         supportsDistinct = false,
-                        supportsPagination = false,
+                        supportsPagination = true,
                         supportsTrueCurve = false,
                         supportsReturningQueryExtent = true,
                         supportsQueryWithDistance = false,
@@ -688,13 +731,10 @@ namespace DuckDBGeoparquet.Services
                     return;
                 }
 
-                // KOOP-STYLE PASS-THROUGH: Skip in-memory caching for large curated datasets like Overture Maps
-                // This prevents viewport filtering from excluding valid geometry data
-                Debug.WriteLine($"🚀 Using direct S3 pass-through for {theme.Name} (Koop-style approach)");
-                Debug.WriteLine($"   Bypassing viewport-based filtering to ensure geometry data is preserved");
-                
-                // Force S3 fallback to avoid geometry loss from viewport filtering
-                _dataLoaded = false;
+                // Prefer in-memory viewport cache when available for performance; otherwise fallback to S3
+                Debug.WriteLine(_dataLoaded
+                    ? $"⚡ Using in-memory cache for {theme.Name}"
+                    : $"🌐 Using direct S3 pass-through for {theme.Name}");
 
                 var queryParams = ParseQueryParameters(context.Request);
                 
@@ -705,15 +745,74 @@ namespace DuckDBGeoparquet.Services
                 var spatialRel = GetQueryParam(queryParams, "spatialRel") ?? "esriSpatialRelIntersects";
                 var returnGeometry = GetQueryParam(queryParams, "returnGeometry")?.ToLowerInvariant() != "false";
                 var maxRecords = int.TryParse(GetQueryParam(queryParams, "resultRecordCount"), out var max) ? max : _maxRecordCount;
+                var resultOffset = int.TryParse(GetQueryParam(queryParams, "resultOffset"), out var off) ? off : 0;
+                var outWkid = int.TryParse(GetQueryParam(queryParams, "outSR"), out var wk) ? wk : (int?)null;
                 var format = GetQueryParam(queryParams, "f") ?? "json";
+                // Geometry precision and quantization (ArcGIS REST) – used to reduce payload/vertices
+                int? geometryPrecision = null; if (int.TryParse(GetQueryParam(queryParams, "geometryPrecision"), out var gp)) geometryPrecision = gp;
+                var quantizationParameters = GetQueryParam(queryParams, "quantizationParameters");
 
                 Debug.WriteLine($"Layer {layerId} ({theme.Name}) Query: where={whereClause}, outFields={outFields}, geometry={geometryParam}, spatialRel={spatialRel}");
 
+                // Proactively refresh cache if request extent is outside cached extent
+                if (_dataLoaded && !string.IsNullOrEmpty(geometryParam))
+                {
+                    if (TryParseEnvelope(geometryParam, out var gxmin, out var gymin, out var gxmax, out var gymax))
+                    {
+                        bool outside = gxmin < _cachedXmin || gymin < _cachedYmin || gxmax > _cachedXmax || gymax > _cachedYmax;
+                        if (outside)
+                        {
+                            Debug.WriteLine("🔁 Requested extent outside cached viewport. Reloading cache for requested bbox...");
+                            await LoadViewportCacheAsync(gxmin, gymin, gxmax, gymax);
+                        }
+                    }
+                }
+
                 // Build DuckDB query
-                var duckDbQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, maxRecords, returnGeometry);
+                var duckDbQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, maxRecords, returnGeometry, outWkid, resultOffset, geometryPrecision, quantizationParameters);
                 
                 // Execute query
+                // Fast-paths: return count/IDs only per ArcGIS REST
+                if ((GetQueryParam(queryParams, "returnCountOnly") ?? "false").Equals("true", StringComparison.OrdinalIgnoreCase))
+                {
+                    var countQuery = BuildDuckDbCountQuery(theme, whereClause, geometryParam, spatialRel, geometryPrecision, quantizationParameters);
+                    var cntRows = await _dataProcessor.ExecuteQueryAsync(countQuery);
+                    var total = (cntRows.FirstOrDefault()? ["cnt"]) ?? 0;
+                    var countJson = JsonSerializer.Serialize(new { count = total }, _jsonOptions);
+                    await WriteJsonResponse(context, countJson);
+                    return;
+                }
+
+                if ((GetQueryParam(queryParams, "returnIdsOnly") ?? "false").Equals("true", StringComparison.OrdinalIgnoreCase))
+                {
+                    var idsQuery = duckDbQuery.Replace("SELECT id,", "SELECT id ")
+                                              .Replace(", ST_AsGeoJSON(geometry) as geometry_geojson", "")
+                                              .Replace(" LIMIT ", " LIMIT ");
+                    var idRows = await _dataProcessor.ExecuteQueryAsync(idsQuery);
+                    var objectIds = idRows.Select((r, i) => ComputeObjectId(r.ContainsKey("id") ? r["id"]?.ToString() : i.ToString())).ToArray();
+                    var idsJson = JsonSerializer.Serialize(new { objectIdFieldName = "OBJECTID", objectIds = objectIds }, _jsonOptions);
+                    await WriteJsonResponse(context, idsJson);
+                    return;
+                }
+
                 var features = await ExecuteDuckDbQuery(duckDbQuery);
+
+                // If cache is loaded but query returned nothing for a new extent, reload cache for current view and retry once
+                if (_dataLoaded && (features == null || features.Count == 0) && !string.IsNullOrEmpty(geometryParam))
+                {
+                    try
+                    {
+                        Debug.WriteLine("🔁 No features from cache for requested extent. Reloading viewport cache and retrying once...");
+                        _dataLoaded = false;
+                        await EnsureDataLoadedAsync();
+                        duckDbQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, maxRecords, returnGeometry, outWkid, resultOffset, geometryPrecision, quantizationParameters);
+                        features = await ExecuteDuckDbQuery(duckDbQuery);
+                    }
+                    catch (Exception reloadEx)
+                    {
+                        Debug.WriteLine($"⚠️ Cache reload attempt failed: {reloadEx.Message}");
+                    }
+                }
 
                 // Build ArcGIS REST API compliant response
                 var response = new
@@ -809,10 +908,15 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Build DuckDB SQL query from ArcGIS parameters - In-memory high-performance querying
         /// </summary>
-        private string BuildDuckDbQuery(ThemeDefinition theme, string whereClause, string geometryParam, string spatialRel, string outFields, int maxRecords, bool returnGeometry)
+        private string BuildDuckDbQuery(ThemeDefinition theme, string whereClause, string geometryParam, string spatialRel, string outFields, int maxRecords, bool returnGeometry, int? outWkid = null, int resultOffset = 0, int? geometryPrecision = null, string quantizationParameters = null)
         {
             var query = new StringBuilder();
             query.Append("SELECT ");
+
+            // Compute a simplification tolerance based on requested bbox to reduce payload when zoomed out
+            string simplifyTolerance = ComputeSimplifyTolerance(geometryParam);
+            string snapGrid = ComputeSnapGrid(geometryParam, geometryPrecision, quantizationParameters);
+            string lengthThreshold = ComputeMinSegmentLength(geometryParam);
 
             // Handle output fields - Updated for theme-specific schemas
             if (outFields == "*")
@@ -832,17 +936,33 @@ namespace DuckDBGeoparquet.Services
                 // Add geometry only if requested - use DuckDB spatial functions to properly convert WKB
                 if (returnGeometry)
                 {
-                    // CRITICAL: Use DuckDB spatial function to convert WKB to proper geometry format
-                    fieldList.Add("ST_AsWKB(ST_GeomFromWkb(geometry)) as geometry_wkb");
+                    // Use GeoJSON to ensure robust geometry encoding; apply simplification when appropriate
+                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, {outWkid.Value})" : "geometry";
+                    // Simplify → SnapToGrid
+                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
+                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
+                    // Optionally drop tiny segments when zoomed out (for lines)
+                    var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
+                    fieldList.Add($"ST_AsGeoJSON({filtered}) as geometry_geojson");
                 }
                 
                 query.Append(string.Join(", ", fieldList));
             }
             else if (outFields == "OBJECTID")
             {
-                // CRITICAL FIX: Always include geometry for spatial feature services
-                // ArcGIS Pro needs geometry even when requesting only OBJECTID
-                query.Append("id, ST_AsWKB(ST_GeomFromWkb(geometry)) as geometry_wkb"); // Use id as the basis for OBJECTID + geometry
+                // If returnGeometry is false, return IDs only (faster for Pro paging/selection)
+                if (!returnGeometry)
+                {
+                    query.Append("id");
+                }
+                else
+                {
+                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, {outWkid.Value})" : "geometry";
+                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
+                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
+                    var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
+                    query.Append($"id, ST_AsGeoJSON({filtered}) as geometry_geojson");
+                }
             }
             else
             {
@@ -852,11 +972,19 @@ namespace DuckDBGeoparquet.Services
                 
                 if (!processedFields.Contains("geometry"))
                 {
-                    query.Append($"{processedFields}, ST_AsWKB(ST_GeomFromWkb(geometry)) as geometry_wkb");
+                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, {outWkid.Value})" : "geometry";
+                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
+                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
+                    var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
+                    query.Append($"{processedFields}, ST_AsGeoJSON({filtered}) as geometry_geojson");
                 }
                 else
                 {
-                    query.Append(processedFields.Replace("geometry", "ST_AsWKB(ST_GeomFromWkb(geometry)) as geometry_wkb"));
+                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, {outWkid.Value})" : "geometry";
+                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
+                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
+                    var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
+                    query.Append(processedFields.Replace("geometry", $"ST_AsGeoJSON({filtered}) as geometry_geojson"));
                 }
             }
 
@@ -870,7 +998,7 @@ namespace DuckDBGeoparquet.Services
             else
             {
                 // FALLBACK: Direct S3 query if in-memory data not loaded yet
-                query.Append($" FROM read_parquet('{theme.S3Path}')");
+                query.Append($" FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1)");
                 Debug.WriteLine($"🌐 Direct S3 query for {theme.Name} - ensuring geometry data preservation");
             }
 
@@ -893,13 +1021,42 @@ namespace DuckDBGeoparquet.Services
                 }
             }
 
+            // Optional refinement: if we had an envelope filter, also check ST_Intersects to reduce false positives
+            // Add as an additional condition so WHERE clause is constructed correctly
+            if (returnGeometry && !string.IsNullOrEmpty(geometryParam))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(geometryParam);
+                    var root = doc.RootElement;
+                    if (root.TryGetProperty("xmin", out var xminProp) &&
+                        root.TryGetProperty("ymin", out var yminProp) &&
+                        root.TryGetProperty("xmax", out var xmaxProp) &&
+                        root.TryGetProperty("ymax", out var ymaxProp))
+                    {
+                        var xmin = xminProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
+                        var ymin = yminProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
+                        var xmax = xmaxProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
+                        var ymax = ymaxProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
+                        conditions.Add($"ST_Intersects(geometry, ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax}))");
+                    }
+                }
+                catch { }
+            }
+
             if (conditions.Count > 0)
             {
                 query.Append(" WHERE ");
                 query.Append(string.Join(" AND ", conditions));
             }
 
+            // Ensure deterministic paging for Pro: always order by id
+            query.Append(" ORDER BY id");
             query.Append($" LIMIT {maxRecords}");
+            if (resultOffset > 0)
+            {
+                query.Append($" OFFSET {resultOffset}");
+            }
 
             if (_dataLoaded)
             {
@@ -911,6 +1068,149 @@ namespace DuckDBGeoparquet.Services
             }
             
             return query.ToString();
+        }
+
+        private string ComputeSimplifyTolerance(string geometryParam)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(geometryParam)) return null;
+                using var doc = JsonDocument.Parse(geometryParam);
+                var root = doc.RootElement;
+                double xmin, ymin, xmax, ymax;
+                if (root.TryGetProperty("xmin", out var xminProp) &&
+                    root.TryGetProperty("ymin", out var yminProp) &&
+                    root.TryGetProperty("xmax", out var xmaxProp) &&
+                    root.TryGetProperty("ymax", out var ymaxProp))
+                {
+                    xmin = xminProp.GetDouble(); ymin = yminProp.GetDouble(); xmax = xmaxProp.GetDouble(); ymax = ymaxProp.GetDouble();
+                }
+                else if (TryParseEnvelope(geometryParam, out xmin, out ymin, out xmax, out ymax))
+                {
+                    // already parsed via helper
+                }
+                else
+                {
+                    return null;
+                }
+
+                var width = Math.Abs(xmax - xmin);
+                var height = Math.Abs(ymax - ymin);
+                var span = Math.Max(width, height);
+                if (span <= 0) return null;
+
+                // Choose a tolerance proportional to span. Tuned to keep detail when zoomed in and reduce vertices when zoomed out.
+                var tol = span / 20000.0; // e.g., ~0.00005 degrees for a 1-degree span
+                if (tol < 1e-7) return null; // too small, skip
+                return tol.ToString("G", CultureInfo.InvariantCulture);
+            }
+            catch { return null; }
+        }
+
+        private string BuildDuckDbCountQuery(ThemeDefinition theme, string whereClause, string geometryParam, string spatialRel, int? geometryPrecision = null, string quantizationParameters = null)
+        {
+            var query = new StringBuilder();
+            var tableName = GetTableName(theme);
+            query.Append("SELECT COUNT(*) as cnt FROM ");
+            if (_dataLoaded)
+            {
+                query.Append(tableName);
+            }
+            else
+            {
+                query.Append($"read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1)");
+            }
+
+            var conditions = new List<string>();
+            if (!string.IsNullOrEmpty(whereClause) && whereClause != "1=1")
+            {
+                conditions.Add($"({whereClause})");
+            }
+            if (!string.IsNullOrEmpty(geometryParam))
+            {
+                var spatialCondition = ConvertArcGISGeometryToSql(geometryParam, spatialRel);
+                if (!string.IsNullOrEmpty(spatialCondition))
+                    conditions.Add(spatialCondition);
+
+                // add exact intersects for envelope
+                try
+                {
+                    using var doc = JsonDocument.Parse(geometryParam);
+                    var root = doc.RootElement;
+                    if (root.TryGetProperty("xmin", out var xminProp) &&
+                        root.TryGetProperty("ymin", out var yminProp) &&
+                        root.TryGetProperty("xmax", out var xmaxProp) &&
+                        root.TryGetProperty("ymax", out var ymaxProp))
+                    {
+                        var xmin = xminProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
+                        var ymin = yminProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
+                        var xmax = xmaxProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
+                        var ymax = ymaxProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
+                        conditions.Add($"ST_Intersects(geometry, ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax}))");
+                    }
+                }
+                catch { }
+            }
+
+            if (conditions.Count > 0)
+            {
+                query.Append(" WHERE ");
+                query.Append(string.Join(" AND ", conditions));
+            }
+
+            return query.ToString();
+        }
+
+        // Quantization / snap-to-grid: derive grid size from geometryPrecision or quantizationParameters
+        private string ComputeSnapGrid(string geometryParam, int? geometryPrecision, string quantizationParameters)
+        {
+            try
+            {
+                if (geometryPrecision.HasValue && geometryPrecision.Value > 0)
+                {
+                    // Convert digits into approx degrees grid using bbox width
+                    if (TryParseEnvelope(geometryParam, out var xmin, out var ymin, out var xmax, out var ymax))
+                    {
+                        var span = Math.Max(Math.Abs(xmax - xmin), Math.Abs(ymax - ymin));
+                        if (span > 0)
+                        {
+                            // grid ~ span / 10^precision
+                            var grid = span / Math.Pow(10, geometryPrecision.Value);
+                            if (grid > 0) return grid.ToString("G", CultureInfo.InvariantCulture);
+                        }
+                    }
+                }
+                // Basic support for quantizationParameters: {"tolerance": number}
+                if (!string.IsNullOrEmpty(quantizationParameters))
+                {
+                    using var doc = JsonDocument.Parse(quantizationParameters);
+                    if (doc.RootElement.TryGetProperty("tolerance", out var tol) && tol.ValueKind == JsonValueKind.Number)
+                    {
+                        var val = tol.GetDouble();
+                        if (val > 0) return val.ToString("G", CultureInfo.InvariantCulture);
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        // Drop tiny lines when zoomed out
+        private string ComputeMinSegmentLength(string geometryParam)
+        {
+            try
+            {
+                if (TryParseEnvelope(geometryParam, out var xmin, out var ymin, out var xmax, out var ymax))
+                {
+                    var span = Math.Max(Math.Abs(xmax - xmin), Math.Abs(ymax - ymin));
+                    if (span <= 0) return null;
+                    // threshold ~ 1/100000 of span in degrees (~1m at 1 deg ~ 111km). Tuned conservatively.
+                    var thr = span / 100000.0;
+                    return thr.ToString("G", CultureInfo.InvariantCulture);
+                }
+            }
+            catch { }
+            return null;
         }
 
         /// <summary>
@@ -946,6 +1246,48 @@ namespace DuckDBGeoparquet.Services
                             _ => $"(bbox.xmin <= {xmax} AND bbox.xmax >= {xmin} AND bbox.ymin <= {ymax} AND bbox.ymax >= {ymin})"
                         };
                     }
+
+                    // Polygon rings: compute bbox and return bbox predicate
+                    if (root.TryGetProperty("rings", out var ringsElem) && ringsElem.ValueKind == JsonValueKind.Array)
+                    {
+                        double minx = double.PositiveInfinity, miny = double.PositiveInfinity, maxx = double.NegativeInfinity, maxy = double.NegativeInfinity;
+                        foreach (var ring in ringsElem.EnumerateArray())
+                        {
+                            foreach (var c in ring.EnumerateArray())
+                            {
+                                double x = c[0].GetDouble();
+                                double y = c[1].GetDouble();
+                                if (x < minx) minx = x; if (x > maxx) maxx = x;
+                                if (y < miny) miny = y; if (y > maxy) maxy = y;
+                            }
+                        }
+                        var xmin = minx.ToString("G", CultureInfo.InvariantCulture);
+                        var ymin = miny.ToString("G", CultureInfo.InvariantCulture);
+                        var xmax = maxx.ToString("G", CultureInfo.InvariantCulture);
+                        var ymax = maxy.ToString("G", CultureInfo.InvariantCulture);
+                        return $"(bbox.xmin <= {xmax} AND bbox.xmax >= {xmin} AND bbox.ymin <= {ymax} AND bbox.ymax >= {ymin})";
+                    }
+
+                    // Polyline paths: compute bbox and return bbox predicate
+                    if (root.TryGetProperty("paths", out var pathsElem) && pathsElem.ValueKind == JsonValueKind.Array)
+                    {
+                        double minx = double.PositiveInfinity, miny = double.PositiveInfinity, maxx = double.NegativeInfinity, maxy = double.NegativeInfinity;
+                        foreach (var path in pathsElem.EnumerateArray())
+                        {
+                            foreach (var c in path.EnumerateArray())
+                            {
+                                double x = c[0].GetDouble();
+                                double y = c[1].GetDouble();
+                                if (x < minx) minx = x; if (x > maxx) maxx = x;
+                                if (y < miny) miny = y; if (y > maxy) maxy = y;
+                            }
+                        }
+                        var xmin = minx.ToString("G", CultureInfo.InvariantCulture);
+                        var ymin = miny.ToString("G", CultureInfo.InvariantCulture);
+                        var xmax = maxx.ToString("G", CultureInfo.InvariantCulture);
+                        var ymax = maxy.ToString("G", CultureInfo.InvariantCulture);
+                        return $"(bbox.xmin <= {xmax} AND bbox.xmax >= {xmin} AND bbox.ymin <= {ymax} AND bbox.ymax >= {ymin})";
+                    }
                 }
             }
             catch (Exception ex)
@@ -954,6 +1296,59 @@ namespace DuckDBGeoparquet.Services
             }
 
             return string.Empty;
+        }
+
+        private bool TryParseEnvelope(string geometryJson, out double xmin, out double ymin, out double xmax, out double ymax)
+        {
+            xmin = ymin = xmax = ymax = 0;
+            try
+            {
+                using var doc = JsonDocument.Parse(geometryJson);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("xmin", out var xminProp) &&
+                    root.TryGetProperty("ymin", out var yminProp) &&
+                    root.TryGetProperty("xmax", out var xmaxProp) &&
+                    root.TryGetProperty("ymax", out var ymaxProp))
+                {
+                    xmin = xminProp.GetDouble();
+                    ymin = yminProp.GetDouble();
+                    xmax = xmaxProp.GetDouble();
+                    ymax = ymaxProp.GetDouble();
+                    return true;
+                }
+
+                if (root.TryGetProperty("rings", out var ringsElem) && ringsElem.ValueKind == JsonValueKind.Array)
+                {
+                    double minx = double.PositiveInfinity, miny = double.PositiveInfinity, maxx = double.NegativeInfinity, maxy = double.NegativeInfinity;
+                    foreach (var ring in ringsElem.EnumerateArray())
+                    {
+                        foreach (var c in ring.EnumerateArray())
+                        {
+                            double x = c[0].GetDouble();
+                            double y = c[1].GetDouble();
+                            if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y;
+                        }
+                    }
+                    xmin = minx; ymin = miny; xmax = maxx; ymax = maxy; return true;
+                }
+
+                if (root.TryGetProperty("paths", out var pathsElem) && pathsElem.ValueKind == JsonValueKind.Array)
+                {
+                    double minx = double.PositiveInfinity, miny = double.PositiveInfinity, maxx = double.NegativeInfinity, maxy = double.NegativeInfinity;
+                    foreach (var path in pathsElem.EnumerateArray())
+                    {
+                        foreach (var c in path.EnumerateArray())
+                        {
+                            double x = c[0].GetDouble();
+                            double y = c[1].GetDouble();
+                            if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y;
+                        }
+                    }
+                    xmin = minx; ymin = miny; xmax = maxx; ymax = maxy; return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         /// <summary>
@@ -966,9 +1361,10 @@ namespace DuckDBGeoparquet.Services
             try
             {
                 Debug.WriteLine($"Executing DuckDB query: {query}");
-                Debug.WriteLine($"🔍 Query includes geometry_wkb: {query.Contains("geometry_wkb")}");
+                Debug.WriteLine($"🔍 Query includes geometry_geojson: {query.Contains("geometry_geojson")}");
                 Debug.WriteLine($"🔍 Full query text: {query}");
 
+                await _duckSemaphore.WaitAsync();
                 var queryResults = await _dataProcessor.ExecuteQueryAsync(query);
                 
                 var objectId = 1;
@@ -976,7 +1372,7 @@ namespace DuckDBGeoparquet.Services
                 {
                     var attributes = new Dictionary<string, object>
                     {
-                        ["OBJECTID"] = objectId++
+                        ["OBJECTID"] = ComputeObjectId(row.ContainsKey("id") ? row["id"]?.ToString() : objectId.ToString())
                     };
 
                     object geometry = null;
@@ -984,53 +1380,27 @@ namespace DuckDBGeoparquet.Services
                     // Add all columns from the query result and extract geometry
                     foreach (var kvp in row)
                     {
-                        if (kvp.Key == "geometry_wkb" && kvp.Value != null)
+                        if (kvp.Key == "geometry_geojson")
                         {
-                            Debug.WriteLine($"🔍 Found geometry_wkb column with data type: {kvp.Value.GetType()}, length: {(kvp.Value is byte[] bytes ? bytes.Length : kvp.Value.ToString().Length)}");
-                            
-                            // ENHANCED DEBUGGING: Show raw geometry data structure
-                            if (kvp.Value is System.IO.UnmanagedMemoryStream stream)
+                            if (kvp.Value is string gj && !string.IsNullOrWhiteSpace(gj))
                             {
-                                Debug.WriteLine($"🔍 Geometry is UnmanagedMemoryStream - Length: {stream.Length}, Position: {stream.Position}");
+                                geometry = ParseGeoJsonToArcGISGeometry(gj);
                             }
-                            else if (kvp.Value is byte[] byteArray)
-                            {
-                                var preview = string.Join(",", byteArray.Take(16).Select(b => $"{b:X2}"));
-                                Debug.WriteLine($"🔍 Geometry is byte array - First 16 bytes: [{preview}]");
-                            }
-                            else
-                            {
-                                Debug.WriteLine($"🔍 Geometry has unexpected type: {kvp.Value.GetType().FullName}");
-                                Debug.WriteLine($"🔍 Raw value preview: {kvp.Value.ToString().Substring(0, Math.Min(100, kvp.Value.ToString().Length))}");
-                            }
-                            
-                            // Parse WKB geometry into ArcGIS geometry format (same as working Data Loader)
-                            geometry = ParseWkbToArcGISGeometry(kvp.Value);
-                            Debug.WriteLine($"🔍 Parsed geometry result: {(geometry != null ? "SUCCESS" : "FAILED")}");
+                            continue; // skip adding to attributes
                         }
-                        else if (kvp.Key == "geometry_wkb" && kvp.Value == null)
+
+                        // Clean attribute values for JSON serialization
+                        var cleanValue = kvp.Value;
+                        if (cleanValue == null || cleanValue == DBNull.Value)
                         {
-                            Debug.WriteLine($"🔍 Found geometry_wkb column but value is NULL");
+                            cleanValue = null;
                         }
-                        else if (kvp.Key == "geometry_wkb")
+                        else if (cleanValue is string str && string.IsNullOrEmpty(str))
                         {
-                            Debug.WriteLine($"🔍 Found geometry_wkb column with unexpected null-like value: {kvp.Value} (type: {kvp.Value?.GetType()})");
+                            cleanValue = null;
                         }
-                        else if (kvp.Key != "geometry_wkb") // Don't include WKB in attributes
-                        {
-                            // Clean attribute values for JSON serialization
-                            var cleanValue = kvp.Value;
-                            if (cleanValue == null || cleanValue == DBNull.Value)
-                            {
-                                cleanValue = null;
-                            }
-                            else if (cleanValue is string str && string.IsNullOrEmpty(str))
-                            {
-                                cleanValue = null;
-                            }
-                            
-                            attributes[kvp.Key] = cleanValue;
-                        }
+
+                        attributes[kvp.Key] = cleanValue;
                     }
 
                     // Build ArcGIS REST API compliant feature
@@ -1064,6 +1434,10 @@ namespace DuckDBGeoparquet.Services
             {
                 Debug.WriteLine($"Error executing DuckDB query: {ex.Message}");
                 throw;
+            }
+            finally
+            {
+                if (_duckSemaphore.CurrentCount == 0) _duckSemaphore.Release();
             }
 
             return features;
@@ -1247,6 +1621,81 @@ namespace DuckDBGeoparquet.Services
                 Debug.WriteLine($"Error parsing WKT geometry: {ex.Message}");
                 return null;
             }
+        }
+
+        private object ParseGeoJsonToArcGISGeometry(string geojson)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(geojson);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("type", out var typeProp)) return null;
+                var type = typeProp.GetString();
+                if (string.Equals(type, "Point", StringComparison.OrdinalIgnoreCase))
+                {
+                    var coords = root.GetProperty("coordinates");
+                    return new { x = coords[0].GetDouble(), y = coords[1].GetDouble(), spatialReference = _spatialReference };
+                }
+                if (string.Equals(type, "LineString", StringComparison.OrdinalIgnoreCase))
+                {
+                    var coords = root.GetProperty("coordinates");
+                    var path = new List<double[]>();
+                    foreach (var c in coords.EnumerateArray()) path.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
+                    return new { paths = new[] { path.ToArray() }, spatialReference = _spatialReference };
+                }
+                if (string.Equals(type, "Polygon", StringComparison.OrdinalIgnoreCase))
+                {
+                    var rings = new List<List<double[]>>();
+                    foreach (var ring in root.GetProperty("coordinates").EnumerateArray())
+                    {
+                        var r = new List<double[]>();
+                        foreach (var c in ring.EnumerateArray()) r.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
+                        rings.Add(r);
+                    }
+                    return new { rings = rings, spatialReference = _spatialReference };
+                }
+                if (string.Equals(type, "MultiPoint", StringComparison.OrdinalIgnoreCase))
+                {
+                    var coords = root.GetProperty("coordinates");
+                    var enumerator = coords.EnumerateArray();
+                    if (enumerator.MoveNext())
+                    {
+                        var p = enumerator.Current;
+                        return new { x = p[0].GetDouble(), y = p[1].GetDouble(), spatialReference = _spatialReference };
+                    }
+                }
+                if (string.Equals(type, "MultiLineString", StringComparison.OrdinalIgnoreCase))
+                {
+                    var lines = root.GetProperty("coordinates");
+                    var lineEnumerator = lines.EnumerateArray();
+                    if (lineEnumerator.MoveNext())
+                    {
+                        var coords = lineEnumerator.Current;
+                        var path = new List<double[]>();
+                        foreach (var c in coords.EnumerateArray()) path.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
+                        return new { paths = new[] { path.ToArray() }, spatialReference = _spatialReference };
+                    }
+                }
+                if (string.Equals(type, "MultiPolygon", StringComparison.OrdinalIgnoreCase))
+                {
+                    var polys = root.GetProperty("coordinates");
+                    var polyEnumerator = polys.EnumerateArray();
+                    if (polyEnumerator.MoveNext())
+                    {
+                        var firstPoly = polyEnumerator.Current;
+                        var rings = new List<List<double[]>>();
+                        foreach (var ring in firstPoly.EnumerateArray())
+                        {
+                            var r = new List<double[]>();
+                            foreach (var c in ring.EnumerateArray()) r.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
+                            rings.Add(r);
+                        }
+                        return new { rings = rings, spatialReference = _spatialReference };
+                    }
+                }
+            }
+            catch { }
+            return null;
         }
 
         /// <summary>
@@ -2114,12 +2563,24 @@ namespace DuckDBGeoparquet.Services
             response.ContentType = "application/json";
             response.StatusCode = 200;
 
-            var buffer = Encoding.UTF8.GetBytes(json);
-            // Don't set ContentLength64 - let HttpListener handle it automatically to avoid mismatch
-            // response.ContentLength64 = buffer.Length;
-
-            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
-            response.Close();
+            // If client accepts gzip, compress to reduce payload size drastically
+            var acceptEncoding = context.Request.Headers["Accept-Encoding"] ?? string.Empty;
+            if (acceptEncoding.IndexOf("gzip", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                response.Headers["Content-Encoding"] = "gzip";
+                response.Headers["Vary"] = "Accept-Encoding";
+                using var gzip = new GZipStream(response.OutputStream, CompressionLevel.Fastest, leaveOpen: true);
+                var uncompressed = Encoding.UTF8.GetBytes(json);
+                await gzip.WriteAsync(uncompressed, 0, uncompressed.Length);
+                gzip.Flush();
+                response.OutputStream.Close();
+            }
+            else
+            {
+                var buffer = Encoding.UTF8.GetBytes(json);
+                await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                response.Close();
+            }
         }
 
         public bool IsRunning => _isRunning;

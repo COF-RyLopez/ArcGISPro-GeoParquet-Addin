@@ -137,6 +137,19 @@ namespace DuckDBGeoparquet.Services
                     SET enable_progress_bar=true;
                 ";
                 await command.ExecuteNonQueryAsync(CancellationToken.None);
+
+                // Enable parallelism according to host CPU
+                try
+                {
+                    int threads = Math.Max(1, Environment.ProcessorCount);
+                    command.CommandText = $"SET threads={threads};";
+                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                    System.Diagnostics.Debug.WriteLine($"DuckDB threads set to {threads}");
+                }
+                catch (Exception threadEx)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Warning: Could not set DuckDB threads: {threadEx.Message}");
+                }
             }
             catch (Exception ex)
             {
