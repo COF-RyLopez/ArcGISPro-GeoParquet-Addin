@@ -79,7 +79,8 @@ namespace DuckDBGeoparquet.Services
         private readonly SemaphoreSlim _duckSemaphore = new SemaphoreSlim(1, 1);
         private double _cachedXmin, _cachedYmin, _cachedXmax, _cachedYmax;
         private const double _cacheBuffer = 0.10; // degrees
-        private const bool _verboseSqlLogging = false; // set true to log full SQL
+        // Not const to avoid CS0162 unreachable code warnings in logging branches
+        private static readonly bool _verboseSqlLogging = false; // set true to log full SQL
 
         public FeatureServiceBridge(DataProcessor dataProcessor, int port = 8080)
         {
@@ -1038,7 +1039,7 @@ namespace DuckDBGeoparquet.Services
                     if (_discoveredFieldSql.TryGetValue(theme.Id, out var map) && map.TryGetValue(field, out var expr) && !_dataLoaded)
                         fieldList.Add(expr);
                     else
-                        fieldList.Add(field);
+                    fieldList.Add(field);
                 }
                 
                 // Add geometry only if requested - use DuckDB spatial functions to properly convert WKB
