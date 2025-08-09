@@ -77,7 +77,8 @@ namespace DuckDBGeoparquet.Services
         private readonly object _loadLock = new object();
         private readonly SemaphoreSlim _duckSemaphore = new SemaphoreSlim(1, 1);
         private double _cachedXmin, _cachedYmin, _cachedXmax, _cachedYmax;
-        private const double _cacheBuffer = 0.05; // degrees
+        private const double _cacheBuffer = 0.10; // degrees
+        private const bool _verboseSqlLogging = false; // set true to log full SQL
 
         public FeatureServiceBridge(DataProcessor dataProcessor, int port = 8080)
         {
@@ -534,7 +535,7 @@ namespace DuckDBGeoparquet.Services
                     hasStaticData = false,
                     maxRecordCount = _maxRecordCount,
                     supportedQueryFormats = "JSON,geoJSON",
-                    capabilities = "Query",
+                    capabilities = "Query,Extract",
                     description = "Live cloud-native access to all Overture Maps themes via DuckDB",
                     copyrightText = "Data from Overture Maps Foundation via DuckDB",
                     spatialReference = _spatialReference,
@@ -668,7 +669,7 @@ namespace DuckDBGeoparquet.Services
                     canModifyLayer = false,
                     canScaleSymbols = false,
                     hasLabels = false,
-                    capabilities = "Query",
+                    capabilities = "Query,Extract",
                     maxRecordCount = _maxRecordCount,
                     supportsStatistics = false,
                     supportsAdvancedQueries = false,
@@ -759,7 +760,9 @@ namespace DuckDBGeoparquet.Services
                 {
                     if (TryParseEnvelope(geometryParam, out var gxmin, out var gymin, out var gxmax, out var gymax))
                     {
-                        bool outside = gxmin < _cachedXmin || gymin < _cachedYmin || gxmax > _cachedXmax || gymax > _cachedYmax;
+                        // Hysteresis: extend cached bounds by 2x buffer before triggering reload
+                        double margin = _cacheBuffer * 2.0;
+                        bool outside = gxmin < (_cachedXmin - margin) || gymin < (_cachedYmin - margin) || gxmax > (_cachedXmax + margin) || gymax > (_cachedYmax + margin);
                         if (outside)
                         {
                             Debug.WriteLine("🔁 Requested extent outside cached viewport. Reloading cache for requested bbox...");
@@ -913,10 +916,10 @@ namespace DuckDBGeoparquet.Services
             var query = new StringBuilder();
             query.Append("SELECT ");
 
-            // Compute a simplification tolerance based on requested bbox to reduce payload when zoomed out
-            string simplifyTolerance = ComputeSimplifyTolerance(geometryParam);
-            string snapGrid = ComputeSnapGrid(geometryParam, geometryPrecision, quantizationParameters);
-            string lengthThreshold = ComputeMinSegmentLength(geometryParam);
+            // Compute tolerances from the cached viewport when available so all pages share one setting
+            string simplifyTolerance = ComputeSimplifyTolerance(geometryParam, useCached: _dataLoaded);
+            string snapGrid = ComputeSnapGrid(_dataLoaded ? BuildEnvelopeJson(_cachedXmin, _cachedYmin, _cachedXmax, _cachedYmax) : geometryParam, geometryPrecision, quantizationParameters);
+            string lengthThreshold = ComputeMinSegmentLength(_dataLoaded ? BuildEnvelopeJson(_cachedXmin, _cachedYmin, _cachedXmax, _cachedYmax) : geometryParam);
 
             // Handle output fields - Updated for theme-specific schemas
             if (outFields == "*")
@@ -1050,48 +1053,61 @@ namespace DuckDBGeoparquet.Services
                 query.Append(string.Join(" AND ", conditions));
             }
 
-            // Ensure deterministic paging for Pro: always order by id
-            query.Append(" ORDER BY id");
+            // Stable spatial-ish paging for uniform fill: sort by bbox then id
+            query.Append(" ORDER BY bbox.ymin, bbox.xmin, id");
             query.Append($" LIMIT {maxRecords}");
             if (resultOffset > 0)
             {
                 query.Append($" OFFSET {resultOffset}");
             }
 
-            if (_dataLoaded)
+            // Concise query summary
+            var src = _dataLoaded ? "in-memory" : "s3";
+            if (!string.IsNullOrEmpty(geometryParam) && TryParseEnvelope(geometryParam, out var qxmin, out var qymin, out var qxmax, out var qymax))
             {
-                Debug.WriteLine($"⚡ In-memory query for {theme.Name} (table: {tableName}): {query}");
+                Debug.WriteLine($"🧭 {src} query for {theme.Name}: bbox=({qxmin:G4},{qymin:G4})–({qxmax:G4},{qymax:G4}) limit={maxRecords} offset={resultOffset} tol={(string.IsNullOrEmpty(simplifyTolerance) ? "none" : simplifyTolerance)}");
             }
             else
             {
-                Debug.WriteLine($"📡 S3 fallback query for {theme.Name}: {query}");
+                Debug.WriteLine($"🧭 {src} query for {theme.Name}: limit={maxRecords} offset={resultOffset} tol={(string.IsNullOrEmpty(simplifyTolerance) ? "none" : simplifyTolerance)}");
+            }
+
+            if (_verboseSqlLogging)
+            {
+                if (_dataLoaded)
+                    Debug.WriteLine($"⚡ SQL: {query}");
+                else
+                    Debug.WriteLine($"📡 SQL: {query}");
             }
             
             return query.ToString();
         }
 
-        private string ComputeSimplifyTolerance(string geometryParam)
+        private string ComputeSimplifyTolerance(string geometryParam, bool useCached = false)
         {
             try
             {
-                if (string.IsNullOrEmpty(geometryParam)) return null;
-                using var doc = JsonDocument.Parse(geometryParam);
-                var root = doc.RootElement;
                 double xmin, ymin, xmax, ymax;
-                if (root.TryGetProperty("xmin", out var xminProp) &&
-                    root.TryGetProperty("ymin", out var yminProp) &&
-                    root.TryGetProperty("xmax", out var xmaxProp) &&
-                    root.TryGetProperty("ymax", out var ymaxProp))
+                if (useCached && _cachedXmax > _cachedXmin && _cachedYmax > _cachedYmin)
                 {
-                    xmin = xminProp.GetDouble(); ymin = yminProp.GetDouble(); xmax = xmaxProp.GetDouble(); ymax = ymaxProp.GetDouble();
-                }
-                else if (TryParseEnvelope(geometryParam, out xmin, out ymin, out xmax, out ymax))
-                {
-                    // already parsed via helper
+                    xmin = _cachedXmin; ymin = _cachedYmin; xmax = _cachedXmax; ymax = _cachedYmax;
                 }
                 else
                 {
-                    return null;
+                    if (string.IsNullOrEmpty(geometryParam)) return null;
+                    using var doc = JsonDocument.Parse(geometryParam);
+                    var root = doc.RootElement;
+                    if (root.TryGetProperty("xmin", out var xminProp) &&
+                        root.TryGetProperty("ymin", out var yminProp) &&
+                        root.TryGetProperty("xmax", out var xmaxProp) &&
+                        root.TryGetProperty("ymax", out var ymaxProp))
+                    {
+                        xmin = xminProp.GetDouble(); ymin = yminProp.GetDouble(); xmax = xmaxProp.GetDouble(); ymax = ymaxProp.GetDouble();
+                    }
+                    else if (!TryParseEnvelope(geometryParam, out xmin, out ymin, out xmax, out ymax))
+                    {
+                        return null;
+                    }
                 }
 
                 var width = Math.Abs(xmax - xmin);
@@ -1105,6 +1121,19 @@ namespace DuckDBGeoparquet.Services
                 return tol.ToString("G", CultureInfo.InvariantCulture);
             }
             catch { return null; }
+        }
+
+        private static string BuildEnvelopeJson(double xmin, double ymin, double xmax, double ymax)
+        {
+            // Use string.Format with escaped braces to avoid interpolation escaping issues
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{{\"xmin\":{0},\"ymin\":{1},\"xmax\":{2},\"ymax\":{3}}}",
+                xmin.ToString("G", CultureInfo.InvariantCulture),
+                ymin.ToString("G", CultureInfo.InvariantCulture),
+                xmax.ToString("G", CultureInfo.InvariantCulture),
+                ymax.ToString("G", CultureInfo.InvariantCulture)
+            );
         }
 
         private string BuildDuckDbCountQuery(ThemeDefinition theme, string whereClause, string geometryParam, string spatialRel, int? geometryPrecision = null, string quantizationParameters = null)
@@ -1360,12 +1389,36 @@ namespace DuckDBGeoparquet.Services
 
             try
             {
-                Debug.WriteLine($"Executing DuckDB query: {query}");
-                Debug.WriteLine($"🔍 Query includes geometry_geojson: {query.Contains("geometry_geojson")}");
-                Debug.WriteLine($"🔍 Full query text: {query}");
+                if (_verboseSqlLogging)
+                {
+                    Debug.WriteLine($"Executing DuckDB query: {query}");
+                    Debug.WriteLine($"🔍 Query includes geometry_geojson: {query.Contains("geometry_geojson")}");
+                    Debug.WriteLine($"🔍 Full query text: {query}");
+                }
 
                 await _duckSemaphore.WaitAsync();
-                var queryResults = await _dataProcessor.ExecuteQueryAsync(query);
+                List<Dictionary<string, object>> queryResults = null;
+                int attempts = 0;
+                Exception lastEx = null;
+                do
+                {
+                    try
+                    {
+                        queryResults = await _dataProcessor.ExecuteQueryAsync(query);
+                        lastEx = null;
+                    }
+                    catch (Exception ex)
+                    {
+                        lastEx = ex;
+                        // Simple transient retry once for DuckDB execution errors (e.g., during cache rebuild)
+                        if (++attempts <= 1)
+                        {
+                            await Task.Delay(150);
+                            continue;
+                        }
+                        throw;
+                    }
+                } while (lastEx != null);
                 
                 var objectId = 1;
                 foreach (var row in queryResults)
@@ -1425,10 +1478,7 @@ namespace DuckDBGeoparquet.Services
                     features.Add(feature);
                 }
 
-                Debug.WriteLine($"Returned {features.Count} features");
-                var featuresWithGeometry = features.Count(f => 
-                    f.ToString().Contains("geometry"));
-                Debug.WriteLine($"🔍 Features with geometry: {featuresWithGeometry}/{features.Count}");
+                Debug.WriteLine($"📦 Returned={features.Count}");
             }
             catch (Exception ex)
             {
@@ -2569,17 +2619,39 @@ namespace DuckDBGeoparquet.Services
             {
                 response.Headers["Content-Encoding"] = "gzip";
                 response.Headers["Vary"] = "Accept-Encoding";
-                using var gzip = new GZipStream(response.OutputStream, CompressionLevel.Fastest, leaveOpen: true);
-                var uncompressed = Encoding.UTF8.GetBytes(json);
-                await gzip.WriteAsync(uncompressed, 0, uncompressed.Length);
-                gzip.Flush();
-                response.OutputStream.Close();
+                try
+                {
+                    using var gzip = new GZipStream(response.OutputStream, CompressionLevel.Fastest, leaveOpen: true);
+                    var uncompressed = Encoding.UTF8.GetBytes(json);
+                    await gzip.WriteAsync(uncompressed, 0, uncompressed.Length);
+                    gzip.Flush();
+                    response.OutputStream.Close();
+                }
+                catch (HttpListenerException)
+                {
+                    // client disconnected; ignore
+                }
+                catch (ObjectDisposedException)
+                {
+                    // output stream closed; ignore
+                }
             }
             else
             {
-                var buffer = Encoding.UTF8.GetBytes(json);
-                await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
-                response.Close();
+                try
+                {
+                    var buffer = Encoding.UTF8.GetBytes(json);
+                    await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                    response.Close();
+                }
+                catch (HttpListenerException)
+                {
+                    // client disconnected; ignore
+                }
+                catch (ObjectDisposedException)
+                {
+                    // output stream closed; ignore
+                }
             }
         }
 
