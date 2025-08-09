@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
@@ -1010,8 +1011,13 @@ namespace DuckDBGeoparquet.Services
             // Handle WHERE clause
             if (!string.IsNullOrEmpty(whereClause) && whereClause != "1=1")
             {
-                // Basic WHERE clause translation (this could be expanded)
-                conditions.Add($"({whereClause})");
+                // Translate ArcGIS OBJECTID filters to internal id field and sanitize
+                var translated = whereClause;
+                // OBJECTID = 123 or OBJECTID IN (...)
+                translated = Regex.Replace(translated, @"\bOBJECTID\b", "id", RegexOptions.IgnoreCase);
+                // ArcGIS sometimes quotes field names
+                translated = translated.Replace("\"OBJECTID\"", "id");
+                conditions.Add($"({translated})");
             }
 
             // Handle spatial geometry filtering
