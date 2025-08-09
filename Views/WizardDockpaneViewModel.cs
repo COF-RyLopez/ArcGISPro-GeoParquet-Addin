@@ -204,6 +204,7 @@ namespace DuckDBGeoparquet.Views
     internal class WizardDockpaneViewModel : DockPane
     {
         private const string _dockPaneID = "DuckDBGeoparquet_Views_WizardDockpane";
+        private bool _showingFeatureServiceOnly;
         private DataProcessor _dataProcessor;
         private FeatureServiceManager _featureServiceManager;
         private const string RELEASE_URL = "https://labs.overturemaps.org/data/releases.json";
@@ -435,6 +436,7 @@ namespace DuckDBGeoparquet.Views
         {
             System.Diagnostics.Debug.WriteLine("InitializeViewModelForRuntime executing...");
             _dataProcessor = new DataProcessor();
+            _showingFeatureServiceOnly = false;
             
             // Initialize Feature Service Manager
             _featureServiceManager = new FeatureServiceManager(_dataProcessor);
@@ -566,6 +568,9 @@ namespace DuckDBGeoparquet.Views
             get => _selectedTabIndex;
             set => SetProperty(ref _selectedTabIndex, value);
         }
+
+        public bool IsSelectDataTabVisible => !_showingFeatureServiceOnly;
+        public bool IsStatusTabVisible => !_showingFeatureServiceOnly;
 
         private string _statusText = "Initializing...";
         public string StatusText
@@ -2033,7 +2038,10 @@ namespace DuckDBGeoparquet.Views
             if (pane == null)
                 return;
             pane.ResetState();
+            pane._showingFeatureServiceOnly = true;
             pane.SelectedTabIndex = 2; // Feature Service tab index in XAML
+            pane.NotifyPropertyChanged(nameof(IsSelectDataTabVisible));
+            pane.NotifyPropertyChanged(nameof(IsStatusTabVisible));
             pane.Activate();
         }
 

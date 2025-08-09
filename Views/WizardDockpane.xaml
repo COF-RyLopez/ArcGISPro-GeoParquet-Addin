@@ -31,7 +31,7 @@
         <!-- Main content area with TabControl -->
         <TabControl Grid.Row="1" Margin="0,8,0,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
             <!-- Select Data Tab -->
-            <TabItem Header="Select Data">
+            <TabItem Header="Select Data" Visibility="{Binding IsSelectDataTabVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="16,12,16,12" Orientation="Vertical" >
                         <!-- 1. Choose Themes -->
@@ -184,7 +184,7 @@
                 </ScrollViewer>
             </TabItem>
             <!-- Status Tab -->
-            <TabItem Header="Status">
+            <TabItem Header="Status" Visibility="{Binding IsStatusTabVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <StackPanel Margin="16,12,16,12">
                     <TextBlock Text="Operation Progress" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,4"/>
                     <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
@@ -218,7 +218,7 @@
                 </StackPanel>
             </TabItem>
             <!-- Feature Service Tab -->
-            <TabItem Header="Feature Service">
+            <TabItem Header="Feature Service" Visibility="Visible">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="16,12,16,12" Orientation="Vertical">
                         <TextBlock Text="DuckDB Feature Service Bridge" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,12"/>
