@@ -1047,6 +1047,25 @@ namespace DuckDBGeoparquet.Services
             string snapGrid = ComputeSnapGrid(_dataLoaded ? BuildEnvelopeJson(_cachedXmin, _cachedYmin, _cachedXmax, _cachedYmax) : geometryParam, geometryPrecision, quantizationParameters);
             string lengthThreshold = ComputeMinSegmentLength(_dataLoaded ? BuildEnvelopeJson(_cachedXmin, _cachedYmin, _cachedXmax, _cachedYmax) : geometryParam);
 
+            // Decide early whether this request can be served from the in-memory cache (only id/bbox/geometry)
+            bool useCacheForFields = _dataLoaded;
+            if (useCacheForFields)
+            {
+                if (outFields == "*")
+                {
+                    useCacheForFields = false;
+                }
+                else if (!string.Equals(outFields, "OBJECTID", StringComparison.OrdinalIgnoreCase))
+                {
+                    var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    { "id", "bbox_xmin", "bbox_ymin", "bbox_xmax", "bbox_ymax", "geometry" };
+                    foreach (var rf in outFields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                    {
+                        if (!allowed.Contains(rf.Trim())) { useCacheForFields = false; break; }
+                    }
+                }
+            }
+
             // Handle output fields - Updated for theme-specific schemas
             if (outFields == "*")
             {
@@ -1060,7 +1079,7 @@ namespace DuckDBGeoparquet.Services
                 foreach (var field in theme.Fields.Where(f => f != "id"))
                 {
                     // If field is a flattened struct member, render via expression when querying parquet
-                    if (_discoveredFieldSql.TryGetValue(theme.Id, out var map) && map.TryGetValue(field, out var expr) && !_dataLoaded)
+                    if (_discoveredFieldSql.TryGetValue(theme.Id, out var map) && map.TryGetValue(field, out var expr) && !useCacheForFields)
                         fieldList.Add(expr);
                     else
                     fieldList.Add(field);
@@ -1123,11 +1142,11 @@ namespace DuckDBGeoparquet.Services
                     else if (f.Equals("OBJECTID", StringComparison.OrdinalIgnoreCase)) mapped = null; // redundant safety
 
                     // If this is a flattened struct field we discovered, map to its SQL expression when using parquet
-                    if (mapped != null && _discoveredFieldSql.TryGetValue(theme.Id, out var map) && map.TryGetValue(f, out var expr) && !_dataLoaded)
+                    if (mapped != null && _discoveredFieldSql.TryGetValue(theme.Id, out var map) && map.TryGetValue(f, out var expr) && !useCacheForFields)
                     {
                         mapped = expr;
                     }
-                    else if (mapped != null && mapped.IndexOf('_') > 0 && !_dataLoaded && _structColumns.TryGetValue(theme.Id, out var structCols))
+                    else if (mapped != null && mapped.IndexOf('_') > 0 && !useCacheForFields && _structColumns.TryGetValue(theme.Id, out var structCols))
                     {
                         // Heuristic: if field is of form col_member and base col is a STRUCT, synthesize struct_extract(col,'member')
                         var idx = mapped.IndexOf('_');
@@ -1216,7 +1235,7 @@ namespace DuckDBGeoparquet.Services
 
             // Check if in-memory table exists, otherwise fallback to S3
             var tableName = GetTableName(theme);
-            if (_dataLoaded && CacheCanServe())
+            if (useCacheForFields)
             {
                 // IN-MEMORY: Query from pre-loaded in-memory table for lightning-fast performance
                 query.Append($" FROM {tableName}");
