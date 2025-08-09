@@ -570,7 +570,7 @@ namespace DuckDBGeoparquet.Views
         }
 
         public bool IsSelectDataTabVisible => !_showingFeatureServiceOnly;
-        public bool IsStatusTabVisible => !_showingFeatureServiceOnly;
+        public bool IsStatusTabVisible => true; // Status is available in both entry paths
         public bool IsCreateMfcTabVisible => !_showingFeatureServiceOnly;
         public bool IsFeatureServiceTabVisible => _showingFeatureServiceOnly;
 
@@ -2043,7 +2043,7 @@ namespace DuckDBGeoparquet.Views
                 return;
             pane.ResetState();
             pane._showingFeatureServiceOnly = true;
-            pane.SelectedTabIndex = 1; // Status tab index
+            pane.SelectedTabIndex = 2; // Feature Service tab index
             pane.NotifyPropertyChanged(nameof(IsSelectDataTabVisible));
             pane.NotifyPropertyChanged(nameof(IsStatusTabVisible));
             pane.NotifyPropertyChanged(nameof(IsCreateMfcTabVisible));
