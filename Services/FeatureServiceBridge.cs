@@ -60,17 +60,17 @@ namespace DuckDBGeoparquet.Services
         };
 
             // Focus on a single layer for debugging: Transportation - Roads
-            private readonly List<ThemeDefinition> _themes = new List<ThemeDefinition>
-            {
-                new ThemeDefinition
-                {
-                    Id = 0,
-                    Name = "Transportation - Roads",
-                    S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=segment/*.parquet",
-                    GeometryType = "esriGeometryPolyline",
+        private readonly List<ThemeDefinition> _themes = new List<ThemeDefinition>
+        {
+            new ThemeDefinition 
+            { 
+                Id = 0, 
+                Name = "Transportation - Roads", 
+                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=segment/*.parquet",
+                GeometryType = "esriGeometryPolyline",
                     Fields = new[] { "id" }
-                }
-            };
+            }
+        };
 
         // In-memory cache status - Thread-safe async synchronization
         private bool _dataLoaded = false;
@@ -331,7 +331,7 @@ namespace DuckDBGeoparquet.Services
                     Debug.WriteLine($"📦 Cache reloaded for requested extent: ({_cachedXmin:F4},{_cachedYmin:F4})–({_cachedXmax:F4},{_cachedYmax:F4})");
                 }
             }
-            finally
+            finally 
             {
                 _loadSemaphore.Release();
             }
@@ -1064,6 +1064,10 @@ namespace DuckDBGeoparquet.Services
                 }
                 catch { }
 
+                // If specific fields were requested that are known to be absent from the in-memory cache,
+                // ensure we will route to parquet by setting a private marker in outFields (handled later)
+                // This is defensive; the main routing occurs in CacheCanServe.
+
                 // Append geometry only when requested by the client (respect returnGeometry)
                 if (returnGeometry)
                 {
@@ -1077,9 +1081,9 @@ namespace DuckDBGeoparquet.Services
                     {
                         var withGeometry = translatedFields.Select(tf => tf.Equals("geometry", StringComparison.OrdinalIgnoreCase) ? $"ST_AsGeoJSON({filtered}) as geometry_geojson" : tf).ToList();
                         query.Append(string.Join(", ", withGeometry));
-                    }
-                    else
-                    {
+                }
+                else
+                {
                         translatedFields.Add($"ST_AsGeoJSON({filtered}) as geometry_geojson");
                         query.Append(string.Join(", ", translatedFields));
                     }
@@ -1091,9 +1095,31 @@ namespace DuckDBGeoparquet.Services
                 }
             }
 
+            // Determine if requested projection can be satisfied from the in-memory cache
+            bool CacheCanServe()
+            {
+                // Cache holds only: id, bbox (struct -> bbox_*), geometry
+                // If caller asks for any other attribute, use parquet source instead
+                if (outFields == "*") return false;
+                if (string.Equals(outFields, "OBJECTID", StringComparison.OrdinalIgnoreCase)) return true;
+
+                var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "id", "bbox_xmin", "bbox_ymin", "bbox_xmax", "bbox_ymax", "geometry"
+                };
+
+                var requested = outFields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                foreach (var rf in requested)
+                {
+                    var f = rf.Trim();
+                    if (!allowed.Contains(f)) return false;
+                }
+                return true;
+            }
+
             // Check if in-memory table exists, otherwise fallback to S3
             var tableName = GetTableName(theme);
-            if (_dataLoaded)
+            if (_dataLoaded && CacheCanServe())
             {
                 // IN-MEMORY: Query from pre-loaded in-memory table for lightning-fast performance
                 query.Append($" FROM {tableName}");
@@ -1102,6 +1128,9 @@ namespace DuckDBGeoparquet.Services
             {
                 // FALLBACK: Direct S3 query if in-memory data not loaded yet
                 query.Append($" FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1)");
+                if (_dataLoaded)
+                    Debug.WriteLine($"🔎 Attribute fields requested not present in cache. Using parquet source for {theme.Name}");
+                else
                 Debug.WriteLine($"🌐 Direct S3 query for {theme.Name} - ensuring geometry data preservation");
             }
 
@@ -1183,7 +1212,7 @@ namespace DuckDBGeoparquet.Services
 
             if (_verboseSqlLogging)
             {
-                if (_dataLoaded)
+            if (_dataLoaded)
                     Debug.WriteLine($"⚡ SQL: {query}");
                 else
                     Debug.WriteLine($"📡 SQL: {query}");
@@ -1200,9 +1229,9 @@ namespace DuckDBGeoparquet.Services
                 if (useCached && _cachedXmax > _cachedXmin && _cachedYmax > _cachedYmin)
                 {
                     xmin = _cachedXmin; ymin = _cachedYmin; xmax = _cachedXmax; ymax = _cachedYmax;
-                }
-                else
-                {
+            }
+            else
+            {
                     if (string.IsNullOrEmpty(geometryParam)) return null;
                     using var doc = JsonDocument.Parse(geometryParam);
                     var root = doc.RootElement;
@@ -1295,7 +1324,7 @@ namespace DuckDBGeoparquet.Services
                 query.Append(" WHERE ");
                 query.Append(string.Join(" AND ", conditions));
             }
-
+            
             return query.ToString();
         }
 
@@ -1499,10 +1528,10 @@ namespace DuckDBGeoparquet.Services
             try
             {
                 if (_verboseSqlLogging)
-                {
-                    Debug.WriteLine($"Executing DuckDB query: {query}");
+            {
+                Debug.WriteLine($"Executing DuckDB query: {query}");
                     Debug.WriteLine($"🔍 Query includes geometry_geojson: {query.Contains("geometry_geojson")}");
-                    Debug.WriteLine($"🔍 Full query text: {query}");
+                Debug.WriteLine($"🔍 Full query text: {query}");
                 }
 
                 await _duckSemaphore.WaitAsync();
@@ -1551,18 +1580,18 @@ namespace DuckDBGeoparquet.Services
                             continue; // skip adding to attributes
                         }
 
-                        // Clean attribute values for JSON serialization
-                        var cleanValue = kvp.Value;
-                        if (cleanValue == null || cleanValue == DBNull.Value)
-                        {
-                            cleanValue = null;
-                        }
-                        else if (cleanValue is string str && string.IsNullOrEmpty(str))
-                        {
-                            cleanValue = null;
-                        }
-
-                        attributes[kvp.Key] = cleanValue;
+                            // Clean attribute values for JSON serialization
+                            var cleanValue = kvp.Value;
+                            if (cleanValue == null || cleanValue == DBNull.Value)
+                            {
+                                cleanValue = null;
+                            }
+                            else if (cleanValue is string str && string.IsNullOrEmpty(str))
+                            {
+                                cleanValue = null;
+                            }
+                            
+                            attributes[kvp.Key] = cleanValue;
                     }
 
                     // Build ArcGIS REST API compliant feature
@@ -2749,9 +2778,9 @@ namespace DuckDBGeoparquet.Services
             {
                 try
                 {
-                    var buffer = Encoding.UTF8.GetBytes(json);
-                    await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
-                    response.Close();
+            var buffer = Encoding.UTF8.GetBytes(json);
+            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+            response.Close();
                 }
                 catch (HttpListenerException)
                 {
