@@ -128,13 +128,15 @@ namespace DuckDBGeoparquet.Services
                         // simple scalar
                         discovered.Add(colName);
                     }
-                    else if (upper.StartsWith("LIST(STRUCT(") || (upper.StartsWith("STRUCT(") && upper.Contains(")[]")))
+                    else if (upper.StartsWith("LIST(STRUCT(") || Regex.IsMatch(colType, @"^\s*STRUCT\(.*\)\s*\[\]\s*$", RegexOptions.IgnoreCase | RegexOptions.Singleline))
                     {
                         // LIST of STRUCT (DuckDB may format as LIST(STRUCT(...)) or STRUCT(...)[])
                         // Expose first element's scalar members: list_extract(col, 1) -> struct_extract(...)
                         var start = colType.IndexOf("STRUCT(", StringComparison.OrdinalIgnoreCase);
                         var inner = colType.Substring(start + "STRUCT(".Length);
-                        // Trim to the last closing ')' to ignore trailing list markers like '[]'
+                        // Remove any trailing list suffixes like ")[]" or ")[]?"
+                        inner = Regex.Replace(inner, @"\)\s*\[\]\s*\??\s*$", ")", RegexOptions.IgnoreCase);
+                        // Trim to the last closing ')' to capture only member list
                         var closeIdx = inner.LastIndexOf(')');
                         if (closeIdx >= 0)
                             inner = inner.Substring(0, closeIdx);
@@ -159,7 +161,7 @@ namespace DuckDBGeoparquet.Services
                         structCols.Add(colName);
                         // Flatten first-level scalar members: STRUCT(a TYPE, b TYPE, ...)
                         var inner = colType.Substring("STRUCT(".Length);
-                        // Trim to the last closing ')'
+                        // Trim to the last closing ')' and ignore any trailing characters
                         var closeIdx = inner.LastIndexOf(')');
                         if (closeIdx >= 0)
                             inner = inner.Substring(0, closeIdx);
