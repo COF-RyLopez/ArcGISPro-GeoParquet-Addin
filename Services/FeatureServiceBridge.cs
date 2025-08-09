@@ -86,6 +86,51 @@ namespace DuckDBGeoparquet.Services
             _dataProcessor = dataProcessor ?? throw new ArgumentNullException(nameof(dataProcessor));
             _port = port;
             _cancellationTokenSource = new CancellationTokenSource();
+            _discoveredFields = new Dictionary<int, HashSet<string>>();
+        }
+
+        // Cache of discovered optional attributes per layer id
+        private readonly Dictionary<int, HashSet<string>> _discoveredFields;
+
+        private async Task EnsureThemeFieldsDiscoveredAsync(ThemeDefinition theme)
+        {
+            if (_discoveredFields.ContainsKey(theme.Id)) return;
+            try
+            {
+                var tableName = GetTableName(theme);
+                // Sample small set to infer scalar string/numeric columns beyond id/bbox/geometry
+                var sampleQuery = _dataLoaded
+                    ? $"SELECT * FROM {tableName} LIMIT 50"
+                    : $"SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) LIMIT 50";
+                var rows = await _dataProcessor.ExecuteQueryAsync(sampleQuery);
+                var discovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (rows.Count > 0)
+                {
+                    foreach (var key in rows[0].Keys)
+                    {
+                        if (string.Equals(key, "id", StringComparison.OrdinalIgnoreCase)) continue;
+                        if (key.StartsWith("bbox", StringComparison.OrdinalIgnoreCase)) continue;
+                        if (string.Equals(key, "geometry", StringComparison.OrdinalIgnoreCase)) continue;
+                        discovered.Add(key);
+                    }
+                }
+                if (discovered.Count > 0)
+                {
+                    _discoveredFields[theme.Id] = discovered;
+                    // Merge into theme.Fields, preserving order and avoiding duplicates
+                    foreach (var f in discovered)
+                    {
+                        if (!theme.Fields.Contains(f))
+                        {
+                            theme.Fields = theme.Fields.Append(f).ToArray();
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Field discovery skipped for theme {theme.Name}: {ex.Message}");
+            }
         }
 
         private static int ComputeObjectId(string seed)
@@ -624,6 +669,9 @@ namespace DuckDBGeoparquet.Services
                     return;
                 }
 
+                // Discover and expose additional scalar attributes for this theme (once per run)
+                await EnsureThemeFieldsDiscoveredAsync(theme);
+
                 var layerMetadata = new
                 {
                     currentVersion = 11.1,
@@ -928,13 +976,13 @@ namespace DuckDBGeoparquet.Services
             // Handle output fields - Updated for theme-specific schemas
             if (outFields == "*")
             {
-                // Use theme-specific fields with common bbox and geometry
+                // Use theme-specific fields with common bbox; start with id
                 var fieldList = new List<string> { "id" };
                 
                 // Add bbox fields that are common to all themes
                 fieldList.AddRange(new[] { "bbox.xmin as bbox_xmin", "bbox.ymin as bbox_ymin", "bbox.xmax as bbox_xmax", "bbox.ymax as bbox_ymax" });
                 
-                // Add theme-specific fields
+                // Add theme-specific fields (expanded on-demand from discovery)
                 foreach (var field in theme.Fields.Where(f => f != "id"))
                 {
                     fieldList.Add(field);
