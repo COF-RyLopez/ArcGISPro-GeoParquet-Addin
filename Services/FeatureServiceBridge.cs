@@ -921,7 +921,7 @@ namespace DuckDBGeoparquet.Services
                             var createSql = $"CREATE TEMPORARY TABLE {matTable} AS {fullQuery}";
                             try
                             {
-                                await _dataProcessor.ExecuteNonQueryAsync(createSql);
+                                await _dataProcessor.ExecuteQueryAsync(createSql);
                                 _materializedExports[key] = matTable;
                                 Debug.WriteLine($"📦 Materialized export table {matTable} for key {key}");
                             }
@@ -934,8 +934,10 @@ namespace DuckDBGeoparquet.Services
                         if (!string.IsNullOrEmpty(matTable))
                         {
                             // Build a simple page from the materialized table
-                            var selectCols = string.Join(", ", GetFieldDefinitions(theme).Select(f => (string)f.GetType().GetProperty("name")?.GetValue(f)).Where(n => !string.Equals(n, "OBJECTID", StringComparison.OrdinalIgnoreCase)).Select(n => n switch { "bbox_xmin"=>"bbox_xmin", "bbox_ymin"=>"bbox_ymin", "bbox_xmax"=>"bbox_xmax", "bbox_ymax"=>"bbox_ymax", _=>n }));
-                            duckDbQuery = $"SELECT {selectCols}, geometry_geojson FROM {matTable} ORDER BY bbox_ymin, bbox_xmin, id LIMIT {maxRecords} OFFSET {resultOffset}";
+                            var selectCols = string.Join(", ", GetFieldDefinitions(theme)
+                                .Select(f => (string)f.GetType().GetProperty("name")?.GetValue(f))
+                                .Where(n => !string.Equals(n, "OBJECTID", StringComparison.OrdinalIgnoreCase)));
+                            duckDbQuery = $"SELECT {selectCols} FROM {matTable} ORDER BY bbox_ymin, bbox_xmin, id LIMIT {maxRecords} OFFSET {resultOffset}";
                         }
                         else
                         {
@@ -1269,27 +1271,7 @@ namespace DuckDBGeoparquet.Services
                 }
             }
 
-            // Determine if requested projection can be satisfied from the in-memory cache
-            bool CacheCanServe()
-            {
-                // Cache holds only: id, bbox (struct -> bbox_*), geometry
-                // If caller asks for any other attribute, use parquet source instead
-                if (outFields == "*") return false;
-                if (string.Equals(outFields, "OBJECTID", StringComparison.OrdinalIgnoreCase)) return true;
-
-                var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                {
-                    "id", "bbox_xmin", "bbox_ymin", "bbox_xmax", "bbox_ymax", "geometry"
-                };
-
-                var requested = outFields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                foreach (var rf in requested)
-                {
-                    var f = rf.Trim();
-                    if (!allowed.Contains(f)) return false;
-                }
-                return true;
-            }
+                // Note: previous helper CacheCanServe() is no longer used (routing is handled earlier)
 
             // Check if in-memory table exists, otherwise fallback to S3
             var tableName = GetTableName(theme);
