@@ -2027,6 +2027,16 @@ namespace DuckDBGeoparquet.Views
             pane.Activate();
         }
 
+        internal static void ShowFeatureServiceTab()
+        {
+            var pane = FrameworkApplication.DockPaneManager.Find(_dockPaneID) as WizardDockpaneViewModel;
+            if (pane == null)
+                return;
+            pane.ResetState();
+            pane.SelectedTabIndex = 2; // Feature Service tab index in XAML
+            pane.Activate();
+        }
+
         public bool IsThemeSelected(string theme)
         {
             var themeItem = Themes.FirstOrDefault(t => t.DisplayName == theme);

@@ -22,6 +22,7 @@
 				<group id="DuckDBGeoparquet_Group2" caption="Overture Maps" appearsOnAddInTab="false" keytip="M">
 					<labelControl refID="DuckDBGeoparquet_OvertureMapDescription"/>
 					<button refID="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" size="large" />
+                    <button refID="DuckDBGeoparquet_Views_FeatureService_ShowButton" size="large" />
 				</group>
 			</groups>
 			<controls>
@@ -41,6 +42,21 @@
 						<disabledText>Unable to launch Overture Maps Data Loader at this time</disabledText>
 					</tooltip>
 				</button>
+
+                <button id="DuckDBGeoparquet_Views_FeatureService_ShowButton"
+                       caption="Feature Service"
+                       className="DuckDBGeoparquet.Views.FeatureServiceShowButton"
+                       loadOnClick="true"
+                       smallImage="Images\Globe16.png"
+                       largeImage="Images\Globe32.png"
+                       keytip="F"
+                       condition="esri_mapping_mapPane"
+                       extendedCaption="Start local feature service for exploration">
+                    <tooltip heading="DuckDB Feature Service">
+                        Open the Feature Service controls to explore Overture data without downloading
+                        <disabledText>Unable to open Feature Service controls at this time</disabledText>
+                    </tooltip>
+                </button>
 
 				<!-- Custom Extent Tool -->
 				<tool id="DuckDBGeoparquet_CustomExtentTool"
