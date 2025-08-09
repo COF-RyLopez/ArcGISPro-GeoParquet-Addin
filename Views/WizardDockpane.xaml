@@ -183,7 +183,7 @@
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
-            <!-- Status Tab -->
+            <!-- Status Tab (index 1) -->
             <TabItem Header="Status" Visibility="{Binding IsStatusTabVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <StackPanel Margin="16,12,16,12">
                     <TextBlock Text="Operation Progress" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,4"/>
@@ -217,7 +217,7 @@
                     </StackPanel>
                 </StackPanel>
             </TabItem>
-            <!-- Feature Service Tab -->
+            <!-- Feature Service Tab (index 2) -->
             <TabItem Header="Feature Service" Visibility="{Binding IsFeatureServiceTabVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="16,12,16,12" Orientation="Vertical">

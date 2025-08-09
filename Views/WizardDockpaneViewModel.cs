@@ -2043,7 +2043,7 @@ namespace DuckDBGeoparquet.Views
                 return;
             pane.ResetState();
             pane._showingFeatureServiceOnly = true;
-            pane.SelectedTabIndex = 2; // Feature Service tab index in XAML
+            pane.SelectedTabIndex = 1; // Status tab index
             pane.NotifyPropertyChanged(nameof(IsSelectDataTabVisible));
             pane.NotifyPropertyChanged(nameof(IsStatusTabVisible));
             pane.NotifyPropertyChanged(nameof(IsCreateMfcTabVisible));
@@ -2217,8 +2217,13 @@ namespace DuckDBGeoparquet.Views
 
         private void ShowCreateMfcTab()
         {
-            // Navigate to the Create MFC tab (index 2)
-            SelectedTabIndex = 2;
+            // Navigate to the Create MFC tab (index 3)
+            _showingFeatureServiceOnly = false; // ensure MFC tab is visible
+            NotifyPropertyChanged(nameof(IsSelectDataTabVisible));
+            NotifyPropertyChanged(nameof(IsStatusTabVisible));
+            NotifyPropertyChanged(nameof(IsCreateMfcTabVisible));
+            NotifyPropertyChanged(nameof(IsFeatureServiceTabVisible));
+            SelectedTabIndex = 3;
             StatusText = "Ready to create Multifile Feature Connection";
             AddToLog("Create MFC tab activated");
         }
