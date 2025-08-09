@@ -972,6 +972,63 @@ namespace DuckDBGeoparquet.Services
                         duckDbQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, maxRecords, returnGeometry, outWkid, resultOffset, geometryPrecision, quantizationParameters);
                     }
                 }
+                }
+                else if (isExportWorkload && string.IsNullOrEmpty(geometryParam))
+                {
+                    // Export with no geometry: scope to cached viewport if available or to WHERE id IN (...) if present
+                    string effectiveGeom = geometryParam;
+                    if (string.IsNullOrEmpty(effectiveGeom) && _dataLoaded && _cachedXmax > _cachedXmin && _cachedYmax > _cachedYmin)
+                    {
+                        effectiveGeom = BuildEnvelopeJson(_cachedXmin, _cachedYmin, _cachedXmax, _cachedYmax);
+                    }
+
+                    var whereHasIds = !string.IsNullOrEmpty(whereClause) &&
+                        (whereClause.IndexOf("OBJECTID IN", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                         whereClause.IndexOf(" id IN", StringComparison.OrdinalIgnoreCase) >= 0);
+
+                    if (!string.IsNullOrEmpty(effectiveGeom) || whereHasIds)
+                    {
+                        string key;
+                        if (!string.IsNullOrEmpty(effectiveGeom) && TryParseEnvelope(effectiveGeom, out var exmin2, out var eymin2, out var exmax2, out var eymax2))
+                            key = $"{theme.Id}:{Math.Round(exmin2,3)}:{Math.Round(eymin2,3)}:{Math.Round(exmax2,3)}:{Math.Round(eymax2,3)}";
+                        else
+                            key = $"{theme.Id}:ids:{whereClause.GetHashCode()}";
+
+                        if (!_materializedExports.TryGetValue(key, out var matTable))
+                        {
+                            matTable = $"export_{theme.Id}_{Math.Abs(key.GetHashCode())}";
+                            var fullQuery = BuildDuckDbQuery(theme, whereClause, effectiveGeom, spatialRel, outFields, int.MaxValue, returnGeometry, outWkid, 0, geometryPrecision, quantizationParameters)
+                                             .Replace($" LIMIT {int.MaxValue}", "");
+                            var createSql = $"CREATE TEMPORARY TABLE {matTable} AS {fullQuery}";
+                            try
+                            {
+                                await _dataProcessor.ExecuteQueryAsync(createSql);
+                                _materializedExports[key] = matTable;
+                                Debug.WriteLine($"📦 Materialized export table {matTable} for key {key}");
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.WriteLine($"⚠️ Materialize (no-geom) failed, falling back to streaming: {ex.Message}");
+                                matTable = null;
+                            }
+                        }
+                        if (!string.IsNullOrEmpty(matTable))
+                        {
+                            var selectCols = string.Join(", ", GetFieldDefinitions(theme)
+                                .Select(f => (string)f.GetType().GetProperty("name")?.GetValue(f))
+                                .Where(n => !string.Equals(n, "OBJECTID", StringComparison.OrdinalIgnoreCase)));
+                            duckDbQuery = $"SELECT {selectCols} FROM {matTable} ORDER BY bbox_ymin, bbox_xmin, id LIMIT {maxRecords} OFFSET {resultOffset}";
+                        }
+                        else
+                        {
+                            duckDbQuery = BuildDuckDbQuery(theme, whereClause, effectiveGeom, spatialRel, outFields, maxRecords, returnGeometry, outWkid, resultOffset, geometryPrecision, quantizationParameters);
+                        }
+                    }
+                    else
+                    {
+                        duckDbQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, maxRecords, returnGeometry, outWkid, resultOffset, geometryPrecision, quantizationParameters);
+                    }
+                }
                 else
                 {
                     duckDbQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, maxRecords, returnGeometry, outWkid, resultOffset, geometryPrecision, quantizationParameters);
