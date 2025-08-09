@@ -87,10 +87,13 @@ namespace DuckDBGeoparquet.Services
             _port = port;
             _cancellationTokenSource = new CancellationTokenSource();
             _discoveredFields = new Dictionary<int, HashSet<string>>();
+            _discoveredFieldSql = new Dictionary<int, Dictionary<string, string>>();
         }
 
         // Cache of discovered optional attributes per layer id
         private readonly Dictionary<int, HashSet<string>> _discoveredFields;
+        // For discovered fields that require SQL expressions (e.g., flattened STRUCT members)
+        private readonly Dictionary<int, Dictionary<string, string>> _discoveredFieldSql;
 
         private async Task EnsureThemeFieldsDiscoveredAsync(ThemeDefinition theme)
         {
@@ -101,6 +104,7 @@ namespace DuckDBGeoparquet.Services
                 var describeQuery = $"DESCRIBE SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) LIMIT 0";
                 var rows = await _dataProcessor.ExecuteQueryAsync(describeQuery);
                 var discovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var discoveredSql = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 var allowedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 { "VARCHAR", "BOOL", "BOOLEAN", "UTINYINT", "TINYINT", "USMALLINT", "SMALLINT", "UINTEGER", "INTEGER", "UBIGINT", "BIGINT", "HUGEINT", "REAL", "DOUBLE", "DECIMAL" };
 
@@ -112,10 +116,39 @@ namespace DuckDBGeoparquet.Services
                     if (string.Equals(colName, "id", StringComparison.OrdinalIgnoreCase)) continue;
                     if (colName.Equals("bbox", StringComparison.OrdinalIgnoreCase)) continue;
                     if (colName.Equals("geometry", StringComparison.OrdinalIgnoreCase)) continue;
-                    // Skip complex types (STRUCT/LIST/MAP/GEOMETRY)
-                    if (!allowedTypes.Contains(colType.ToUpperInvariant())) continue;
-                    discovered.Add(colName);
-                    if (discovered.Count >= 20) break; // cap to keep UI performant
+                    var upper = colType.ToUpperInvariant();
+
+                    if (allowedTypes.Contains(upper))
+                    {
+                        // simple scalar
+                        discovered.Add(colName);
+                    }
+                    else if (upper.StartsWith("STRUCT("))
+                    {
+                        // Flatten first-level scalar members: STRUCT(a TYPE, b TYPE, ...)
+                        // Parse members
+                        var inner = colType.Substring("STRUCT(".Length);
+                        if (inner.EndsWith(")")) inner = inner.Substring(0, inner.Length - 1);
+                        var parts = inner.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                        foreach (var p in parts)
+                        {
+                            // p format: name TYPE
+                            var spaceIdx = p.IndexOf(' ');
+                            if (spaceIdx <= 0) continue;
+                            var member = p.Substring(0, spaceIdx).Trim();
+                            var mType = p.Substring(spaceIdx + 1).Trim();
+                            if (!allowedTypes.Contains(mType.ToUpperInvariant())) continue; // only scalar
+                            var fieldName = $"{colName}_{member}"; // e.g., speed_limits_maxspeed
+                            // SQL expression using struct_extract
+                            var expr = $"struct_extract({colName}, '{member}') as {fieldName}";
+                            if (discovered.Add(fieldName))
+                            {
+                                discoveredSql[fieldName] = expr;
+                            }
+                        }
+                    }
+                    // skip LIST/MAP and other complex types for now
+                    if (discovered.Count >= 40) break; // broader cap when flattening
                 }
                 if (discovered.Count > 0)
                 {
@@ -127,6 +160,10 @@ namespace DuckDBGeoparquet.Services
                         {
                             theme.Fields = theme.Fields.Append(f).ToArray();
                         }
+                    }
+                    if (discoveredSql.Count > 0)
+                    {
+                        _discoveredFieldSql[theme.Id] = discoveredSql;
                     }
                 }
             }
@@ -988,7 +1025,11 @@ namespace DuckDBGeoparquet.Services
                 // Add theme-specific fields (expanded on-demand from discovery)
                 foreach (var field in theme.Fields.Where(f => f != "id"))
                 {
-                    fieldList.Add(field);
+                    // If field is a flattened struct member, render via expression when querying parquet
+                    if (_discoveredFieldSql.TryGetValue(theme.Id, out var map) && map.TryGetValue(field, out var expr) && !_dataLoaded)
+                        fieldList.Add(expr);
+                    else
+                        fieldList.Add(field);
                 }
                 
                 // Add geometry only if requested - use DuckDB spatial functions to properly convert WKB
@@ -1046,6 +1087,12 @@ namespace DuckDBGeoparquet.Services
                     else if (f.Equals("bbox_ymax", StringComparison.OrdinalIgnoreCase)) mapped = "bbox.ymax as bbox_ymax";
                     else if (f.Equals("geometry", StringComparison.OrdinalIgnoreCase)) mapped = "geometry"; // handled below
                     else if (f.Equals("OBJECTID", StringComparison.OrdinalIgnoreCase)) mapped = null; // redundant safety
+
+                    // If this is a flattened struct field we discovered, map to its SQL expression when using parquet
+                    if (mapped != null && _discoveredFieldSql.TryGetValue(theme.Id, out var map) && map.TryGetValue(f, out var expr) && !_dataLoaded)
+                    {
+                        mapped = expr;
+                    }
 
                     if (!string.IsNullOrEmpty(mapped))
                     {
@@ -2722,7 +2769,7 @@ namespace DuckDBGeoparquet.Services
                 }
             };
 
-            // Add theme-specific fields
+            // Add theme-specific fields (including flattened struct members)
             foreach (var field in theme.Fields.Where(f => f != "id"))
             {
                 fields.Add(new
