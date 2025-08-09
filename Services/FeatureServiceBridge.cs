@@ -1146,20 +1146,24 @@ namespace DuckDBGeoparquet.Services
                     {
                         mapped = expr;
                     }
-                    else if (mapped != null && mapped.IndexOf('_') > 0 && !useCacheForFields && _structColumns.TryGetValue(theme.Id, out var structCols))
+                    else if (mapped != null && mapped == f && !useCacheForFields && f.IndexOf('_') > 0)
                     {
-                        // Heuristic: if field is of form col_member and base col is a STRUCT, synthesize struct_extract(col,'member')
-                        var idx = mapped.IndexOf('_');
-                        var baseCol = mapped.Substring(0, idx);
-                        var member = mapped.Substring(idx + 1);
-                        if (structCols.Contains(baseCol))
+                        // If the original requested field is of the form col_member and we didn't map it yet,
+                        // synthesize an expression from STRUCT or LIST(STRUCT). Avoid touching bbox_* which we handle above.
+                        if (!f.StartsWith("bbox_", StringComparison.OrdinalIgnoreCase))
                         {
-                            mapped = $"struct_extract({baseCol}, '{member}') as {mapped}";
-                        }
-                        else
-                        {
-                            // Try LIST(STRUCT(...)) first element
-                            mapped = $"struct_extract(list_extract({baseCol}, 1), '{member}') as {mapped}";
+                            var idx = f.IndexOf('_');
+                            var baseCol = f.Substring(0, idx);
+                            var member = f.Substring(idx + 1);
+                            string memberExpr = member.Contains("\"") ? member : $"'{member}'"; // support names like '"primary"'
+                            if (_structColumns.TryGetValue(theme.Id, out var structCols) && structCols.Contains(baseCol))
+                            {
+                                mapped = $"struct_extract({baseCol}, {memberExpr}) as {f}";
+                            }
+                            else
+                            {
+                                mapped = $"struct_extract(list_extract({baseCol}, 1), {memberExpr}) as {f}";
+                            }
                         }
                     }
 
