@@ -153,6 +153,30 @@ namespace DuckDBGeoparquet.Services
                             }
                         }
                     }
+                    else if (upper.StartsWith("LIST(STRUCT("))
+                    {
+                        // Example: LIST(STRUCT(property VARCHAR, dataset VARCHAR, ...))
+                        // We expose first element's scalar members to provide a single value per feature
+                        var start = colType.IndexOf("STRUCT(", StringComparison.OrdinalIgnoreCase);
+                        var inner = colType.Substring(start + "STRUCT(".Length);
+                        if (inner.EndsWith(")")) inner = inner.Substring(0, inner.Length - 1);
+                        if (inner.EndsWith(")")) inner = inner.Substring(0, inner.Length - 1); // remove trailing parenthesis from LIST(
+                        var parts = inner.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                        foreach (var p in parts)
+                        {
+                            var spaceIdx = p.IndexOf(' ');
+                            if (spaceIdx <= 0) continue;
+                            var member = p.Substring(0, spaceIdx).Trim();
+                            var mType = p.Substring(spaceIdx + 1).Trim();
+                            if (!allowedTypes.Contains(mType.ToUpperInvariant())) continue;
+                            var fieldName = $"{colName}_{member}";
+                            var expr = $"struct_extract(list_extract({colName}, 1), '{member}') as {fieldName}";
+                            if (discovered.Add(fieldName))
+                            {
+                                discoveredSql[fieldName] = expr;
+                            }
+                        }
+                    }
                     // skip LIST/MAP and other complex types for now
                     if (discovered.Count >= 40) break; // broader cap when flattening
                 }
@@ -1112,6 +1136,11 @@ namespace DuckDBGeoparquet.Services
                         if (structCols.Contains(baseCol))
                         {
                             mapped = $"struct_extract({baseCol}, '{member}') as {mapped}";
+                        }
+                        else
+                        {
+                            // Try LIST(STRUCT(...)) first element
+                            mapped = $"struct_extract(list_extract({baseCol}, 1), '{member}') as {mapped}";
                         }
                     }
 
