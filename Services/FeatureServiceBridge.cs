@@ -98,6 +98,8 @@ namespace DuckDBGeoparquet.Services
         private readonly Dictionary<int, Dictionary<string, string>> _discoveredFieldSql;
         // Track which columns are STRUCT so we can synthesize struct_extract on demand
         private readonly Dictionary<int, HashSet<string>> _structColumns;
+        // Cache of materialized export tables for heavy outFields=* paging
+        private readonly Dictionary<string, string> _materializedExports = new Dictionary<string, string>();
 
         private async Task EnsureThemeFieldsDiscoveredAsync(ThemeDefinition theme)
         {
@@ -901,8 +903,54 @@ namespace DuckDBGeoparquet.Services
                     }
                 }
 
-                // Build DuckDB query
-                var duckDbQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, maxRecords, returnGeometry, outWkid, resultOffset, geometryPrecision, quantizationParameters);
+                // Build DuckDB query (with optional materialization for export workloads)
+                string duckDbQuery;
+                bool isExportWorkload = (outFields == "*") && returnGeometry && string.IsNullOrEmpty(GetQueryParam(queryParams, "resultRecordCount"));
+                if (isExportWorkload && !string.IsNullOrEmpty(geometryParam))
+                {
+                    // Materialize the current extent + outFields=* into a temp table once; then page from that table.
+                    // Key on theme + snapped bbox to ~100m to avoid thrashing
+                    if (TryParseEnvelope(geometryParam, out var exmin, out var eymin, out var exmax, out var eymax))
+                    {
+                        string key = $"{theme.Id}:{Math.Round(exmin,3)}:{Math.Round(eymin,3)}:{Math.Round(exmax,3)}:{Math.Round(eymax,3)}";
+                        if (!_materializedExports.TryGetValue(key, out var matTable))
+                        {
+                            matTable = $"export_{theme.Id}_{Math.Abs(key.GetHashCode())}";
+                            var fullQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, int.MaxValue, returnGeometry, outWkid, 0, geometryPrecision, quantizationParameters)
+                                             .Replace(" LIMIT int.MaxValue", "");
+                            var createSql = $"CREATE TEMPORARY TABLE {matTable} AS {fullQuery}";
+                            try
+                            {
+                                await _dataProcessor.ExecuteNonQueryAsync(createSql);
+                                _materializedExports[key] = matTable;
+                                Debug.WriteLine($"📦 Materialized export table {matTable} for key {key}");
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.WriteLine($"⚠️ Materialize failed, falling back to streaming: {ex.Message}");
+                                matTable = null;
+                            }
+                        }
+                        if (!string.IsNullOrEmpty(matTable))
+                        {
+                            // Build a simple page from the materialized table
+                            var selectCols = string.Join(", ", GetFieldDefinitions(theme).Select(f => (string)f.GetType().GetProperty("name")?.GetValue(f)).Where(n => !string.Equals(n, "OBJECTID", StringComparison.OrdinalIgnoreCase)).Select(n => n switch { "bbox_xmin"=>"bbox_xmin", "bbox_ymin"=>"bbox_ymin", "bbox_xmax"=>"bbox_xmax", "bbox_ymax"=>"bbox_ymax", _=>n }));
+                            duckDbQuery = $"SELECT {selectCols}, geometry_geojson FROM {matTable} ORDER BY bbox_ymin, bbox_xmin, id LIMIT {maxRecords} OFFSET {resultOffset}";
+                        }
+                        else
+                        {
+                            duckDbQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, maxRecords, returnGeometry, outWkid, resultOffset, geometryPrecision, quantizationParameters);
+                        }
+                    }
+                    else
+                    {
+                        duckDbQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, maxRecords, returnGeometry, outWkid, resultOffset, geometryPrecision, quantizationParameters);
+                    }
+                }
+                else
+                {
+                    duckDbQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, maxRecords, returnGeometry, outWkid, resultOffset, geometryPrecision, quantizationParameters);
+                }
                 
                 // Execute query
                 // Fast-paths: return count/IDs only per ArcGIS REST
@@ -1675,9 +1723,9 @@ namespace DuckDBGeoparquet.Services
                     {
                         lastEx = ex;
                         // Simple transient retry once for DuckDB execution errors (e.g., during cache rebuild)
-                        if (++attempts <= 1)
+                        if (++attempts <= 2)
                         {
-                            await Task.Delay(150);
+                            await Task.Delay(300);
                             continue;
                         }
                         throw;
