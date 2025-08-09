@@ -141,7 +141,7 @@ namespace DuckDBGeoparquet.Services
                             // p format: name TYPE
                             var spaceIdx = p.IndexOf(' ');
                             if (spaceIdx <= 0) continue;
-                            var member = p.Substring(0, spaceIdx).Trim();
+                            var member = p.Substring(0, spaceIdx).Trim().Trim('"');
                             var mType = p.Substring(spaceIdx + 1).Trim();
                             if (!allowedTypes.Contains(mType.ToUpperInvariant())) continue; // only scalar
                             var fieldName = $"{colName}_{member}"; // e.g., speed_limits_maxspeed
@@ -166,7 +166,7 @@ namespace DuckDBGeoparquet.Services
                         {
                             var spaceIdx = p.IndexOf(' ');
                             if (spaceIdx <= 0) continue;
-                            var member = p.Substring(0, spaceIdx).Trim();
+                            var member = p.Substring(0, spaceIdx).Trim().Trim('"');
                             var mType = p.Substring(spaceIdx + 1).Trim();
                             if (!allowedTypes.Contains(mType.ToUpperInvariant())) continue;
                             var fieldName = $"{colName}_{member}";
@@ -1154,8 +1154,8 @@ namespace DuckDBGeoparquet.Services
                         {
                             var idx = f.IndexOf('_');
                             var baseCol = f.Substring(0, idx);
-                            var member = f.Substring(idx + 1);
-                            string memberExpr = member.Contains("\"") ? member : $"'{member}'"; // support names like '"primary"'
+                            var member = f.Substring(idx + 1).Trim().Trim('"');
+                            string memberExpr = $"'{member}'";
                             if (_structColumns.TryGetValue(theme.Id, out var structCols) && structCols.Contains(baseCol))
                             {
                                 mapped = $"struct_extract({baseCol}, {memberExpr}) as {f}";
