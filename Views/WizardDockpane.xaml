@@ -218,7 +218,7 @@
                 </StackPanel>
             </TabItem>
             <!-- Feature Service Tab -->
-            <TabItem Header="Feature Service" Visibility="Visible">
+            <TabItem Header="Feature Service" Visibility="{Binding IsFeatureServiceTabVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="16,12,16,12" Orientation="Vertical">
                         <TextBlock Text="DuckDB Feature Service Bridge" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,12"/>
@@ -351,7 +351,7 @@
             </TabItem>
             
             <!-- Create MFC Tab -->
-            <TabItem Header="Create MFC">
+            <TabItem Header="Create MFC" Visibility="{Binding IsCreateMfcTabVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="16,12,16,12" Orientation="Vertical">
                         <TextBlock Text="Create Multifile Feature Connection" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,12"/>

@@ -28,17 +28,17 @@
 			<controls>
 				<labelControl id="DuckDBGeoparquet_OvertureMapDescription" caption="Import and explore GeoParquet data" />
 
-				<button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton"
-                       caption="Launch Overture"
+                <button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton"
+                       caption="Download Overture"
                        className="DuckDBGeoparquet.Views.WizardDockpaneShowButton"
                        loadOnClick="true"
                        smallImage="Images\Overture16.png"
                        largeImage="Images\Overture32.png"
                        keytip="L"
                        condition="esri_mapping_mapPane"
-                       extendedCaption="Load Overture Maps Data">
+                       extendedCaption="Download Overture Maps Data">
 					<tooltip heading="Overture Maps Data Loader">
-						Launch the Overture Maps Data Loader to import GeoParquet data
+                        Download Overture Maps data as GeoParquet files
 						<disabledText>Unable to launch Overture Maps Data Loader at this time</disabledText>
 					</tooltip>
 				</button>

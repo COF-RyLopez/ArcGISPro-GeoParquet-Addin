@@ -571,6 +571,8 @@ namespace DuckDBGeoparquet.Views
 
         public bool IsSelectDataTabVisible => !_showingFeatureServiceOnly;
         public bool IsStatusTabVisible => !_showingFeatureServiceOnly;
+        public bool IsCreateMfcTabVisible => !_showingFeatureServiceOnly;
+        public bool IsFeatureServiceTabVisible => _showingFeatureServiceOnly;
 
         private string _statusText = "Initializing...";
         public string StatusText
@@ -2019,16 +2021,18 @@ namespace DuckDBGeoparquet.Views
         /// </summary>
         internal static void Show()
         {
-            var pane = FrameworkApplication.DockPaneManager.Find(_dockPaneID);
+            var pane = FrameworkApplication.DockPaneManager.Find(_dockPaneID) as WizardDockpaneViewModel;
             if (pane == null)
                 return;
 
-            // Reset the state when showing the dockpane
-            if (pane is WizardDockpaneViewModel viewModel)
-            {
-                viewModel.ResetState();
-            }
-
+            // Full downloader flow: show all tabs except Feature Service
+            pane.ResetState();
+            pane._showingFeatureServiceOnly = false;
+            pane.SelectedTabIndex = 0;
+            pane.NotifyPropertyChanged(nameof(IsSelectDataTabVisible));
+            pane.NotifyPropertyChanged(nameof(IsStatusTabVisible));
+            pane.NotifyPropertyChanged(nameof(IsCreateMfcTabVisible));
+            pane.NotifyPropertyChanged(nameof(IsFeatureServiceTabVisible));
             pane.Activate();
         }
 
@@ -2042,6 +2046,8 @@ namespace DuckDBGeoparquet.Views
             pane.SelectedTabIndex = 2; // Feature Service tab index in XAML
             pane.NotifyPropertyChanged(nameof(IsSelectDataTabVisible));
             pane.NotifyPropertyChanged(nameof(IsStatusTabVisible));
+            pane.NotifyPropertyChanged(nameof(IsCreateMfcTabVisible));
+            pane.NotifyPropertyChanged(nameof(IsFeatureServiceTabVisible));
             pane.Activate();
         }
 
