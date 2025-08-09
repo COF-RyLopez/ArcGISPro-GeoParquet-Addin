@@ -971,24 +971,57 @@ namespace DuckDBGeoparquet.Services
             else
             {
                 // For specific field requests, ALWAYS include geometry for spatial layers
-                // Handle OBJECTID to id conversion
-                var processedFields = outFields.Replace("OBJECTID", "id");
-                
-                if (!processedFields.Contains("geometry"))
+                // Translate ArcGIS field names to our underlying schema and de-duplicate
+                var fieldParts = outFields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                var translatedFields = new List<string>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var raw in fieldParts)
                 {
-                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, {outWkid.Value})" : "geometry";
-                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
-                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
-                    var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
-                    query.Append($"{processedFields}, ST_AsGeoJSON({filtered}) as geometry_geojson");
+                    var f = raw.Trim();
+                    if (f.Equals("OBJECTID", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // OBJECTID is synthesized in attributes; don't project a column for it
+                        continue;
+                    }
+
+                    string mapped = f;
+                    if (f.Equals("bbox_xmin", StringComparison.OrdinalIgnoreCase)) mapped = "bbox.xmin as bbox_xmin";
+                    else if (f.Equals("bbox_ymin", StringComparison.OrdinalIgnoreCase)) mapped = "bbox.ymin as bbox_ymin";
+                    else if (f.Equals("bbox_xmax", StringComparison.OrdinalIgnoreCase)) mapped = "bbox.xmax as bbox_xmax";
+                    else if (f.Equals("bbox_ymax", StringComparison.OrdinalIgnoreCase)) mapped = "bbox.ymax as bbox_ymax";
+                    else if (f.Equals("geometry", StringComparison.OrdinalIgnoreCase)) mapped = "geometry"; // handled below
+                    else if (f.Equals("OBJECTID", StringComparison.OrdinalIgnoreCase)) mapped = null; // redundant safety
+
+                    if (!string.IsNullOrEmpty(mapped))
+                    {
+                        // Prevent duplicate id,id when OBJECTID was also requested
+                        var key = mapped;
+                        // normalize alias form for duplicate detection
+                        if (mapped.Contains(" as ", StringComparison.OrdinalIgnoreCase))
+                            key = mapped.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+                        if (seen.Add(key)) translatedFields.Add(mapped);
+                    }
+                }
+
+                // Append geometry
+                var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, {outWkid.Value})" : "geometry";
+                var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
+                var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
+                var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
+
+                // If caller explicitly requested geometry in outFields, replace it with our GeoJSON expression; otherwise always include it
+                bool requestedGeometry = fieldParts.Any(p => p.Trim().Equals("geometry", StringComparison.OrdinalIgnoreCase));
+                if (requestedGeometry)
+                {
+                    // Replace any raw geometry token with our encoded geometry
+                    var withGeometry = translatedFields.Select(tf => tf.Equals("geometry", StringComparison.OrdinalIgnoreCase) ? $"ST_AsGeoJSON({filtered}) as geometry_geojson" : tf).ToList();
+                    query.Append(string.Join(", ", withGeometry));
                 }
                 else
                 {
-                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, {outWkid.Value})" : "geometry";
-                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
-                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
-                    var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
-                    query.Append(processedFields.Replace("geometry", $"ST_AsGeoJSON({filtered}) as geometry_geojson"));
+                    translatedFields.Add($"ST_AsGeoJSON({filtered}) as geometry_geojson");
+                    query.Append(string.Join(", ", translatedFields));
                 }
             }
 
