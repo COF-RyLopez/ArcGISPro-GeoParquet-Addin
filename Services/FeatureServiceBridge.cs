@@ -631,6 +631,7 @@ namespace DuckDBGeoparquet.Services
                     name = theme.Name,
                     type = "Feature Layer",
                     description = $"Live cloud-native {theme.Name} data from Overture Maps via DuckDB",
+                    objectIdField = "OBJECTID",
                     geometryType = theme.GeometryType,
                     sourceSpatialReference = _spatialReference,
                     copyrightText = "Overture Maps Foundation",
