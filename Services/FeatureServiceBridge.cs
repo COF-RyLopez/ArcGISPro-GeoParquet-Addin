@@ -97,22 +97,25 @@ namespace DuckDBGeoparquet.Services
             if (_discoveredFields.ContainsKey(theme.Id)) return;
             try
             {
-                var tableName = GetTableName(theme);
-                // Sample small set to infer scalar string/numeric columns beyond id/bbox/geometry
-                var sampleQuery = _dataLoaded
-                    ? $"SELECT * FROM {tableName} LIMIT 50"
-                    : $"SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) LIMIT 50";
-                var rows = await _dataProcessor.ExecuteQueryAsync(sampleQuery);
+                // Always inspect schema directly from source to avoid limitations of in-memory cache (which only carries id/bbox/geometry)
+                var describeQuery = $"DESCRIBE SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) LIMIT 0";
+                var rows = await _dataProcessor.ExecuteQueryAsync(describeQuery);
                 var discovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                if (rows.Count > 0)
+                var allowedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "VARCHAR", "BOOL", "BOOLEAN", "UTINYINT", "TINYINT", "USMALLINT", "SMALLINT", "UINTEGER", "INTEGER", "UBIGINT", "BIGINT", "HUGEINT", "REAL", "DOUBLE", "DECIMAL" };
+
+                foreach (var row in rows)
                 {
-                    foreach (var key in rows[0].Keys)
-                    {
-                        if (string.Equals(key, "id", StringComparison.OrdinalIgnoreCase)) continue;
-                        if (key.StartsWith("bbox", StringComparison.OrdinalIgnoreCase)) continue;
-                        if (string.Equals(key, "geometry", StringComparison.OrdinalIgnoreCase)) continue;
-                        discovered.Add(key);
-                    }
+                    var colName = row.TryGetValue("column_name", out var n) ? n?.ToString() : null;
+                    var colType = row.TryGetValue("column_type", out var t) ? t?.ToString() : null;
+                    if (string.IsNullOrWhiteSpace(colName) || string.IsNullOrWhiteSpace(colType)) continue;
+                    if (string.Equals(colName, "id", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (colName.Equals("bbox", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (colName.Equals("geometry", StringComparison.OrdinalIgnoreCase)) continue;
+                    // Skip complex types (STRUCT/LIST/MAP/GEOMETRY)
+                    if (!allowedTypes.Contains(colType.ToUpperInvariant())) continue;
+                    discovered.Add(colName);
+                    if (discovered.Count >= 20) break; // cap to keep UI performant
                 }
                 if (discovered.Count > 0)
                 {
