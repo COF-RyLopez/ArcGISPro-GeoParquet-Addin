@@ -88,12 +88,15 @@ namespace DuckDBGeoparquet.Services
             _cancellationTokenSource = new CancellationTokenSource();
             _discoveredFields = new Dictionary<int, HashSet<string>>();
             _discoveredFieldSql = new Dictionary<int, Dictionary<string, string>>();
+            _structColumns = new Dictionary<int, HashSet<string>>();
         }
 
         // Cache of discovered optional attributes per layer id
         private readonly Dictionary<int, HashSet<string>> _discoveredFields;
         // For discovered fields that require SQL expressions (e.g., flattened STRUCT members)
         private readonly Dictionary<int, Dictionary<string, string>> _discoveredFieldSql;
+        // Track which columns are STRUCT so we can synthesize struct_extract on demand
+        private readonly Dictionary<int, HashSet<string>> _structColumns;
 
         private async Task EnsureThemeFieldsDiscoveredAsync(ThemeDefinition theme)
         {
@@ -105,6 +108,7 @@ namespace DuckDBGeoparquet.Services
                 var rows = await _dataProcessor.ExecuteQueryAsync(describeQuery);
                 var discovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var discoveredSql = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var structCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var allowedTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 { "VARCHAR", "BOOL", "BOOLEAN", "UTINYINT", "TINYINT", "USMALLINT", "SMALLINT", "UINTEGER", "INTEGER", "UBIGINT", "BIGINT", "HUGEINT", "REAL", "DOUBLE", "DECIMAL" };
 
@@ -125,6 +129,7 @@ namespace DuckDBGeoparquet.Services
                     }
                     else if (upper.StartsWith("STRUCT("))
                     {
+                        structCols.Add(colName);
                         // Flatten first-level scalar members: STRUCT(a TYPE, b TYPE, ...)
                         // Parse members
                         var inner = colType.Substring("STRUCT(".Length);
@@ -164,6 +169,10 @@ namespace DuckDBGeoparquet.Services
                     if (discoveredSql.Count > 0)
                     {
                         _discoveredFieldSql[theme.Id] = discoveredSql;
+                    }
+                    if (structCols.Count > 0)
+                    {
+                        _structColumns[theme.Id] = structCols;
                     }
                 }
             }
@@ -1092,6 +1101,17 @@ namespace DuckDBGeoparquet.Services
                     if (mapped != null && _discoveredFieldSql.TryGetValue(theme.Id, out var map) && map.TryGetValue(f, out var expr) && !_dataLoaded)
                     {
                         mapped = expr;
+                    }
+                    else if (mapped != null && mapped.IndexOf('_') > 0 && !_dataLoaded && _structColumns.TryGetValue(theme.Id, out var structCols))
+                    {
+                        // Heuristic: if field is of form col_member and base col is a STRUCT, synthesize struct_extract(col,'member')
+                        var idx = mapped.IndexOf('_');
+                        var baseCol = mapped.Substring(0, idx);
+                        var member = mapped.Substring(idx + 1);
+                        if (structCols.Contains(baseCol))
+                        {
+                            mapped = $"struct_extract({baseCol}, '{member}') as {mapped}";
+                        }
                     }
 
                     if (!string.IsNullOrEmpty(mapped))
