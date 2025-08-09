@@ -972,7 +972,6 @@ namespace DuckDBGeoparquet.Services
                         duckDbQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, maxRecords, returnGeometry, outWkid, resultOffset, geometryPrecision, quantizationParameters);
                     }
                 }
-                }
                 else if (isExportWorkload && string.IsNullOrEmpty(geometryParam))
                 {
                     // Export with no geometry: scope to cached viewport if available or to WHERE id IN (...) if present
