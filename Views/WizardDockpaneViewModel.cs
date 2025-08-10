@@ -361,19 +361,6 @@ namespace DuckDBGeoparquet.Views
         public ICommand AoiSetCommand { get; private set; }
         public ICommand AoiClearCommand { get; private set; }
 
-        // AOI UI state
-        private string _aoiQuery;
-        public string AoiQuery { get => _aoiQuery; set { _aoiQuery = value; NotifyPropertyChanged(); } }
-        public ObservableCollection<dynamic> AoiResults { get; } = new ObservableCollection<dynamic>();
-        private dynamic _selectedAoi;
-        public dynamic SelectedAoi { get => _selectedAoi; set { _selectedAoi = value; NotifyPropertyChanged(); } }
-        private string _aoiStatus;
-        public string AoiStatus { get => _aoiStatus; set { _aoiStatus = value; NotifyPropertyChanged(); } }
-
-        public ICommand AoiSearchCommand { get; private set; }
-        public ICommand AoiSetCommand { get; private set; }
-        public ICommand AoiClearCommand { get; private set; }
-
         // Properties for TreeView Preview
         public int SelectedLeafItemCount => GetSelectedLeafItems().Count;
         
