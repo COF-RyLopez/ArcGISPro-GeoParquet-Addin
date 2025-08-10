@@ -72,10 +72,10 @@ namespace DuckDBGeoparquet.Services
                 GeometryType = "esriGeometryPoint",
                 Fields = new[] { "id" }
             },
-            new ThemeDefinition
-            {
+            new ThemeDefinition 
+            { 
                 Id = 1, // Roads will be Layer 1
-                Name = "Transportation - Roads",
+                Name = "Transportation - Roads", 
                 S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=segment/*.parquet",
                 GeometryType = "esriGeometryPolyline",
                 Fields = new[] { "id" }
@@ -1033,15 +1033,15 @@ namespace DuckDBGeoparquet.Services
 
                 // Build DuckDB query (with optional materialization for export workloads)
                 string duckDbQuery;
-                // Treat as export when:
+                // Treat as export ONLY when:
                 // - outFields = * (classic export)
                 // - ID list is provided (Pro paging by OBJECTID)
-                // - returnGeometry with a geometry filter (spatial export) even if outFields not '*'
+                // - caller forces with forceMaterialize=true
+                // Do NOT treat normal map draws (OBJECTID-only + geometry) as export; that slows panning.
                 bool isExportWorkload =
                     forceMaterialize ||
                     (outFields == "*") ||
-                    whereHasIds ||
-                    (returnGeometry && !string.IsNullOrEmpty(geometryParam));
+                    whereHasIds;
                 if (isExportWorkload)
                 {
                     Debug.WriteLine($"🚚 Export/materialization workload detected (force={forceMaterialize}, outFields={outFields}, whereHasIds={whereHasIds}, returnGeometry={returnGeometry}, hasGeometry={(string.IsNullOrEmpty(geometryParam)?"false":"true")})");
@@ -1106,7 +1106,7 @@ namespace DuckDBGeoparquet.Services
 
                 // Fast-path: if we already materialized an export table for this geometry, always read from it
                 // regardless of the current outFields (Pro will follow up with OBJECTID/field-paged requests).
-                if (!string.IsNullOrEmpty(geometryParam) && TryParseEnvelope(geometryParam, out var mxmin0, out var mymin0, out var mxmax0, out var mymax0))
+                if (isExportWorkload && !string.IsNullOrEmpty(geometryParam) && TryParseEnvelope(geometryParam, out var mxmin0, out var mymin0, out var mxmax0, out var mymax0))
                 {
                     var existingKey = $"{theme.Id}:{Math.Round(mxmin0,3)}:{Math.Round(mymin0,3)}:{Math.Round(mxmax0,3)}:{Math.Round(mymax0,3)}";
                     if (_materializedExports.TryGetValue(existingKey, out var existingMat))
