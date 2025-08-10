@@ -864,9 +864,9 @@ namespace DuckDBGeoparquet.Services
                 var rows = await _dataProcessor.ExecuteQueryAsync(sql);
                 var results = rows.Select(r => new
                 {
-                    name = r.GetValueOrDefault("name")?.ToString(),
-                    adminLevel = r.GetValueOrDefault("admin_level")?.ToString(),
-                    wkt = r.GetValueOrDefault("wkt")?.ToString()
+                    name = r.ContainsKey("name") ? r["name"]?.ToString() : null,
+                    adminLevel = r.ContainsKey("admin_level") ? r["admin_level"]?.ToString() : null,
+                    wkt = r.ContainsKey("wkt") ? r["wkt"]?.ToString() : null
                 }).ToArray();
                 await WriteJsonResponse(context, JsonSerializer.Serialize(new { results }, _jsonOptions));
             }

@@ -337,7 +337,7 @@
                                     </ListBox.ItemTemplate>
                                 </ListBox>
                                 <StackPanel Orientation="Horizontal">
-                                    <Button Content="Set AOI" Command="{Binding AoiSetCommand}" IsEnabled="{Binding SelectedAoi, Converter={StaticResource BooleanToVisibilityConverter}}" Width="90" Style="{DynamicResource Esri_ButtonBlue}"/>
+                                    <Button Content="Set AOI" Command="{Binding AoiSetCommand}" Width="90" Style="{DynamicResource Esri_ButtonBlue}"/>
                                     <Button Content="Clear AOI" Command="{Binding AoiClearCommand}" Margin="8,0,0,0" Width="90" Style="{DynamicResource Esri_Button}"/>
                                 </StackPanel>
                                 <TextBlock Text="{Binding AoiStatus}" Margin="0,6,0,0" Foreground="{DynamicResource Esri_TextCaptionActiveBrush}"/>
