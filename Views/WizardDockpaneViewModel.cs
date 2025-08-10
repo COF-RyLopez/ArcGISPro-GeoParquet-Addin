@@ -576,9 +576,10 @@ namespace DuckDBGeoparquet.Views
             if (SelectedAoi == null) return;
             try
             {
-                using var client = new HttpClient();
+                using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
                 var wkt = (string)SelectedAoi.GetType().GetProperty("wkt").GetValue(SelectedAoi);
                 var url = $"http://localhost:8080/aoi/set?wkt={Uri.EscapeDataString(wkt)}";
+                AoiStatus = "Materializing AOI in DuckDB (Places, Roads, Buildings)... This may take a few minutes.";
                 await client.GetStringAsync(url);
                 var name = (string)SelectedAoi.GetType().GetProperty("name").GetValue(SelectedAoi);
                 AoiStatus = $"AOI set: {name}";
