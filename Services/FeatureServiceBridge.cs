@@ -909,7 +909,8 @@ namespace DuckDBGeoparquet.Services
                 var quantizationParameters = GetQueryParam(queryParams, "quantizationParameters");
 
                 // Heuristic: if client didn't explicitly ask for geometry and provided no geometry filter,
-                // avoid returning geometry for outFields='*' preflight/export calls to reduce payload/timeouts
+                // avoid returning geometry for outFields='*' preflight calls. For export materialization we
+                // will override this and include geometry in the temp table regardless.
                 bool explicitReturnGeometry = queryParams.ContainsKey("returnGeometry");
                 if (!explicitReturnGeometry && string.IsNullOrEmpty(geometryParam) && outFields == "*")
                 {
@@ -936,7 +937,62 @@ namespace DuckDBGeoparquet.Services
 
                 // Build DuckDB query (with optional materialization for export workloads)
                 string duckDbQuery;
-                bool isExportWorkload = (outFields == "*") && string.IsNullOrEmpty(GetQueryParam(queryParams, "resultRecordCount"));
+                bool isExportWorkload = (outFields == "*"); // treat any outFields=* as export-related paging
+
+                // If a materialized table already exists for a plausible export key (by bbox or id hash),
+                // short-circuit all routing and read from it even if the client passes resultRecordCount.
+                {
+                    string existingKey = null;
+                    // Prefer explicit geometry key when present
+                    if (!string.IsNullOrEmpty(geometryParam) && TryParseEnvelope(geometryParam, out var kxmin, out var kymin, out var kxmax, out var kymax))
+                    {
+                        existingKey = $"{theme.Id}:{Math.Round(kxmin,3)}:{Math.Round(kymin,3)}:{Math.Round(kxmax,3)}:{Math.Round(kymax,3)}";
+                    }
+                    else
+                    {
+                        // Use cached viewport as the implicit export key when no geometry was supplied
+                        if (_dataLoaded && _cachedXmax > _cachedXmin && _cachedYmax > _cachedYmin)
+                        {
+                            existingKey = $"{theme.Id}:{Math.Round(_cachedXmin,3)}:{Math.Round(_cachedYmin,3)}:{Math.Round(_cachedXmax,3)}:{Math.Round(_cachedYmax,3)}";
+                        }
+                        // Or an id-filter hash if present
+                        var whereHasIdsNow = !string.IsNullOrEmpty(whereClause) &&
+                            (whereClause.IndexOf("OBJECTID IN", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                             whereClause.IndexOf(" id IN", StringComparison.OrdinalIgnoreCase) >= 0);
+                        if (whereHasIdsNow)
+                        {
+                            existingKey = existingKey ?? $"{theme.Id}:ids:{whereClause.GetHashCode()}";
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(existingKey) && _materializedExports.TryGetValue(existingKey, out var matExisting))
+                    {
+                        List<string> selectColumns;
+                        if (outFields == "*")
+                        {
+                            selectColumns = GetFieldDefinitions(theme)
+                                .Select(f => (string)f.GetType().GetProperty("name")?.GetValue(f))
+                                .Where(n => !string.Equals(n, "OBJECTID", StringComparison.OrdinalIgnoreCase))
+                                .ToList();
+                        }
+                        else
+                        {
+                            var requested = outFields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                                                     .Where(n => !string.Equals(n, "OBJECTID", StringComparison.OrdinalIgnoreCase))
+                                                     .ToList();
+                            if (!requested.Any(r => r.Equals("id", StringComparison.OrdinalIgnoreCase))) requested.Insert(0, "id");
+                            selectColumns = requested;
+                        }
+                        if (explicitReturnGeometry || returnGeometry)
+                        {
+                            if (!selectColumns.Contains("geometry_geojson", StringComparer.OrdinalIgnoreCase))
+                                selectColumns.Add("geometry_geojson");
+                        }
+                        var matSelect = string.Join(", ", selectColumns);
+                        duckDbQuery = $"SELECT {matSelect} FROM {matExisting} ORDER BY bbox_ymin, bbox_xmin, id LIMIT {maxRecords} OFFSET {resultOffset}";
+                        goto ExecuteQuery; // use the materialized table now
+                    }
+                }
 
                 // Fast-path: if we already materialized an export table for this geometry, always read from it
                 // regardless of the current outFields (Pro will follow up with OBJECTID/field-paged requests).
@@ -987,7 +1043,8 @@ namespace DuckDBGeoparquet.Services
                         if (!_materializedExports.TryGetValue(key, out var matTable))
                         {
                             matTable = $"export_{theme.Id}_{Math.Abs(key.GetHashCode())}";
-                            var fullQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, int.MaxValue, returnGeometry, outWkid, 0, geometryPrecision, quantizationParameters)
+                            // Always include geometry in the materialized table to support downstream export pages
+                            var fullQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, int.MaxValue, true /*returnGeometry*/, outWkid, 0, geometryPrecision, quantizationParameters)
                                              .Replace(" LIMIT int.MaxValue", "");
                             var createSql = $"CREATE TEMPORARY TABLE {matTable} AS {fullQuery}";
                             try
@@ -1048,7 +1105,8 @@ namespace DuckDBGeoparquet.Services
                         if (!_materializedExports.TryGetValue(key, out var matTable))
                         {
                             matTable = $"export_{theme.Id}_{Math.Abs(key.GetHashCode())}";
-                            var fullQuery = BuildDuckDbQuery(theme, whereClause, effectiveGeom, spatialRel, outFields, int.MaxValue, returnGeometry, outWkid, 0, geometryPrecision, quantizationParameters)
+                            // Always include geometry in the materialized table to support downstream export pages
+                            var fullQuery = BuildDuckDbQuery(theme, whereClause, effectiveGeom, spatialRel, outFields, int.MaxValue, true /*returnGeometry*/, outWkid, 0, geometryPrecision, quantizationParameters)
                                              .Replace($" LIMIT {int.MaxValue}", "");
                             var createSql = $"CREATE TEMPORARY TABLE {matTable} AS {fullQuery}";
                             try
