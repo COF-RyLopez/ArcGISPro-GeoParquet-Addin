@@ -937,6 +937,46 @@ namespace DuckDBGeoparquet.Services
                 // Build DuckDB query (with optional materialization for export workloads)
                 string duckDbQuery;
                 bool isExportWorkload = (outFields == "*") && string.IsNullOrEmpty(GetQueryParam(queryParams, "resultRecordCount"));
+
+                // Fast-path: if we already materialized an export table for this geometry, always read from it
+                // regardless of the current outFields (Pro will follow up with OBJECTID/field-paged requests).
+                if (!string.IsNullOrEmpty(geometryParam) && TryParseEnvelope(geometryParam, out var mxmin0, out var mymin0, out var mxmax0, out var mymax0))
+                {
+                    var existingKey = $"{theme.Id}:{Math.Round(mxmin0,3)}:{Math.Round(mymin0,3)}:{Math.Round(mxmax0,3)}:{Math.Round(mymax0,3)}";
+                    if (_materializedExports.TryGetValue(existingKey, out var existingMat))
+                    {
+                        // Decide which columns to project from the materialized table based on the request
+                        List<string> selectColumns;
+                        if (outFields == "*")
+                        {
+                            selectColumns = GetFieldDefinitions(theme)
+                                .Select(f => (string)f.GetType().GetProperty("name")?.GetValue(f))
+                                .Where(n => !string.Equals(n, "OBJECTID", StringComparison.OrdinalIgnoreCase))
+                                .ToList();
+                        }
+                        else
+                        {
+                            var requested = outFields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                                                     .Where(n => !string.Equals(n, "OBJECTID", StringComparison.OrdinalIgnoreCase))
+                                                     .ToList();
+                            // Ensure id is present at minimum
+                            if (!requested.Any(r => r.Equals("id", StringComparison.OrdinalIgnoreCase))) requested.Insert(0, "id");
+                            selectColumns = requested;
+                        }
+
+                        // Include geometry from materialized table when requested
+                        if (returnGeometry)
+                        {
+                            // The materialized table stores geometry as 'geometry_geojson'
+                            if (!selectColumns.Contains("geometry_geojson", StringComparer.OrdinalIgnoreCase))
+                                selectColumns.Add("geometry_geojson");
+                        }
+
+                        var matSelect = string.Join(", ", selectColumns);
+                        duckDbQuery = $"SELECT {matSelect} FROM {existingMat} ORDER BY bbox_ymin, bbox_xmin, id LIMIT {maxRecords} OFFSET {resultOffset}";
+                        goto ExecuteQuery; // skip the rest of routing logic
+                    }
+                }
                 if (isExportWorkload && !string.IsNullOrEmpty(geometryParam))
                 {
                     // Materialize the current extent + outFields=* into a temp table once; then page from that table.
@@ -965,9 +1005,13 @@ namespace DuckDBGeoparquet.Services
                         if (!string.IsNullOrEmpty(matTable))
                         {
                             // Build a simple page from the materialized table
-                            var selectCols = string.Join(", ", GetFieldDefinitions(theme)
+                            var selectColsList = GetFieldDefinitions(theme)
                                 .Select(f => (string)f.GetType().GetProperty("name")?.GetValue(f))
-                                .Where(n => !string.Equals(n, "OBJECTID", StringComparison.OrdinalIgnoreCase)));
+                                .Where(n => !string.Equals(n, "OBJECTID", StringComparison.OrdinalIgnoreCase))
+                                .ToList();
+                            if (returnGeometry && !selectColsList.Contains("geometry_geojson", StringComparer.OrdinalIgnoreCase))
+                                selectColsList.Add("geometry_geojson");
+                            var selectCols = string.Join(", ", selectColsList);
                             duckDbQuery = $"SELECT {selectCols} FROM {matTable} ORDER BY bbox_ymin, bbox_xmin, id LIMIT {maxRecords} OFFSET {resultOffset}";
                         }
                         else
@@ -1021,9 +1065,13 @@ namespace DuckDBGeoparquet.Services
                         }
                         if (!string.IsNullOrEmpty(matTable))
                         {
-                            var selectCols = string.Join(", ", GetFieldDefinitions(theme)
+                            var selectColsList = GetFieldDefinitions(theme)
                                 .Select(f => (string)f.GetType().GetProperty("name")?.GetValue(f))
-                                .Where(n => !string.Equals(n, "OBJECTID", StringComparison.OrdinalIgnoreCase)));
+                                .Where(n => !string.Equals(n, "OBJECTID", StringComparison.OrdinalIgnoreCase))
+                                .ToList();
+                            if (returnGeometry && !selectColsList.Contains("geometry_geojson", StringComparer.OrdinalIgnoreCase))
+                                selectColsList.Add("geometry_geojson");
+                            var selectCols = string.Join(", ", selectColsList);
                             duckDbQuery = $"SELECT {selectCols} FROM {matTable} ORDER BY bbox_ymin, bbox_xmin, id LIMIT {maxRecords} OFFSET {resultOffset}";
                         }
                         else
@@ -1040,6 +1088,8 @@ namespace DuckDBGeoparquet.Services
                 {
                     duckDbQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, maxRecords, returnGeometry, outWkid, resultOffset, geometryPrecision, quantizationParameters);
                 }
+
+ExecuteQuery:
                 
                 // Execute query
                 // Fast-paths: return count/IDs only per ArcGIS REST
@@ -1302,9 +1352,9 @@ namespace DuckDBGeoparquet.Services
                             if (_structColumns.TryGetValue(theme.Id, out var structCols) && structCols.Contains(baseCol))
                             {
                                 mapped = $"struct_extract({baseCol}, {memberExpr}) as {f}";
-                            }
-                            else
-                            {
+                }
+                else
+                {
                                 mapped = $"struct_extract(list_extract({baseCol}, 1), {memberExpr}) as {f}";
                             }
                         }
