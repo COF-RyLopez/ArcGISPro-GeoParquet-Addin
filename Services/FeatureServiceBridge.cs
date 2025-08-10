@@ -59,16 +59,32 @@ namespace DuckDBGeoparquet.Services
             WriteIndented = false
         };
 
-            // Focus on a single layer for debugging: Transportation - Roads
+        // Multi-layer service: add key Overture themes (kept lean; attributes discovered on-demand)
         private readonly List<ThemeDefinition> _themes = new List<ThemeDefinition>
         {
             new ThemeDefinition 
             { 
                 Id = 0, 
-                Name = "Transportation - Roads", 
+                Name = "Transportation - Roads",
                 S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=segment/*.parquet",
                 GeometryType = "esriGeometryPolyline",
-                    Fields = new[] { "id" }
+                Fields = new[] { "id" }
+            },
+            new ThemeDefinition 
+            { 
+                Id = 1, 
+                Name = "Buildings - Footprints",
+                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=buildings/type=building/*.parquet",
+                GeometryType = "esriGeometryPolygon",
+                Fields = new[] { "id" }
+            },
+            new ThemeDefinition 
+            { 
+                Id = 2, 
+                Name = "Places - Points",
+                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=places/type=place/*.parquet",
+                GeometryType = "esriGeometryPoint",
+                Fields = new[] { "id" }
             }
         };
 
