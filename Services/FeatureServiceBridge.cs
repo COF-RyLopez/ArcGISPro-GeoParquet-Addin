@@ -1027,7 +1027,7 @@ namespace DuckDBGeoparquet.Services
                 }
 
                 // Detect ID-based paging/export
-                whereHasIds = !string.IsNullOrEmpty(whereClause) &&
+                bool whereHasIds = !string.IsNullOrEmpty(whereClause) &&
                     (whereClause.IndexOf("OBJECTID IN", StringComparison.OrdinalIgnoreCase) >= 0 ||
                      whereClause.IndexOf(" id IN", StringComparison.OrdinalIgnoreCase) >= 0);
 
@@ -1189,7 +1189,7 @@ namespace DuckDBGeoparquet.Services
                         effectiveGeom = BuildEnvelopeJson(_cachedXmin, _cachedYmin, _cachedXmax, _cachedYmax);
                     }
 
-                    var whereHasIds = !string.IsNullOrEmpty(whereClause) &&
+                    whereHasIds = !string.IsNullOrEmpty(whereClause) &&
                         (whereClause.IndexOf("OBJECTID IN", StringComparison.OrdinalIgnoreCase) >= 0 ||
                          whereClause.IndexOf(" id IN", StringComparison.OrdinalIgnoreCase) >= 0);
 
