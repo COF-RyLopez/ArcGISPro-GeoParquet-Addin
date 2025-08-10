@@ -869,7 +869,7 @@ namespace DuckDBGeoparquet.Services
                 var results = rows.Select(r => new
                 {
                     name = r.ContainsKey("name") ? r["name"]?.ToString() : null,
-                    adminLevel = r.ContainsKey("admin_level") ? r["admin_level"]?.ToString() : null,
+                    adminLevel = r.ContainsKey("adminLevel") ? r["adminLevel"]?.ToString() : (r.ContainsKey("admin_level") ? r["admin_level"]?.ToString() : null),
                     wkt = r.ContainsKey("wkt") ? r["wkt"]?.ToString() : null
                 }).ToArray();
                 await WriteJsonResponse(context, JsonSerializer.Serialize(new { results }, _jsonOptions));
@@ -904,7 +904,9 @@ namespace DuckDBGeoparquet.Services
                         var key = $"aoi:{theme.Id}";
                         var table = $"aoi_{theme.Id}_{Math.Abs(key.GetHashCode())}";
                         var geomExpr = "geometry";
-                        var create = $"CREATE TEMPORARY TABLE IF NOT EXISTS {table} AS SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) WHERE ST_Intersects({geomExpr}, ST_GeomFromText('{_aoiWkt}', 4326))";
+                        // DuckDB ST_GeomFromText takes (VARCHAR) or (VARCHAR, BOOLEAN). No SRID integer parameter.
+                        var safeWkt = _aoiWkt.Replace("'", "''");
+                        var create = $"CREATE TEMPORARY TABLE IF NOT EXISTS {table} AS SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) WHERE ST_Intersects({geomExpr}, ST_GeomFromText('{safeWkt}'))";
                         await _dataProcessor.ExecuteQueryAsync(create);
                         _aoiTables[theme.Id] = table;
                     }
