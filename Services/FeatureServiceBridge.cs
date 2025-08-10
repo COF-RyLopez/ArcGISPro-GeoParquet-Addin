@@ -122,6 +122,8 @@ namespace DuckDBGeoparquet.Services
         private readonly TimeSpan _materializedTtl = TimeSpan.FromMinutes(15);
         // Prevent concurrent CREATEs for the same materialization key
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _materializeLocks = new System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim>();
+        // Limit background pre-materializations to reduce UI stutter
+        private static readonly SemaphoreSlim _backgroundMaterializeGate = new SemaphoreSlim(1, 1);
 
         /// <summary>
         /// Ensure a materialized export table exists for the given theme and geometry key.
@@ -1060,12 +1062,17 @@ namespace DuckDBGeoparquet.Services
                     {
                         _ = Task.Run(async () =>
                         {
+                            if (!await _backgroundMaterializeGate.WaitAsync(TimeSpan.FromMilliseconds(100))) return;
                             try
                             {
                                 var mt = await EnsureMaterializedForKeyAsync(theme, preKey, whereClause, geometryParam, spatialRel, outWkid, geometryPrecision, quantizationParameters);
                                 if (!string.IsNullOrEmpty(mt)) Debug.WriteLine($"🧰 Pre-materialized table {mt} for anticipated export key {preKey}");
                             }
                             catch { /* swallow */ }
+                            finally
+                            {
+                                _backgroundMaterializeGate.Release();
+                            }
                         });
                     }
                 }
