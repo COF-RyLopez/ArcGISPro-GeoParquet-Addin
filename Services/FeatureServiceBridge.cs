@@ -100,6 +100,8 @@ namespace DuckDBGeoparquet.Services
         private readonly Dictionary<int, HashSet<string>> _structColumns;
         // Cache of materialized export tables for heavy outFields=* paging
         private readonly Dictionary<string, string> _materializedExports = new Dictionary<string, string>();
+        private readonly Dictionary<string, DateTime> _materializedTouched = new Dictionary<string, DateTime>();
+        private readonly TimeSpan _materializedTtl = TimeSpan.FromMinutes(15);
 
         // Helper: split a STRUCT member list by top-level commas (ignores commas inside nested parentheses)
         private static IEnumerable<string> SplitTopLevelComma(string s)
@@ -967,6 +969,8 @@ namespace DuckDBGeoparquet.Services
 
                     if (!string.IsNullOrEmpty(existingKey) && _materializedExports.TryGetValue(existingKey, out var matExisting))
                     {
+                        _materializedTouched[existingKey] = DateTime.UtcNow; // touch
+                        System.Diagnostics.Debug.WriteLine($"📖 Using existing materialized table {matExisting} for key {existingKey}");
                         List<string> selectColumns;
                         if (outFields == "*")
                         {
@@ -1030,6 +1034,8 @@ namespace DuckDBGeoparquet.Services
 
                         var matSelect = string.Join(", ", selectColumns);
                         duckDbQuery = $"SELECT {matSelect} FROM {existingMat} ORDER BY bbox_ymin, bbox_xmin, id LIMIT {maxRecords} OFFSET {resultOffset}";
+                        _materializedTouched[existingKey] = DateTime.UtcNow; // touch
+                        System.Diagnostics.Debug.WriteLine($"📖 Using existing materialized table {existingMat} for key {existingKey}");
                         goto ExecuteQuery; // skip the rest of routing logic
                     }
                 }
@@ -1051,6 +1057,7 @@ namespace DuckDBGeoparquet.Services
                             {
                                 await _dataProcessor.ExecuteQueryAsync(createSql);
                                 _materializedExports[key] = matTable;
+                                _materializedTouched[key] = DateTime.UtcNow;
                                 Debug.WriteLine($"📦 Materialized export table {matTable} for key {key}");
                             }
                             catch (Exception ex)
@@ -1070,6 +1077,8 @@ namespace DuckDBGeoparquet.Services
                                 selectColsList.Add("geometry_geojson");
                             var selectCols = string.Join(", ", selectColsList);
                             duckDbQuery = $"SELECT {selectCols} FROM {matTable} ORDER BY bbox_ymin, bbox_xmin, id LIMIT {maxRecords} OFFSET {resultOffset}";
+                            _materializedTouched[key] = DateTime.UtcNow; // touch
+                            System.Diagnostics.Debug.WriteLine($"📖 Paging from materialized table {matTable} for key {key}");
                         }
                         else
                         {
@@ -1113,6 +1122,7 @@ namespace DuckDBGeoparquet.Services
                             {
                                 await _dataProcessor.ExecuteQueryAsync(createSql);
                                 _materializedExports[key] = matTable;
+                                _materializedTouched[key] = DateTime.UtcNow;
                                 Debug.WriteLine($"📦 Materialized export table {matTable} for key {key}");
                             }
                             catch (Exception ex)
@@ -1131,6 +1141,8 @@ namespace DuckDBGeoparquet.Services
                                 selectColsList.Add("geometry_geojson");
                             var selectCols = string.Join(", ", selectColsList);
                             duckDbQuery = $"SELECT {selectCols} FROM {matTable} ORDER BY bbox_ymin, bbox_xmin, id LIMIT {maxRecords} OFFSET {resultOffset}";
+                            _materializedTouched[key] = DateTime.UtcNow; // touch
+                            System.Diagnostics.Debug.WriteLine($"📖 Paging from materialized table {matTable} for key {key}");
                         }
                         else
                         {
@@ -1148,6 +1160,7 @@ namespace DuckDBGeoparquet.Services
                 }
 
 ExecuteQuery:
+                try { EvictExpiredMaterializations(); } catch { }
                 
                 // Execute query
                 // Fast-paths: return count/IDs only per ArcGIS REST
@@ -1711,6 +1724,28 @@ ExecuteQuery:
             }
             catch { }
             return null;
+        }
+
+        // Periodically evict old materialized export tables to keep memory bounded
+        private void EvictExpiredMaterializations()
+        {
+            if (_materializedTouched == null || _materializedTouched.Count == 0) return;
+            var now = DateTime.UtcNow;
+            var expired = _materializedTouched.Where(kv => now - kv.Value > _materializedTtl).Select(kv => kv.Key).ToList();
+            foreach (var key in expired)
+            {
+                if (_materializedExports.TryGetValue(key, out var table))
+                {
+                    try
+                    {
+                        _ = _dataProcessor.ExecuteQueryAsync($"DROP TABLE IF EXISTS {table}");
+                    }
+                    catch { }
+                }
+                _materializedExports.Remove(key);
+                _materializedTouched.Remove(key);
+                System.Diagnostics.Debug.WriteLine($"🧹 Evicted materialized export table for key {key}");
+            }
         }
 
         // Drop tiny lines when zoomed out
