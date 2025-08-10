@@ -1688,7 +1688,8 @@ ExecuteQuery:
 
             // Check if in-memory table exists, otherwise fallback to S3
             var tableName = GetTableName(theme);
-            var aoiActive = !string.IsNullOrEmpty(_aoiWkt) && _aoiTables.TryGetValue(theme.Id, out var aoiTableName);
+            string aoiTableName = null;
+            var aoiActive = !string.IsNullOrEmpty(_aoiWkt) && _aoiTables.TryGetValue(theme.Id, out aoiTableName);
             if (aoiActive)
             {
                 // AOI takes precedence; it is fully materialized (SELECT *) and safe for all fields
