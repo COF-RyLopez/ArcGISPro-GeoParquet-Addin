@@ -128,6 +128,12 @@ namespace DuckDBGeoparquet.Services
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _prewarmLastSeenTicks = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _prewarmScheduled = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>();
 
+        // AOI (Area-of-Interest) selection: when set, all queries route to AOI-materialized tables
+        private string _aoiWkt = null;
+        private readonly Dictionary<int, string> _aoiTables = new Dictionary<int, string>();
+        private readonly SemaphoreSlim _aoiLock = new SemaphoreSlim(1, 1);
+        private const string _divisionsS3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=divisions/type=division/*.parquet";
+
         /// <summary>
         /// Ensure a materialized export table exists for the given theme and geometry key.
         /// Returns the table name if available, otherwise null.
@@ -720,6 +726,21 @@ namespace DuckDBGeoparquet.Services
                 Debug.WriteLine($"Feature Service Request: {request.HttpMethod} {path}");
 
                 // Route to appropriate handler
+                if (path.StartsWith("/search"))
+                {
+                    await HandleSearch(context);
+                    return;
+                }
+                else if (path.StartsWith("/aoi/set"))
+                {
+                    await HandleAoiSet(context);
+                    return;
+                }
+                else if (path.StartsWith("/aoi/clear"))
+                {
+                    await HandleAoiClear(context);
+                    return;
+                }
                 if (path == "/arcgis/rest/services/overture/featureserver")
                 {
                     await HandleServiceMetadata(context);
@@ -819,6 +840,97 @@ namespace DuckDBGeoparquet.Services
                 var errorJson = JsonSerializer.Serialize(new { error = new { code = 500, message = ex.Message } }, _jsonOptions);
                 await WriteJsonResponse(context, errorJson);
             }
+        }
+
+        // Simple typeahead search over Overture Divisions
+        private async Task HandleSearch(HttpListenerContext context)
+        {
+            try
+            {
+                var qs = ParseQueryParameters(context.Request);
+                var q = (GetQueryParam(qs, "q") ?? string.Empty).Trim();
+                int limit = int.TryParse(GetQueryParam(qs, "limit"), out var l) ? Math.Clamp(l, 1, 25) : 10;
+                if (q.Length < 2)
+                {
+                    await WriteJsonResponse(context, JsonSerializer.Serialize(new { results = Array.Empty<object>() }, _jsonOptions));
+                    return;
+                }
+                var like = q.Replace("'", "''");
+                var sql = $@"SELECT name, admin_level, bbox, ST_AsText(geometry) as wkt
+                            FROM read_parquet('{_divisionsS3Path}', filename=true, hive_partitioning=1)
+                            WHERE LOWER(name) LIKE LOWER('%{like}%')
+                            ORDER BY LENGTH(name) ASC
+                            LIMIT {limit}";
+                var rows = await _dataProcessor.ExecuteQueryAsync(sql);
+                var results = rows.Select(r => new
+                {
+                    name = r.GetValueOrDefault("name")?.ToString(),
+                    adminLevel = r.GetValueOrDefault("admin_level")?.ToString(),
+                    wkt = r.GetValueOrDefault("wkt")?.ToString()
+                }).ToArray();
+                await WriteJsonResponse(context, JsonSerializer.Serialize(new { results }, _jsonOptions));
+            }
+            catch (Exception ex)
+            {
+                context.Response.StatusCode = 500;
+                await WriteJsonResponse(context, JsonSerializer.Serialize(new { error = ex.Message }, _jsonOptions));
+            }
+        }
+
+        // Set AOI from provided WKT; materialize per-theme tables for fast draws/exports
+        private async Task HandleAoiSet(HttpListenerContext context)
+        {
+            try
+            {
+                var qs = ParseQueryParameters(context.Request);
+                var wkt = GetQueryParam(qs, "wkt");
+                if (string.IsNullOrWhiteSpace(wkt))
+                {
+                    context.Response.StatusCode = 400;
+                    await WriteJsonResponse(context, JsonSerializer.Serialize(new { error = "Missing wkt" }, _jsonOptions));
+                    return;
+                }
+                await _aoiLock.WaitAsync();
+                try
+                {
+                    _aoiWkt = wkt;
+                    _aoiTables.Clear();
+                    foreach (var theme in _themes)
+                    {
+                        var key = $"aoi:{theme.Id}";
+                        var table = $"aoi_{theme.Id}_{Math.Abs(key.GetHashCode())}";
+                        var geomExpr = "geometry";
+                        var create = $"CREATE TEMPORARY TABLE IF NOT EXISTS {table} AS SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) WHERE ST_Intersects({geomExpr}, ST_GeomFromText('{_aoiWkt}', 4326))";
+                        await _dataProcessor.ExecuteQueryAsync(create);
+                        _aoiTables[theme.Id] = table;
+                    }
+                }
+                finally
+                {
+                    _aoiLock.Release();
+                }
+                await WriteJsonResponse(context, JsonSerializer.Serialize(new { ok = true }, _jsonOptions));
+            }
+            catch (Exception ex)
+            {
+                context.Response.StatusCode = 500;
+                await WriteJsonResponse(context, JsonSerializer.Serialize(new { error = ex.Message }, _jsonOptions));
+            }
+        }
+
+        private async Task HandleAoiClear(HttpListenerContext context)
+        {
+            await _aoiLock.WaitAsync();
+            try
+            {
+                _aoiWkt = null;
+                _aoiTables.Clear();
+            }
+            finally
+            {
+                _aoiLock.Release();
+            }
+            await WriteJsonResponse(context, JsonSerializer.Serialize(new { ok = true }, _jsonOptions));
         }
 
         /// <summary>
@@ -1570,6 +1682,13 @@ ExecuteQuery:
 
             // Check if in-memory table exists, otherwise fallback to S3
             var tableName = GetTableName(theme);
+            if (!string.IsNullOrEmpty(_aoiWkt))
+            {
+                if (_aoiTables.TryGetValue(theme.Id, out var aoiTable))
+                {
+                    tableName = aoiTable;
+                }
+            }
             if (useCacheForFields)
             {
                 // IN-MEMORY: Query from pre-loaded in-memory table for lightning-fast performance
@@ -1729,6 +1848,13 @@ ExecuteQuery:
         {
             var query = new StringBuilder();
             var tableName = GetTableName(theme);
+            if (!string.IsNullOrEmpty(_aoiWkt))
+            {
+                if (_aoiTables.TryGetValue(theme.Id, out var aoiTable))
+                {
+                    tableName = aoiTable;
+                }
+            }
             query.Append("SELECT COUNT(*) as cnt FROM ");
             if (_dataLoaded)
             {
