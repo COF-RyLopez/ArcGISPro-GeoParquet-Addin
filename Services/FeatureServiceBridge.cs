@@ -908,6 +908,14 @@ namespace DuckDBGeoparquet.Services
                 int? geometryPrecision = null; if (int.TryParse(GetQueryParam(queryParams, "geometryPrecision"), out var gp)) geometryPrecision = gp;
                 var quantizationParameters = GetQueryParam(queryParams, "quantizationParameters");
 
+                // Heuristic: if client didn't explicitly ask for geometry and provided no geometry filter,
+                // avoid returning geometry for outFields='*' preflight/export calls to reduce payload/timeouts
+                bool explicitReturnGeometry = queryParams.ContainsKey("returnGeometry");
+                if (!explicitReturnGeometry && string.IsNullOrEmpty(geometryParam) && outFields == "*")
+                {
+                    returnGeometry = false;
+                }
+
                 Debug.WriteLine($"Layer {layerId} ({theme.Name}) Query: where={whereClause}, outFields={outFields}, geometry={geometryParam}, spatialRel={spatialRel}");
 
                 // Proactively refresh cache if request extent is outside cached extent
@@ -928,7 +936,7 @@ namespace DuckDBGeoparquet.Services
 
                 // Build DuckDB query (with optional materialization for export workloads)
                 string duckDbQuery;
-                bool isExportWorkload = (outFields == "*") && returnGeometry && string.IsNullOrEmpty(GetQueryParam(queryParams, "resultRecordCount"));
+                bool isExportWorkload = (outFields == "*") && string.IsNullOrEmpty(GetQueryParam(queryParams, "resultRecordCount"));
                 if (isExportWorkload && !string.IsNullOrEmpty(geometryParam))
                 {
                     // Materialize the current extent + outFields=* into a temp table once; then page from that table.
