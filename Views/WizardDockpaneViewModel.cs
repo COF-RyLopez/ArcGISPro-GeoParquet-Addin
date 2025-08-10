@@ -348,6 +348,32 @@ namespace DuckDBGeoparquet.Views
             }
         }
 
+        // AOI UI state
+        private string _aoiQuery;
+        public string AoiQuery { get => _aoiQuery; set { _aoiQuery = value; NotifyPropertyChanged(); } }
+        public ObservableCollection<dynamic> AoiResults { get; } = new ObservableCollection<dynamic>();
+        private dynamic _selectedAoi;
+        public dynamic SelectedAoi { get => _selectedAoi; set { _selectedAoi = value; NotifyPropertyChanged(); } }
+        private string _aoiStatus;
+        public string AoiStatus { get => _aoiStatus; set { _aoiStatus = value; NotifyPropertyChanged(); } }
+
+        public ICommand AoiSearchCommand { get; private set; }
+        public ICommand AoiSetCommand { get; private set; }
+        public ICommand AoiClearCommand { get; private set; }
+
+        // AOI UI state
+        private string _aoiQuery;
+        public string AoiQuery { get => _aoiQuery; set { _aoiQuery = value; NotifyPropertyChanged(); } }
+        public ObservableCollection<dynamic> AoiResults { get; } = new ObservableCollection<dynamic>();
+        private dynamic _selectedAoi;
+        public dynamic SelectedAoi { get => _selectedAoi; set { _selectedAoi = value; NotifyPropertyChanged(); } }
+        private string _aoiStatus;
+        public string AoiStatus { get => _aoiStatus; set { _aoiStatus = value; NotifyPropertyChanged(); } }
+
+        public ICommand AoiSearchCommand { get; private set; }
+        public ICommand AoiSetCommand { get; private set; }
+        public ICommand AoiClearCommand { get; private set; }
+
         // Properties for TreeView Preview
         public int SelectedLeafItemCount => GetSelectedLeafItems().Count;
         
@@ -462,6 +488,11 @@ namespace DuckDBGeoparquet.Views
                 () => Themes != null && Themes.Any(t => t.IsSelectable || t.SubItems.Any()) // CanExecute: If there are any selectable themes
             );
 
+            // AOI commands
+            AoiSearchCommand = new RelayCommand(async () => await AoiSearchAsync(), () => !string.IsNullOrWhiteSpace(AoiQuery));
+            AoiSetCommand = new RelayCommand(async () => await AoiSetAsync(), () => SelectedAoi != null);
+            AoiClearCommand = new RelayCommand(async () => await AoiClearAsync());
+
             CustomExtentTool.ExtentCreatedStatic += OnExtentCreated;
 
             Themes = new ObservableCollection<SelectableThemeItem>();
@@ -486,6 +517,10 @@ namespace DuckDBGeoparquet.Views
             // will invoke it automatically after construction. Calling it
             // explicitly would cause double initialization which leads to
             // errors such as attempting to open the DuckDB connection twice.
+            // AOI commands
+            AoiSearchCommand = new RelayCommand(async () => await AoiSearchAsync(), () => !string.IsNullOrWhiteSpace(AoiQuery));
+            AoiSetCommand = new RelayCommand(async () => await AoiSetAsync(), () => SelectedAoi != null);
+            AoiClearCommand = new RelayCommand(async () => await AoiClearAsync());
         }
 
         protected override async Task InitializeAsync()
@@ -521,6 +556,65 @@ namespace DuckDBGeoparquet.Views
             {
                 IsLoading = false;
                 NotifyPropertyChanged(nameof(IsLoading));
+            }
+        }
+
+        private async Task AoiSearchAsync()
+        {
+            try
+            {
+                using var client = new HttpClient();
+                var url = $"http://localhost:8080/search?q={Uri.EscapeDataString(AoiQuery ?? string.Empty)}&limit=10";
+                var resp = await client.GetStringAsync(url);
+                var doc = JsonDocument.Parse(resp);
+                var arr = doc.RootElement.GetProperty("results");
+                AoiResults.Clear();
+                foreach (var el in arr.EnumerateArray())
+                {
+                    var name = el.TryGetProperty("name", out var jpName) ? jpName.GetString() : null;
+                    var lvl = el.TryGetProperty("adminLevel", out var jpLvl) ? jpLvl.GetString() : null;
+                    var wkt = el.TryGetProperty("wkt", out var jpWkt) ? jpWkt.GetString() : null;
+                    AoiResults.Add(new { name = name, adminLevel = lvl, wkt = wkt });
+                }
+                AoiStatus = $"Found {AoiResults.Count} matches";
+            }
+            catch (Exception ex)
+            {
+                AoiStatus = $"Search failed: {ex.Message}";
+            }
+        }
+
+        private async Task AoiSetAsync()
+        {
+            if (SelectedAoi == null) return;
+            try
+            {
+                using var client = new HttpClient();
+                var wkt = (string)SelectedAoi.GetType().GetProperty("wkt").GetValue(SelectedAoi);
+                var url = $"http://localhost:8080/aoi/set?wkt={Uri.EscapeDataString(wkt)}";
+                await client.GetStringAsync(url);
+                var name = (string)SelectedAoi.GetType().GetProperty("name").GetValue(SelectedAoi);
+                AoiStatus = $"AOI set: {name}";
+            }
+            catch (Exception ex)
+            {
+                AoiStatus = $"Set AOI failed: {ex.Message}";
+            }
+        }
+
+        private async Task AoiClearAsync()
+        {
+            try
+            {
+                using var client = new HttpClient();
+                await client.GetStringAsync("http://localhost:8080/aoi/clear");
+                AoiResults.Clear();
+                SelectedAoi = null;
+                AoiStatus = "AOI cleared";
+            }
+            catch (Exception ex)
+            {
+                AoiStatus = $"Clear AOI failed: {ex.Message}";
             }
         }
 

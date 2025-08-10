@@ -312,6 +312,38 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- AOI Search and Lock-In -->
+                        <TextBlock Text="Area of Interest (AOI)" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="Search Divisions (e.g., county, state, country):" Margin="0,0,0,6"/>
+                                <DockPanel>
+                                    <TextBox x:Name="AoiSearchBox" Text="{Binding AoiQuery, UpdateSourceTrigger=PropertyChanged}" Width="260" Style="{DynamicResource Esri_TextBox}"/>
+                                    <Button Content="Search" Command="{Binding AoiSearchCommand}" Margin="8,0,0,0" Style="{DynamicResource Esri_Button}"/>
+                                </DockPanel>
+                                <ListBox ItemsSource="{Binding AoiResults}" SelectedItem="{Binding SelectedAoi}" Height="140" Margin="0,6,0,6">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding name}" FontWeight="SemiBold"/>
+                                                <TextBlock Text="{Binding adminLevel}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="Set AOI" Command="{Binding AoiSetCommand}" IsEnabled="{Binding SelectedAoi, Converter={StaticResource BooleanToVisibilityConverter}}" Width="90" Style="{DynamicResource Esri_ButtonBlue}"/>
+                                    <Button Content="Clear AOI" Command="{Binding AoiClearCommand}" Margin="8,0,0,0" Width="90" Style="{DynamicResource Esri_Button}"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding AoiStatus}" Margin="0,6,0,0" Foreground="{DynamicResource Esri_TextCaptionActiveBrush}"/>
+                            </StackPanel>
+                        </Border>
+
                         <!-- Usage Instructions -->
                         <TextBlock Text="Usage Instructions" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
                         <Border 
