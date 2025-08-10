@@ -124,6 +124,9 @@ namespace DuckDBGeoparquet.Services
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _materializeLocks = new System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim>();
         // Limit background pre-materializations to reduce UI stutter
         private static readonly SemaphoreSlim _backgroundMaterializeGate = new SemaphoreSlim(1, 1);
+        // Debounce state for prewarming: last-seen timestamp and whether a prewarm task is scheduled
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _prewarmLastSeenTicks = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _prewarmScheduled = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>();
 
         /// <summary>
         /// Ensure a materialized export table exists for the given theme and geometry key.
@@ -1060,20 +1063,39 @@ namespace DuckDBGeoparquet.Services
                     var preKey = $"{theme.Id}:{Math.Round(pxmin,3)}:{Math.Round(pymin,3)}:{Math.Round(pxmax,3)}:{Math.Round(pymax,3)}";
                     if (!_materializedExports.ContainsKey(preKey))
                     {
-                        _ = Task.Run(async () =>
+                        // debounce: update last seen and schedule a delayed prewarm only if not already scheduled
+                        _prewarmLastSeenTicks[preKey] = DateTime.UtcNow.Ticks;
+                        if (_prewarmScheduled.TryAdd(preKey, 1))
                         {
-                            if (!await _backgroundMaterializeGate.WaitAsync(TimeSpan.FromMilliseconds(100))) return;
-                            try
+                            _ = Task.Run(async () =>
                             {
-                                var mt = await EnsureMaterializedForKeyAsync(theme, preKey, whereClause, geometryParam, spatialRel, outWkid, geometryPrecision, quantizationParameters);
-                                if (!string.IsNullOrEmpty(mt)) Debug.WriteLine($"🧰 Pre-materialized table {mt} for anticipated export key {preKey}");
-                            }
-                            catch { /* swallow */ }
-                            finally
-                            {
-                                _backgroundMaterializeGate.Release();
-                            }
-                        });
+                                try
+                                {
+                                    // wait for idle window (no new requests for this key)
+                                    const int idleMs = 750;
+                                    long initialTicks = _prewarmLastSeenTicks[preKey];
+                                    await Task.Delay(idleMs);
+                                    if (_prewarmLastSeenTicks.TryGetValue(preKey, out var lastTicks) && lastTicks == initialTicks)
+                                    {
+                                        if (!await _backgroundMaterializeGate.WaitAsync(TimeSpan.FromMilliseconds(100))) return;
+                                        try
+                                        {
+                                            var mt = await EnsureMaterializedForKeyAsync(theme, preKey, whereClause, geometryParam, spatialRel, outWkid, geometryPrecision, quantizationParameters);
+                                            if (!string.IsNullOrEmpty(mt)) Debug.WriteLine($"🧰 Pre-materialized table {mt} for anticipated export key {preKey}");
+                                        }
+                                        finally
+                                        {
+                                            _backgroundMaterializeGate.Release();
+                                        }
+                                    }
+                                }
+                                catch { }
+                                finally
+                                {
+                                    _prewarmScheduled.TryRemove(preKey, out _);
+                                }
+                            });
+                        }
                     }
                 }
 
