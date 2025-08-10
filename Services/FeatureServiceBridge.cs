@@ -1047,6 +1047,29 @@ namespace DuckDBGeoparquet.Services
                     Debug.WriteLine($"🚚 Export/materialization workload detected (force={forceMaterialize}, outFields={outFields}, whereHasIds={whereHasIds}, returnGeometry={returnGeometry}, hasGeometry={(string.IsNullOrEmpty(geometryParam)?"false":"true")})");
                 }
 
+                // Opportunistic background pre-materialize when we detect heavy paging of OBJECTID+geometry.
+                // This avoids timeouts in Pro exports that paginate OBJECTIDs first, then request outFields=*. 
+                // Fire-and-forget; does not block normal draw path.
+                if (string.Equals(outFields, "OBJECTID", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrEmpty(geometryParam)
+                    && resultOffset >= 10000
+                    && TryParseEnvelope(geometryParam, out var pxmin, out var pymin, out var pxmax, out var pymax))
+                {
+                    var preKey = $"{theme.Id}:{Math.Round(pxmin,3)}:{Math.Round(pymin,3)}:{Math.Round(pxmax,3)}:{Math.Round(pymax,3)}";
+                    if (!_materializedExports.ContainsKey(preKey))
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                var mt = await EnsureMaterializedForKeyAsync(theme, preKey, whereClause, geometryParam, spatialRel, outWkid, geometryPrecision, quantizationParameters);
+                                if (!string.IsNullOrEmpty(mt)) Debug.WriteLine($"🧰 Pre-materialized table {mt} for anticipated export key {preKey}");
+                            }
+                            catch { /* swallow */ }
+                        });
+                    }
+                }
+
                 // If a materialized table already exists for a plausible export key (by bbox or id hash),
                 // short-circuit all routing and read from it even if the client passes resultRecordCount.
                 {
