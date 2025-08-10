@@ -60,22 +60,24 @@ namespace DuckDBGeoparquet.Services
         };
 
         // Multi-layer service: add key Overture themes (kept lean; attributes discovered on-demand)
+        // Rendering order matters: earlier entries render below later ones in typical map stacks
+        // Order chosen: Buildings (polygons) below Roads (lines) below Places (points)
         private readonly List<ThemeDefinition> _themes = new List<ThemeDefinition>
         {
             new ThemeDefinition 
             { 
-                Id = 0, 
-                Name = "Transportation - Roads",
-                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=segment/*.parquet",
-                GeometryType = "esriGeometryPolyline",
-                Fields = new[] { "id" }
-            },
-            new ThemeDefinition 
-            { 
-                Id = 1, 
+                Id = 0,
                 Name = "Buildings - Footprints",
                 S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=buildings/type=building/*.parquet",
                 GeometryType = "esriGeometryPolygon",
+                Fields = new[] { "id" }
+            },
+            new ThemeDefinition
+            {
+                Id = 1,
+                Name = "Transportation - Roads",
+                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=segment/*.parquet",
+                GeometryType = "esriGeometryPolyline",
                 Fields = new[] { "id" }
             },
             new ThemeDefinition 
