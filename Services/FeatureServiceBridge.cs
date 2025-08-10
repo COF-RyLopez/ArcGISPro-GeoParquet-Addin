@@ -120,6 +120,76 @@ namespace DuckDBGeoparquet.Services
         private readonly Dictionary<string, string> _materializedExports = new Dictionary<string, string>();
         private readonly Dictionary<string, DateTime> _materializedTouched = new Dictionary<string, DateTime>();
         private readonly TimeSpan _materializedTtl = TimeSpan.FromMinutes(15);
+        // Prevent concurrent CREATEs for the same materialization key
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _materializeLocks = new System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim>();
+
+        /// <summary>
+        /// Ensure a materialized export table exists for the given theme and geometry key.
+        /// Returns the table name if available, otherwise null.
+        /// </summary>
+        private async Task<string> EnsureMaterializedForKeyAsync(
+            ThemeDefinition theme,
+            string key,
+            string whereClause,
+            string geometryParam,
+            string spatialRel,
+            int? outWkid,
+            int? geometryPrecision,
+            string quantizationParameters)
+        {
+            if (_materializedExports.TryGetValue(key, out var existing))
+            {
+                _materializedTouched[key] = DateTime.UtcNow;
+                Debug.WriteLine($"📖 Using pre-existing materialized table {existing} for key {key}");
+                return existing;
+            }
+
+            var semaphore = _materializeLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+            await semaphore.WaitAsync();
+            try
+            {
+                if (_materializedExports.TryGetValue(key, out existing))
+                {
+                    _materializedTouched[key] = DateTime.UtcNow;
+                    return existing;
+                }
+
+                var matTable = $"export_{theme.Id}_{Math.Abs(key.GetHashCode())}";
+                var fullQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, "*", int.MaxValue, true /*returnGeometry*/, outWkid, 0, geometryPrecision, quantizationParameters)
+                                 .Replace($" LIMIT {int.MaxValue}", "");
+                var createSql = $"CREATE TEMPORARY TABLE IF NOT EXISTS {matTable} AS {fullQuery}";
+                try
+                {
+                    await _dataProcessor.ExecuteQueryAsync(createSql);
+                    _materializedExports[key] = matTable;
+                    _materializedTouched[key] = DateTime.UtcNow;
+                    Debug.WriteLine($"📦 Materialized export table {matTable} for key {key}");
+                    return matTable;
+                }
+                catch (Exception ex)
+                {
+                    if (ex.Message?.IndexOf("already exists", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        if (_materializedExports.TryGetValue(key, out existing))
+                        {
+                            _materializedTouched[key] = DateTime.UtcNow;
+                            return existing;
+                        }
+                        // Assume a racing create succeeded
+                        _materializedExports[key] = matTable;
+                        _materializedTouched[key] = DateTime.UtcNow;
+                        return matTable;
+                    }
+
+                    Debug.WriteLine($"⚠️ EnsureMaterializedForKeyAsync failed: {ex.Message}");
+                    return null;
+                }
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        }
 
         // Helper: split a STRUCT member list by top-level commas (ignores commas inside nested parentheses)
         private static IEnumerable<string> SplitTopLevelComma(string s)
@@ -924,6 +994,7 @@ namespace DuckDBGeoparquet.Services
                 var resultOffset = int.TryParse(GetQueryParam(queryParams, "resultOffset"), out var off) ? off : 0;
                 var outWkid = int.TryParse(GetQueryParam(queryParams, "outSR"), out var wk) ? wk : (int?)null;
                 var format = GetQueryParam(queryParams, "f") ?? "json";
+                var forceMaterialize = (GetQueryParam(queryParams, "forceMaterialize") ?? "false").Equals("true", StringComparison.OrdinalIgnoreCase);
                 // Geometry precision and quantization (ArcGIS REST) – used to reduce payload/vertices
                 int? geometryPrecision = null; if (int.TryParse(GetQueryParam(queryParams, "geometryPrecision"), out var gp)) geometryPrecision = gp;
                 var quantizationParameters = GetQueryParam(queryParams, "quantizationParameters");
@@ -955,9 +1026,26 @@ namespace DuckDBGeoparquet.Services
                     }
                 }
 
+                // Detect ID-based paging/export
+                var whereHasIds = !string.IsNullOrEmpty(whereClause) &&
+                    (whereClause.IndexOf("OBJECTID IN", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     whereClause.IndexOf(" id IN", StringComparison.OrdinalIgnoreCase) >= 0);
+
                 // Build DuckDB query (with optional materialization for export workloads)
                 string duckDbQuery;
-                bool isExportWorkload = (outFields == "*"); // treat any outFields=* as export-related paging
+                // Treat as export when:
+                // - outFields = * (classic export)
+                // - ID list is provided (Pro paging by OBJECTID)
+                // - returnGeometry with a geometry filter (spatial export) even if outFields not '*'
+                bool isExportWorkload =
+                    forceMaterialize ||
+                    (outFields == "*") ||
+                    whereHasIds ||
+                    (returnGeometry && !string.IsNullOrEmpty(geometryParam));
+                if (isExportWorkload)
+                {
+                    Debug.WriteLine($"🚚 Export/materialization workload detected (force={forceMaterialize}, outFields={outFields}, whereHasIds={whereHasIds}, returnGeometry={returnGeometry}, hasGeometry={(string.IsNullOrEmpty(geometryParam)?"false":"true")})");
+                }
 
                 // If a materialized table already exists for a plausible export key (by bbox or id hash),
                 // short-circuit all routing and read from it even if the client passes resultRecordCount.
@@ -1066,42 +1154,7 @@ namespace DuckDBGeoparquet.Services
                         string key = $"{theme.Id}:{Math.Round(exmin,3)}:{Math.Round(eymin,3)}:{Math.Round(exmax,3)}:{Math.Round(eymax,3)}";
                         if (!_materializedExports.TryGetValue(key, out var matTable))
                         {
-                            matTable = $"export_{theme.Id}_{Math.Abs(key.GetHashCode())}";
-                            // Always include geometry in the materialized table to support downstream export pages
-                            var fullQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, int.MaxValue, true /*returnGeometry*/, outWkid, 0, geometryPrecision, quantizationParameters)
-                                             .Replace($" LIMIT {int.MaxValue}", "");
-                            var createSql = $"CREATE TEMPORARY TABLE {matTable} AS {fullQuery}";
-                            try
-                            {
-                                await _dataProcessor.ExecuteQueryAsync(createSql);
-                                _materializedExports[key] = matTable;
-                                _materializedTouched[key] = DateTime.UtcNow;
-                                Debug.WriteLine($"📦 Materialized export table {matTable} for key {key}");
-                            }
-                            catch (Exception ex)
-                            {
-                                // If table already exists (race), try to reuse it from cache
-                                if (ex.Message?.IndexOf("already exists", StringComparison.OrdinalIgnoreCase) >= 0)
-                                {
-                                    Debug.WriteLine($"ℹ️ Materialize reported 'already exists' for {matTable}; attempting to reuse existing table.");
-                                    if (_materializedExports.TryGetValue(key, out var existing))
-                                    {
-                                        matTable = existing;
-                                        _materializedTouched[key] = DateTime.UtcNow; // touch
-                                    }
-                                    else
-                                    {
-                                        // Assume concurrent create succeeded; record it
-                                        _materializedExports[key] = matTable;
-                                        _materializedTouched[key] = DateTime.UtcNow;
-                                    }
-                                }
-                                else
-                                {
-                                    Debug.WriteLine($"⚠️ Materialize failed, falling back to streaming: {ex.Message}");
-                                    matTable = null;
-                                }
-                            }
+                            matTable = await EnsureMaterializedForKeyAsync(theme, key, whereClause, geometryParam, spatialRel, outWkid, geometryPrecision, quantizationParameters);
                         }
                         if (!string.IsNullOrEmpty(matTable))
                         {
@@ -1150,41 +1203,7 @@ namespace DuckDBGeoparquet.Services
 
                         if (!_materializedExports.TryGetValue(key, out var matTable))
                         {
-                            matTable = $"export_{theme.Id}_{Math.Abs(key.GetHashCode())}";
-                            // Always include geometry in the materialized table to support downstream export pages
-                            var fullQuery = BuildDuckDbQuery(theme, whereClause, effectiveGeom, spatialRel, outFields, int.MaxValue, true /*returnGeometry*/, outWkid, 0, geometryPrecision, quantizationParameters)
-                                             .Replace($" LIMIT {int.MaxValue}", "");
-                            var createSql = $"CREATE TEMPORARY TABLE {matTable} AS {fullQuery}";
-                            try
-                            {
-                                await _dataProcessor.ExecuteQueryAsync(createSql);
-                                _materializedExports[key] = matTable;
-                                _materializedTouched[key] = DateTime.UtcNow;
-                                Debug.WriteLine($"📦 Materialized export table {matTable} for key {key}");
-                            }
-                            catch (Exception ex)
-                            {
-                                // If table already exists (race), try to reuse it from cache
-                                if (ex.Message?.IndexOf("already exists", StringComparison.OrdinalIgnoreCase) >= 0)
-                                {
-                                    Debug.WriteLine($"ℹ️ Materialize (no-geom) reported 'already exists' for {matTable}; attempting to reuse existing table.");
-                                    if (_materializedExports.TryGetValue(key, out var existing))
-                                    {
-                                        matTable = existing;
-                                        _materializedTouched[key] = DateTime.UtcNow; // touch
-                                    }
-                                    else
-                                    {
-                                        _materializedExports[key] = matTable;
-                                        _materializedTouched[key] = DateTime.UtcNow;
-                                    }
-                                }
-                                else
-                                {
-                                    Debug.WriteLine($"⚠️ Materialize (no-geom) failed, falling back to streaming: {ex.Message}");
-                                    matTable = null;
-                                }
-                            }
+                            matTable = await EnsureMaterializedForKeyAsync(theme, key, whereClause, effectiveGeom, spatialRel, outWkid, geometryPrecision, quantizationParameters);
                         }
                         if (!string.IsNullOrEmpty(matTable))
                         {
