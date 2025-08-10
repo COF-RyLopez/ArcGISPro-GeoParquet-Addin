@@ -856,11 +856,15 @@ namespace DuckDBGeoparquet.Services
                     return;
                 }
                 var like = q.Replace("'", "''");
-                var sql = $@"SELECT name, admin_level, bbox, ST_AsText(geometry) as wkt
-                            FROM read_parquet('{_divisionsS3Path}', filename=true, hive_partitioning=1)
-                            WHERE LOWER(name) LIKE LOWER('%{like}%')
-                            ORDER BY LENGTH(name) ASC
-                            LIMIT {limit}";
+                // Overture divisions store names as a STRUCT column 'names' with a 'primary' member
+                // Some releases may not expose 'admin_level'; use 'type' as a proxy label
+                var sql = $@"SELECT struct_extract(names, 'primary') AS name,
+                                     COALESCE(CAST(NULLIF(admin_level, '') AS VARCHAR), type) AS admin_level,
+                                     ST_AsText(geometry) as wkt
+                              FROM read_parquet('{_divisionsS3Path}', filename=true, hive_partitioning=1)
+                              WHERE LOWER(struct_extract(names, 'primary')) LIKE LOWER('%{like}%')
+                              ORDER BY LENGTH(struct_extract(names, 'primary')) ASC
+                              LIMIT {limit}";
                 var rows = await _dataProcessor.ExecuteQueryAsync(sql);
                 var results = rows.Select(r => new
                 {
@@ -1544,7 +1548,7 @@ ExecuteQuery:
                     else
                     {
                         if (!string.Equals(field, "sources_property", StringComparison.OrdinalIgnoreCase))
-                            fieldList.Add(field);
+                    fieldList.Add(field);
                     }
                 }
                 
