@@ -266,6 +266,7 @@ namespace DuckDBGeoparquet.Services
                             var member = p.Substring(0, spaceIdx).Trim().Trim('"');
                             var mType = p.Substring(spaceIdx + 1).Trim();
                             var upperMemberType = mType.ToUpperInvariant();
+                            if (string.Equals(member, "property", StringComparison.OrdinalIgnoreCase)) continue; // avoid non-scalar/unstable member
                             if (upperMemberType.StartsWith("STRUCT(") || upperMemberType.StartsWith("LIST(")) continue;
                             if (!allowedTypes.Contains(mType.ToUpperInvariant())) continue;
                             var fieldName = $"{colName}_{member}";
@@ -293,6 +294,7 @@ namespace DuckDBGeoparquet.Services
                             if (spaceIdx <= 0) continue;
                             var member = p.Substring(0, spaceIdx).Trim().Trim('"');
                             var mType = p.Substring(spaceIdx + 1).Trim();
+                            if (string.Equals(member, "property", StringComparison.OrdinalIgnoreCase)) continue; // avoid non-scalar/unstable member
                             if (!allowedTypes.Contains(mType.ToUpperInvariant())) continue; // only scalar
                             var fieldName = $"{colName}_{member}"; // e.g., speed_limits_maxspeed
                             // SQL expression using struct_extract
@@ -1428,7 +1430,10 @@ ExecuteQuery:
                     if (_discoveredFieldSql.TryGetValue(theme.Id, out var map) && map.TryGetValue(field, out var expr) && !useCacheForFields)
                         fieldList.Add(expr);
                     else
-                    fieldList.Add(field);
+                    {
+                        if (!string.Equals(field, "sources_property", StringComparison.OrdinalIgnoreCase))
+                            fieldList.Add(field);
+                    }
                 }
                 
                 // Add geometry only if requested - use DuckDB spatial functions to properly convert WKB
@@ -3193,6 +3198,7 @@ ExecuteQuery:
             // Add theme-specific fields (including flattened struct members)
             foreach (var field in theme.Fields.Where(f => f != "id"))
             {
+                if (string.Equals(field, "sources_property", StringComparison.OrdinalIgnoreCase)) continue;
                 fields.Add(new
                 {
                     name = field,
