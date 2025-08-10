@@ -53,7 +53,7 @@ namespace DuckDBGeoparquet.Services
         };
 
         // JSON serialization options
-        private readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
+        private readonly JsonSerializerOptions _jsonOptions = new()
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = false
@@ -1027,7 +1027,7 @@ namespace DuckDBGeoparquet.Services
                 }
 
                 // Detect ID-based paging/export
-                var whereHasIds = !string.IsNullOrEmpty(whereClause) &&
+                whereHasIds = !string.IsNullOrEmpty(whereClause) &&
                     (whereClause.IndexOf("OBJECTID IN", StringComparison.OrdinalIgnoreCase) >= 0 ||
                      whereClause.IndexOf(" id IN", StringComparison.OrdinalIgnoreCase) >= 0);
 
