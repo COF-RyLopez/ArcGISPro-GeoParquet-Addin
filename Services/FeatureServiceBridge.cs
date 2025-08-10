@@ -1052,52 +1052,8 @@ namespace DuckDBGeoparquet.Services
                     Debug.WriteLine($"🚚 Export/materialization workload detected (force={forceMaterialize}, outFields={outFields}, whereHasIds={whereHasIds}, returnGeometry={returnGeometry}, hasGeometry={(string.IsNullOrEmpty(geometryParam)?"false":"true")})");
                 }
 
-                // Opportunistic background pre-materialize when we detect heavy paging of OBJECTID+geometry.
-                // This avoids timeouts in Pro exports that paginate OBJECTIDs first, then request outFields=*. 
-                // Fire-and-forget; does not block normal draw path.
-                if (string.Equals(outFields, "OBJECTID", StringComparison.OrdinalIgnoreCase)
-                    && !string.IsNullOrEmpty(geometryParam)
-                    && resultOffset >= 10000
-                    && TryParseEnvelope(geometryParam, out var pxmin, out var pymin, out var pxmax, out var pymax))
-                {
-                    var preKey = $"{theme.Id}:{Math.Round(pxmin,3)}:{Math.Round(pymin,3)}:{Math.Round(pxmax,3)}:{Math.Round(pymax,3)}";
-                    if (!_materializedExports.ContainsKey(preKey))
-                    {
-                        // debounce: update last seen and schedule a delayed prewarm only if not already scheduled
-                        _prewarmLastSeenTicks[preKey] = DateTime.UtcNow.Ticks;
-                        if (_prewarmScheduled.TryAdd(preKey, 1))
-                        {
-                            _ = Task.Run(async () =>
-                            {
-                                try
-                                {
-                                    // wait for idle window (no new requests for this key)
-                                    const int idleMs = 750;
-                                    long initialTicks = _prewarmLastSeenTicks[preKey];
-                                    await Task.Delay(idleMs);
-                                    if (_prewarmLastSeenTicks.TryGetValue(preKey, out var lastTicks) && lastTicks == initialTicks)
-                                    {
-                                        if (!await _backgroundMaterializeGate.WaitAsync(TimeSpan.FromMilliseconds(100))) return;
-                                        try
-                                        {
-                                            var mt = await EnsureMaterializedForKeyAsync(theme, preKey, whereClause, geometryParam, spatialRel, outWkid, geometryPrecision, quantizationParameters);
-                                            if (!string.IsNullOrEmpty(mt)) Debug.WriteLine($"🧰 Pre-materialized table {mt} for anticipated export key {preKey}");
-                                        }
-                                        finally
-                                        {
-                                            _backgroundMaterializeGate.Release();
-                                        }
-                                    }
-                                }
-                                catch { }
-                                finally
-                                {
-                                    _prewarmScheduled.TryRemove(preKey, out _);
-                                }
-                            });
-                        }
-                    }
-                }
+                // Background pre-warm disabled for normal draws to avoid stepwise rendering.
+                // Materialization occurs only for explicit export/attribute-table workflows.
 
                 // If a materialized table already exists for a plausible export key (by bbox or id hash),
                 // short-circuit all routing and read from it even if the client passes resultRecordCount.
