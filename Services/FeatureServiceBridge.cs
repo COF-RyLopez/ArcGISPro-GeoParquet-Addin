@@ -1688,16 +1688,15 @@ ExecuteQuery:
 
             // Check if in-memory table exists, otherwise fallback to S3
             var tableName = GetTableName(theme);
-            if (!string.IsNullOrEmpty(_aoiWkt))
+            var aoiActive = !string.IsNullOrEmpty(_aoiWkt) && _aoiTables.TryGetValue(theme.Id, out var aoiTableName);
+            if (aoiActive)
             {
-                if (_aoiTables.TryGetValue(theme.Id, out var aoiTable))
-                {
-                    tableName = aoiTable;
-                }
+                // AOI takes precedence; it is fully materialized (SELECT *) and safe for all fields
+                query.Append($" FROM {aoiTableName}");
             }
-            if (useCacheForFields)
+            else if (useCacheForFields)
             {
-                // IN-MEMORY: Query from pre-loaded in-memory table for lightning-fast performance
+                // IN-MEMORY: Query from pre-loaded viewport table for fast draws
                 query.Append($" FROM {tableName}");
             }
             else
@@ -1707,7 +1706,7 @@ ExecuteQuery:
                 if (_dataLoaded)
                     Debug.WriteLine($"🔎 Attribute fields requested not present in cache. Using parquet source for {theme.Name}");
                 else
-                Debug.WriteLine($"🌐 Direct S3 query for {theme.Name} - ensuring geometry data preservation");
+                    Debug.WriteLine($"🌐 Direct S3 query for {theme.Name} - ensuring geometry data preservation");
             }
 
             var conditions = new List<string>();
