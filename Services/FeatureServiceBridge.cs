@@ -60,21 +60,21 @@ namespace DuckDBGeoparquet.Services
         };
 
         // Multi-layer service: add key Overture themes (kept lean; attributes discovered on-demand)
-        // Rendering order matters: earlier entries render below later ones in typical map stacks
-        // Order chosen: Buildings (polygons) below Roads (lines) below Places (points)
+        // Rendering order: configured to ensure polygons at bottom, lines in middle, points on top in ArcGIS Pro
+        // Order chosen: Places (points) [Layer 0], Roads (lines) [Layer 1], Buildings (polygons) [Layer 2]
         private readonly List<ThemeDefinition> _themes = new List<ThemeDefinition>
         {
             new ThemeDefinition 
             { 
-                Id = 0,
-                Name = "Buildings - Footprints",
-                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=buildings/type=building/*.parquet",
-                GeometryType = "esriGeometryPolygon",
+                Id = 0, // Places will be Layer 0 (topmost in Pro rendering observed)
+                Name = "Places - Points",
+                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=places/type=place/*.parquet",
+                GeometryType = "esriGeometryPoint",
                 Fields = new[] { "id" }
             },
             new ThemeDefinition
             {
-                Id = 1,
+                Id = 1, // Roads will be Layer 1
                 Name = "Transportation - Roads",
                 S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=segment/*.parquet",
                 GeometryType = "esriGeometryPolyline",
@@ -82,10 +82,10 @@ namespace DuckDBGeoparquet.Services
             },
             new ThemeDefinition 
             { 
-                Id = 2, 
-                Name = "Places - Points",
-                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=places/type=place/*.parquet",
-                GeometryType = "esriGeometryPoint",
+                Id = 2, // Buildings will be Layer 2 (bottom)
+                Name = "Buildings - Footprints",
+                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=buildings/type=building/*.parquet",
+                GeometryType = "esriGeometryPolygon",
                 Fields = new[] { "id" }
             }
         };
@@ -1069,7 +1069,7 @@ namespace DuckDBGeoparquet.Services
                             matTable = $"export_{theme.Id}_{Math.Abs(key.GetHashCode())}";
                             // Always include geometry in the materialized table to support downstream export pages
                             var fullQuery = BuildDuckDbQuery(theme, whereClause, geometryParam, spatialRel, outFields, int.MaxValue, true /*returnGeometry*/, outWkid, 0, geometryPrecision, quantizationParameters)
-                                             .Replace(" LIMIT int.MaxValue", "");
+                                             .Replace($" LIMIT {int.MaxValue}", "");
                             var createSql = $"CREATE TEMPORARY TABLE {matTable} AS {fullQuery}";
                             try
                             {
@@ -1080,8 +1080,27 @@ namespace DuckDBGeoparquet.Services
                             }
                             catch (Exception ex)
                             {
-                                Debug.WriteLine($"⚠️ Materialize failed, falling back to streaming: {ex.Message}");
-                                matTable = null;
+                                // If table already exists (race), try to reuse it from cache
+                                if (ex.Message?.IndexOf("already exists", StringComparison.OrdinalIgnoreCase) >= 0)
+                                {
+                                    Debug.WriteLine($"ℹ️ Materialize reported 'already exists' for {matTable}; attempting to reuse existing table.");
+                                    if (_materializedExports.TryGetValue(key, out var existing))
+                                    {
+                                        matTable = existing;
+                                        _materializedTouched[key] = DateTime.UtcNow; // touch
+                                    }
+                                    else
+                                    {
+                                        // Assume concurrent create succeeded; record it
+                                        _materializedExports[key] = matTable;
+                                        _materializedTouched[key] = DateTime.UtcNow;
+                                    }
+                                }
+                                else
+                                {
+                                    Debug.WriteLine($"⚠️ Materialize failed, falling back to streaming: {ex.Message}");
+                                    matTable = null;
+                                }
                             }
                         }
                         if (!string.IsNullOrEmpty(matTable))
@@ -1145,8 +1164,26 @@ namespace DuckDBGeoparquet.Services
                             }
                             catch (Exception ex)
                             {
-                                Debug.WriteLine($"⚠️ Materialize (no-geom) failed, falling back to streaming: {ex.Message}");
-                                matTable = null;
+                                // If table already exists (race), try to reuse it from cache
+                                if (ex.Message?.IndexOf("already exists", StringComparison.OrdinalIgnoreCase) >= 0)
+                                {
+                                    Debug.WriteLine($"ℹ️ Materialize (no-geom) reported 'already exists' for {matTable}; attempting to reuse existing table.");
+                                    if (_materializedExports.TryGetValue(key, out var existing))
+                                    {
+                                        matTable = existing;
+                                        _materializedTouched[key] = DateTime.UtcNow; // touch
+                                    }
+                                    else
+                                    {
+                                        _materializedExports[key] = matTable;
+                                        _materializedTouched[key] = DateTime.UtcNow;
+                                    }
+                                }
+                                else
+                                {
+                                    Debug.WriteLine($"⚠️ Materialize (no-geom) failed, falling back to streaming: {ex.Message}");
+                                    matTable = null;
+                                }
                             }
                         }
                         if (!string.IsNullOrEmpty(matTable))
