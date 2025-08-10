@@ -857,9 +857,9 @@ namespace DuckDBGeoparquet.Services
                 }
                 var like = q.Replace("'", "''");
                 // Overture divisions store names as a STRUCT column 'names' with a 'primary' member
-                // Some releases may not expose 'admin_level'; use 'type' as a proxy label
+                // Not all releases expose 'admin_level'; to avoid binder errors, surface 'type' as adminLevel
                 var sql = $@"SELECT struct_extract(names, 'primary') AS name,
-                                     COALESCE(CAST(NULLIF(admin_level, '') AS VARCHAR), type) AS admin_level,
+                                     type AS adminLevel,
                                      ST_AsText(geometry) as wkt
                               FROM read_parquet('{_divisionsS3Path}', filename=true, hive_partitioning=1)
                               WHERE LOWER(struct_extract(names, 'primary')) LIKE LOWER('%{like}%')
