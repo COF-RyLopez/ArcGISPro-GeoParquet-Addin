@@ -1784,8 +1784,8 @@ ExecuteQuery:
                 conditions.Add($"({translated})");
             }
 
-            // Handle spatial geometry filtering
-            if (!string.IsNullOrEmpty(geometryParam))
+            // Handle spatial geometry filtering from Pro viewport (skip when AOI is active)
+            if (string.IsNullOrEmpty(_aoiWkt) && !string.IsNullOrEmpty(geometryParam))
             {
                 var spatialCondition = ConvertArcGISGeometryToSql(geometryParam, spatialRel);
                 if (!string.IsNullOrEmpty(spatialCondition))
@@ -1796,7 +1796,7 @@ ExecuteQuery:
 
             // Optional refinement: if we had an envelope filter, also check ST_Intersects to reduce false positives
             // Add as an additional condition so WHERE clause is constructed correctly
-            if (returnGeometry && !string.IsNullOrEmpty(geometryParam))
+            if (string.IsNullOrEmpty(_aoiWkt) && returnGeometry && !string.IsNullOrEmpty(geometryParam))
             {
                 try
                 {
