@@ -929,12 +929,14 @@ namespace DuckDBGeoparquet.Services
                 // If division_id is provided, resolve AOI WKT by unioning division_area polygons for that division
                 if (!string.IsNullOrWhiteSpace(divisionId))
                 {
+                    var didSafe = divisionId.Replace("'", "''");
                     var sql = $@"SELECT ST_AsText(ST_Union(geometry)) AS wkt
                                   FROM read_parquet('{_divisionAreasS3Path}', filename=true, hive_partitioning=1)
-                                  WHERE id IS NOT NULL AND properties_division_id = '{divisionId.Replace("'","''")}'";
+                                  WHERE division_id = '{didSafe}'";
                     var res = await _dataProcessor.ExecuteQueryAsync(sql);
                     var rw = res.FirstOrDefault();
                     var resolved = rw != null && rw.TryGetValue("wkt", out var wt) ? wt?.ToString() : null;
+                    System.Diagnostics.Debug.WriteLine($"AOI resolve for division_id={divisionId}: {(string.IsNullOrEmpty(resolved) ? "<null>" : "OK polygon")}");
                     if (!string.IsNullOrWhiteSpace(resolved)) wkt = resolved;
                 }
                 await _aoiLock.WaitAsync();
@@ -1823,8 +1825,8 @@ ExecuteQuery:
                 query.Append(string.Join(" AND ", conditions));
             }
 
-            // Stable spatial-ish paging for uniform fill: sort by bbox then id
-            query.Append(" ORDER BY bbox.ymin, bbox.xmin, id");
+            // Stable paging; when AOI is active prefer id-only to avoid bbox bias
+            query.Append(string.IsNullOrEmpty(_aoiWkt) ? " ORDER BY bbox.ymin, bbox.xmin, id" : " ORDER BY id");
             query.Append($" LIMIT {maxRecords}");
             if (resultOffset > 0)
             {
