@@ -907,7 +907,15 @@ namespace DuckDBGeoparquet.Services
                         // DuckDB ST_GeomFromText takes (VARCHAR) or (VARCHAR, BOOLEAN). No SRID integer parameter.
                         var safeWkt = _aoiWkt.Replace("'", "''");
                         var create = $"CREATE TEMPORARY TABLE IF NOT EXISTS {table} AS SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) WHERE ST_Intersects({geomExpr}, ST_GeomFromText('{safeWkt}'))";
+                        Debug.WriteLine($"🧱 AOI materialize for {theme.Name} → {table}");
                         await _dataProcessor.ExecuteQueryAsync(create);
+                        try
+                        {
+                            var cntRows = await _dataProcessor.ExecuteQueryAsync($"SELECT COUNT(*) as cnt FROM {table}");
+                            var cnt = cntRows.FirstOrDefault()?.GetValueOrDefault("cnt")?.ToString();
+                            Debug.WriteLine($"🧱 AOI table {table} ready. Rows: {cnt}");
+                        }
+                        catch { }
                         _aoiTables[theme.Id] = table;
                     }
                 }
@@ -1102,10 +1110,13 @@ namespace DuckDBGeoparquet.Services
                     return;
                 }
 
-                // Prefer in-memory viewport cache when available for performance; otherwise fallback to S3
-                Debug.WriteLine(_dataLoaded
-                    ? $"⚡ Using in-memory cache for {theme.Name}"
-                    : $"🌐 Using direct S3 pass-through for {theme.Name}");
+                // Prefer AOI tables if active; otherwise in-memory viewport cache when available
+                if (!string.IsNullOrEmpty(_aoiWkt) && _aoiTables.TryGetValue(theme.Id, out var _))
+                    Debug.WriteLine($"📦 Using AOI table for {theme.Name}");
+                else
+                    Debug.WriteLine(_dataLoaded
+                        ? $"⚡ Using in-memory cache for {theme.Name}"
+                        : $"🌐 Using direct S3 pass-through for {theme.Name}");
 
                 var queryParams = ParseQueryParameters(context.Request);
                 
@@ -1135,8 +1146,8 @@ namespace DuckDBGeoparquet.Services
 
                 Debug.WriteLine($"Layer {layerId} ({theme.Name}) Query: where={whereClause}, outFields={outFields}, geometry={geometryParam}, spatialRel={spatialRel}");
 
-                // Proactively refresh cache if request extent is outside cached extent
-                if (_dataLoaded && !string.IsNullOrEmpty(geometryParam))
+                // Proactively refresh viewport cache when outside extent, but skip when AOI is active
+                if (_dataLoaded && string.IsNullOrEmpty(_aoiWkt) && !string.IsNullOrEmpty(geometryParam))
                 {
                     if (TryParseEnvelope(geometryParam, out var gxmin, out var gymin, out var gxmax, out var gymax))
                     {
