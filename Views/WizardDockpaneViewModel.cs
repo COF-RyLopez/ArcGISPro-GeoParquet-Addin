@@ -455,7 +455,7 @@ namespace DuckDBGeoparquet.Views
             _featureServiceManager = new FeatureServiceManager(_dataProcessor);
 
             LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => GetSelectedLeafItems().Count > 0);
-            ToggleFeatureServiceCommand = new RelayCommand(async () => await ToggleFeatureServiceAsync(), () => true);
+            ToggleFeatureServiceCommand = new RelayCommand(async () => await ToggleFeatureServiceAsync(), () => CanToggleFeatureService);
             CopyFeatureServiceUrlCommand = new RelayCommand(() => CopyFeatureServiceUrl(), () => IsFeatureServiceRunning && !string.IsNullOrEmpty(FeatureServiceUrl));
             ShowThemeInfoCommand = new RelayCommand(() => ShowThemeInfo(), () => SelectedItemForPreview != null);
             SetCustomExtentCommand = new RelayCommand(() => SetCustomExtent(), () => UseCustomExtent);
@@ -587,7 +587,7 @@ namespace DuckDBGeoparquet.Views
                 if (RequireAoiBeforeStart && !IsFeatureServiceRunning)
                 {
                     AddToLog("Starting Feature Service with AOI...");
-                    await _featureServiceManager.StartServiceAsync();
+                    await _featureServiceManager.StartServiceAsync(8080, requireAoiBeforeStart: true);
                     var status = _featureServiceManager.GetServiceStatus();
                     IsFeatureServiceRunning = status.IsRunning;
                     FeatureServiceUrl = status.ServiceUrl ?? "";

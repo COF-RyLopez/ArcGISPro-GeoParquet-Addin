@@ -357,6 +357,10 @@ namespace DuckDBGeoparquet.Services
 
         public string ServiceUrl => $"http://localhost:{_port}/arcgis/rest/services/overture/FeatureServer";
 
+        // When true, the server will start without preloading the viewport cache.
+        // Intended for AOI-first workflows where AOI will be set immediately after start.
+        public bool RequireAoiBeforeStart { get; set; } = false;
+
         /// <summary>
         /// Ensures in-memory data tables are loaded for current map viewport (like existing data loader)
         /// Thread-safe async implementation to prevent race conditions
@@ -595,20 +599,23 @@ namespace DuckDBGeoparquet.Services
                 _isRunning = true;
                 Debug.WriteLine($"✅ Feature Service Bridge ready: {ServiceUrl}");
                 
-                // Initialize in-memory data tables in background for better performance
-                _ = Task.Run(async () => 
+                // Initialize viewport cache only if AOI-first is NOT required
+                if (!RequireAoiBeforeStart)
                 {
-                    try
+                    _ = Task.Run(async () =>
                     {
-                        await EnsureDataLoadedAsync();
-                        Debug.WriteLine("📦 Background in-memory cache initialization completed successfully");
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"⚠️ Background in-memory cache initialization failed: {ex.Message}");
-                        Debug.WriteLine($"   Service will use S3 fallback queries for all requests");
-                    }
-                });
+                        try
+                        {
+                            await EnsureDataLoadedAsync();
+                            Debug.WriteLine("📦 Background in-memory cache initialization completed successfully");
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"⚠️ Background in-memory cache initialization failed: {ex.Message}");
+                            Debug.WriteLine($"   Service will use S3 fallback queries for all requests");
+                        }
+                    });
+                }
 
                 return Task.CompletedTask;
             }

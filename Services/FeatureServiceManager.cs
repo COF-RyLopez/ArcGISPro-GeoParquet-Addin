@@ -34,7 +34,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Starts the DuckDB Feature Service Bridge
         /// </summary>
-        public async Task<bool> StartServiceAsync(int port = 8080)
+        public async Task<bool> StartServiceAsync(int port = 8080, bool requireAoiBeforeStart = false)
         {
             try
             {
@@ -47,6 +47,7 @@ namespace DuckDBGeoparquet.Services
                 Debug.WriteLine("Starting DuckDB Multi-Layer Feature Service Bridge...");
 
                 _featureServiceBridge = new FeatureServiceBridge(_dataProcessor, port);
+                _featureServiceBridge.RequireAoiBeforeStart = requireAoiBeforeStart;
                 await _featureServiceBridge.StartAsync(); // May throw exceptions if startup fails
 
                 _isRunning = true;
