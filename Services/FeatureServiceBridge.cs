@@ -363,6 +363,8 @@ namespace DuckDBGeoparquet.Services
         /// </summary>
         private async Task EnsureDataLoadedAsync()
         {
+            // If AOI is active, skip viewport preload entirely
+            if (!string.IsNullOrEmpty(_aoiWkt)) return;
             // Fast path - if already loaded, return immediately
             if (_dataLoaded) return;
 

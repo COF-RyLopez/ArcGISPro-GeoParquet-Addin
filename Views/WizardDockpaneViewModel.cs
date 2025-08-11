@@ -583,6 +583,19 @@ namespace DuckDBGeoparquet.Views
                 await client.GetStringAsync(url);
                 var name = (string)SelectedAoi.GetType().GetProperty("name").GetValue(SelectedAoi);
                 AoiStatus = $"AOI set: {name}";
+                // If AOI-first is required and service not yet running, auto-start the service now
+                if (RequireAoiBeforeStart && !IsFeatureServiceRunning)
+                {
+                    AddToLog("Starting Feature Service with AOI...");
+                    await _featureServiceManager.StartServiceAsync();
+                    var status = _featureServiceManager.GetServiceStatus();
+                    IsFeatureServiceRunning = status.IsRunning;
+                    FeatureServiceUrl = status.ServiceUrl ?? "";
+                    NotifyPropertyChanged(nameof(FeatureServiceStatusText));
+                    NotifyPropertyChanged(nameof(ToggleFeatureServiceButtonText));
+                    ((RelayCommand)CopyFeatureServiceUrlCommand).RaiseCanExecuteChanged();
+                }
+                NotifyPropertyChanged(nameof(CanToggleFeatureService));
             }
             catch (Exception ex)
             {
@@ -669,6 +682,21 @@ namespace DuckDBGeoparquet.Views
             get => _progressValue;
             set => SetProperty(ref _progressValue, value);
         }
+
+        // AOI-first mode
+        private bool _requireAoiBeforeStart = true;
+        public bool RequireAoiBeforeStart
+        {
+            get => _requireAoiBeforeStart;
+            set
+            {
+                if (SetProperty(ref _requireAoiBeforeStart, value))
+                {
+                    NotifyPropertyChanged(nameof(CanToggleFeatureService));
+                }
+            }
+        }
+        public bool CanToggleFeatureService => !RequireAoiBeforeStart || (SelectedAoi != null) || IsFeatureServiceRunning;
 
         private StringBuilder _logOutput;
         public StringBuilder LogOutput

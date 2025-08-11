@@ -302,13 +302,19 @@
                                     </StackPanel>
                                 </Border>
 
+                                <!-- AOI-first toggle -->
+                                <StackPanel Orientation="Horizontal" Margin="0,4,0,4">
+                                    <CheckBox Content="Require AOI before starting" IsChecked="{Binding RequireAoiBeforeStart}"/>
+                                </StackPanel>
+
                                 <!-- Control Button -->
                                 <Button Content="{Binding ToggleFeatureServiceButtonText}" 
                                         Command="{Binding ToggleFeatureServiceCommand}" 
                                         HorizontalAlignment="Left" 
                                         Width="150"
                                         Style="{DynamicResource Esri_ButtonBlue}" 
-                                        Margin="0,8,0,0"/>
+                                        Margin="0,8,0,0"
+                                        IsEnabled="{Binding CanToggleFeatureService}"/>
                             </StackPanel>
                         </Border>
 
