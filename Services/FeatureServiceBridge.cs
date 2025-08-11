@@ -1743,7 +1743,7 @@ ExecuteQuery:
                 // AOI takes precedence; it is fully materialized (SELECT *) and safe for all fields
                 query.Append($" FROM {aoiTableName}");
             }
-            else if (useCacheForFields)
+            else if (useCacheForFields && string.IsNullOrEmpty(_aoiWkt))
             {
                 // IN-MEMORY: Query from pre-loaded viewport table for fast draws
                 query.Append($" FROM {tableName}");
@@ -1759,6 +1759,14 @@ ExecuteQuery:
             }
 
             var conditions = new List<string>();
+
+            // Always constrain queries to the active AOI, even if AOI tables are not yet ready
+            if (!string.IsNullOrEmpty(_aoiWkt))
+            {
+                var safeAoi = _aoiWkt.Replace("'", "''");
+                conditions.Add($"ST_Intersects(geometry, ST_GeomFromText('{safeAoi}'))");
+                try { Debug.WriteLine("🔒 Applying AOI intersects filter"); } catch { }
+            }
 
             // Handle WHERE clause
             if (!string.IsNullOrEmpty(whereClause) && whereClause != "1=1")
