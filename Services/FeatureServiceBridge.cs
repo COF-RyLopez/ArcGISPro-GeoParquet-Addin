@@ -116,10 +116,7 @@ namespace DuckDBGeoparquet.Services
             var table = $"aoi_{theme.Id}_{Math.Abs(key.GetHashCode())}";
             var geomExpr = "geometry";
             var safeWkt = _aoiWkt.Replace("'", "''");
-            var create = $"CREATE TEMPORARY TABLE IF NOT EXISTS {table} AS 
-                           SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) 
-                           WHERE bbox.xmin IS NOT NULL AND bbox.ymin IS NOT NULL AND bbox.xmax IS NOT NULL AND bbox.ymax IS NOT NULL
-                             AND ST_Intersects({geomExpr}, ST_GeomFromText('{safeWkt}'))";
+            var create = $@"CREATE TEMPORARY TABLE IF NOT EXISTS {table} AS SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) WHERE bbox.xmin IS NOT NULL AND bbox.ymin IS NOT NULL AND bbox.xmax IS NOT NULL AND bbox.ymax IS NOT NULL AND ST_Intersects({geomExpr}, ST_GeomFromText('{safeWkt}'))";
             Debug.WriteLine($"🧱 AOI materialize for {theme.Name} → {table}");
             await _dataProcessor.ExecuteQueryAsync(create);
             try
