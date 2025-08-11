@@ -572,8 +572,8 @@ namespace DuckDBGeoparquet.Views
                 {
                     var name = el.TryGetProperty("name", out var jpName) ? jpName.GetString() : null;
                     var lvl = el.TryGetProperty("adminLevel", out var jpLvl) ? jpLvl.GetString() : null;
-                    var wkt = el.TryGetProperty("wkt", out var jpWkt) ? jpWkt.GetString() : null;
-                    AoiResults.Add(new { name = name, adminLevel = lvl, wkt = wkt });
+                    var divisionId = el.TryGetProperty("division_id", out var jpDid) ? jpDid.GetString() : null;
+                    AoiResults.Add(new { name = name, adminLevel = lvl, division_id = divisionId });
                 }
                 AoiStatus = $"Found {AoiResults.Count} matches";
             }
@@ -601,8 +601,15 @@ namespace DuckDBGeoparquet.Views
                     ((RelayCommand)CopyFeatureServiceUrlCommand).RaiseCanExecuteChanged();
                 }
                 using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-                var wkt = (string)SelectedAoi.GetType().GetProperty("wkt").GetValue(SelectedAoi);
-                var url = $"http://localhost:8080/aoi/set?wkt={Uri.EscapeDataString(wkt)}";
+                var divisionId = (string)SelectedAoi.GetType().GetProperty("division_id").GetValue(SelectedAoi);
+                var url = !string.IsNullOrEmpty(divisionId)
+                    ? $"http://localhost:8080/aoi/set?division_id={Uri.EscapeDataString(divisionId)}"
+                    : null;
+                if (url == null)
+                {
+                    AoiStatus = "Set AOI failed: missing division_id";
+                    return;
+                }
                 AoiStatus = "Materializing AOI in DuckDB (Places, Roads, Buildings)... This may take a few minutes.";
                 await client.GetStringAsync(url);
                 var name = (string)SelectedAoi.GetType().GetProperty("name").GetValue(SelectedAoi);

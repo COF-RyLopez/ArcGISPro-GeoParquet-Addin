@@ -152,6 +152,7 @@ namespace DuckDBGeoparquet.Services
         private readonly Dictionary<int, string> _aoiTables = new Dictionary<int, string>();
         private readonly SemaphoreSlim _aoiLock = new SemaphoreSlim(1, 1);
         private const string _divisionAreasS3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=divisions/type=division_area/*.parquet";
+        private const string _divisionsS3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=divisions/type=division/*.parquet";
 
         /// <summary>
         /// Ensure a materialized export table exists for the given theme and geometry key.
@@ -886,12 +887,12 @@ namespace DuckDBGeoparquet.Services
                 var like = q.Replace("'", "''");
                 // Overture divisions store names as a STRUCT column 'names' with a 'primary' member
                 // Not all releases expose 'admin_level'; to avoid binder errors, surface 'type' as adminLevel
-                // Search division_area polygons (is_land preferred) to get true AOI boundaries
+                // Search divisions by name; return id to resolve geometry from division_area later
                 var sql = $@"SELECT 
                                      struct_extract(names, 'primary') AS name,
                                      subtype AS adminLevel,
-                                     ST_AsText(geometry) AS wkt
-                              FROM read_parquet('{_divisionAreasS3Path}', filename=true, hive_partitioning=1)
+                                     id AS division_id
+                              FROM read_parquet('{_divisionsS3Path}', filename=true, hive_partitioning=1)
                               WHERE LOWER(struct_extract(names, 'primary')) LIKE LOWER('%{like}%')
                               ORDER BY LENGTH(struct_extract(names, 'primary')) ASC
                               LIMIT {limit}";
@@ -900,7 +901,7 @@ namespace DuckDBGeoparquet.Services
                 {
                     name = r.ContainsKey("name") ? r["name"]?.ToString() : null,
                     adminLevel = r.ContainsKey("adminLevel") ? r["adminLevel"]?.ToString() : (r.ContainsKey("admin_level") ? r["admin_level"]?.ToString() : null),
-                    wkt = r.ContainsKey("wkt") ? r["wkt"]?.ToString() : null
+                    division_id = r.ContainsKey("division_id") ? r["division_id"]?.ToString() : null
                 }).ToArray();
                 await WriteJsonResponse(context, JsonSerializer.Serialize(new { results }, _jsonOptions));
             }
@@ -918,11 +919,23 @@ namespace DuckDBGeoparquet.Services
             {
                 var qs = ParseQueryParameters(context.Request);
                 var wkt = GetQueryParam(qs, "wkt");
-                if (string.IsNullOrWhiteSpace(wkt))
+                var divisionId = GetQueryParam(qs, "division_id");
+                if (string.IsNullOrWhiteSpace(wkt) && string.IsNullOrWhiteSpace(divisionId))
                 {
                     context.Response.StatusCode = 400;
-                    await WriteJsonResponse(context, JsonSerializer.Serialize(new { error = "Missing wkt" }, _jsonOptions));
+                    await WriteJsonResponse(context, JsonSerializer.Serialize(new { error = "Missing wkt or division_id" }, _jsonOptions));
                     return;
+                }
+                // If division_id is provided, resolve AOI WKT by unioning division_area polygons for that division
+                if (!string.IsNullOrWhiteSpace(divisionId))
+                {
+                    var sql = $@"SELECT ST_AsText(ST_Union(geometry)) AS wkt
+                                  FROM read_parquet('{_divisionAreasS3Path}', filename=true, hive_partitioning=1)
+                                  WHERE id IS NOT NULL AND properties_division_id = '{divisionId.Replace("'","''")}'";
+                    var res = await _dataProcessor.ExecuteQueryAsync(sql);
+                    var rw = res.FirstOrDefault();
+                    var resolved = rw != null && rw.TryGetValue("wkt", out var wt) ? wt?.ToString() : null;
+                    if (!string.IsNullOrWhiteSpace(resolved)) wkt = resolved;
                 }
                 await _aoiLock.WaitAsync();
                 try
