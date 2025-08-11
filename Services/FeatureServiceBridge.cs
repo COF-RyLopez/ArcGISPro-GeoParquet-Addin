@@ -116,7 +116,10 @@ namespace DuckDBGeoparquet.Services
             var table = $"aoi_{theme.Id}_{Math.Abs(key.GetHashCode())}";
             var geomExpr = "geometry";
             var safeWkt = _aoiWkt.Replace("'", "''");
-            var create = $"CREATE TEMPORARY TABLE IF NOT EXISTS {table} AS SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) WHERE ST_Intersects({geomExpr}, ST_GeomFromText('{safeWkt}'))";
+            var create = $"CREATE TEMPORARY TABLE IF NOT EXISTS {table} AS 
+                           SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) 
+                           WHERE bbox.xmin IS NOT NULL AND bbox.ymin IS NOT NULL AND bbox.xmax IS NOT NULL AND bbox.ymax IS NOT NULL
+                             AND ST_Intersects({geomExpr}, ST_GeomFromText('{safeWkt}'))";
             Debug.WriteLine($"🧱 AOI materialize for {theme.Name} → {table}");
             await _dataProcessor.ExecuteQueryAsync(create);
             try
@@ -886,9 +889,15 @@ namespace DuckDBGeoparquet.Services
                 var like = q.Replace("'", "''");
                 // Overture divisions store names as a STRUCT column 'names' with a 'primary' member
                 // Not all releases expose 'admin_level'; to avoid binder errors, surface 'type' as adminLevel
-                var sql = $@"SELECT struct_extract(names, 'primary') AS name,
+                var sql = $@"SELECT 
+                                     struct_extract(names, 'primary') AS name,
                                      type AS adminLevel,
-                                     ST_AsText(geometry) as wkt
+                                     ST_AsText(
+                                         CASE 
+                                             WHEN ST_GeometryType(geometry) = 'POINT' THEN ST_MakeEnvelope(bbox.xmin, bbox.ymin, bbox.xmax, bbox.ymax)
+                                             ELSE geometry
+                                         END
+                                     ) AS wkt
                               FROM read_parquet('{_divisionsS3Path}', filename=true, hive_partitioning=1)
                               WHERE LOWER(struct_extract(names, 'primary')) LIKE LOWER('%{like}%')
                               ORDER BY LENGTH(struct_extract(names, 'primary')) ASC
