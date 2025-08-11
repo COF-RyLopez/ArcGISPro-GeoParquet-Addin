@@ -110,6 +110,25 @@ namespace DuckDBGeoparquet.Services
             _structColumns = new Dictionary<int, HashSet<string>>();
         }
 
+        private async Task MaterializeAoiForThemeAsync(ThemeDefinition theme)
+        {
+            var key = $"aoi:{theme.Id}";
+            var table = $"aoi_{theme.Id}_{Math.Abs(key.GetHashCode())}";
+            var geomExpr = "geometry";
+            var safeWkt = _aoiWkt.Replace("'", "''");
+            var create = $"CREATE TEMPORARY TABLE IF NOT EXISTS {table} AS SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) WHERE ST_Intersects({geomExpr}, ST_GeomFromText('{safeWkt}'))";
+            Debug.WriteLine($"🧱 AOI materialize for {theme.Name} → {table}");
+            await _dataProcessor.ExecuteQueryAsync(create);
+            try
+            {
+                var cntRows = await _dataProcessor.ExecuteQueryAsync($"SELECT COUNT(*) as cnt FROM {table}");
+                var cnt = cntRows.FirstOrDefault()?.GetValueOrDefault("cnt")?.ToString();
+                Debug.WriteLine($"🧱 AOI table {table} ready. Rows: {cnt}");
+            }
+            catch { }
+            _aoiTables[theme.Id] = table;
+        }
+
         // Cache of discovered optional attributes per layer id
         private readonly Dictionary<int, HashSet<string>> _discoveredFields;
         // For discovered fields that require SQL expressions (e.g., flattened STRUCT members)
@@ -602,19 +621,19 @@ namespace DuckDBGeoparquet.Services
                 // Initialize viewport cache only if AOI-first is NOT required
                 if (!RequireAoiBeforeStart)
                 {
-                    _ = Task.Run(async () =>
+                _ = Task.Run(async () => 
+                {
+                    try
                     {
-                        try
-                        {
-                            await EnsureDataLoadedAsync();
-                            Debug.WriteLine("📦 Background in-memory cache initialization completed successfully");
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine($"⚠️ Background in-memory cache initialization failed: {ex.Message}");
-                            Debug.WriteLine($"   Service will use S3 fallback queries for all requests");
-                        }
-                    });
+                        await EnsureDataLoadedAsync();
+                        Debug.WriteLine("📦 Background in-memory cache initialization completed successfully");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"⚠️ Background in-memory cache initialization failed: {ex.Message}");
+                        Debug.WriteLine($"   Service will use S3 fallback queries for all requests");
+                    }
+                });
                 }
 
                 return Task.CompletedTask;
@@ -908,25 +927,19 @@ namespace DuckDBGeoparquet.Services
                 {
                     _aoiWkt = wkt;
                     _aoiTables.Clear();
-                    foreach (var theme in _themes)
+                    // Materialize first theme synchronously, remaining in background for responsiveness
+                    var ordered = _themes.OrderBy(t => t.Id).ToList();
+                    if (ordered.Count > 0)
                     {
-                        var key = $"aoi:{theme.Id}";
-                        var table = $"aoi_{theme.Id}_{Math.Abs(key.GetHashCode())}";
-                        var geomExpr = "geometry";
-                        // DuckDB ST_GeomFromText takes (VARCHAR) or (VARCHAR, BOOLEAN). No SRID integer parameter.
-                        var safeWkt = _aoiWkt.Replace("'", "''");
-                        var create = $"CREATE TEMPORARY TABLE IF NOT EXISTS {table} AS SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) WHERE ST_Intersects({geomExpr}, ST_GeomFromText('{safeWkt}'))";
-                        Debug.WriteLine($"🧱 AOI materialize for {theme.Name} → {table}");
-                        await _dataProcessor.ExecuteQueryAsync(create);
-                        try
-                        {
-                            var cntRows = await _dataProcessor.ExecuteQueryAsync($"SELECT COUNT(*) as cnt FROM {table}");
-                            var cnt = cntRows.FirstOrDefault()?.GetValueOrDefault("cnt")?.ToString();
-                            Debug.WriteLine($"🧱 AOI table {table} ready. Rows: {cnt}");
-                        }
-                        catch { }
-                        _aoiTables[theme.Id] = table;
+                        await MaterializeAoiForThemeAsync(ordered[0]);
                     }
+                    _ = Task.Run(async () =>
+                    {
+                        foreach (var th in ordered.Skip(1))
+                        {
+                            try { await MaterializeAoiForThemeAsync(th); } catch { }
+                        }
+                    });
                 }
                 finally
                 {
@@ -1727,7 +1740,7 @@ ExecuteQuery:
                 if (_dataLoaded)
                     Debug.WriteLine($"🔎 Attribute fields requested not present in cache. Using parquet source for {theme.Name}");
                 else
-                    Debug.WriteLine($"🌐 Direct S3 query for {theme.Name} - ensuring geometry data preservation");
+                Debug.WriteLine($"🌐 Direct S3 query for {theme.Name} - ensuring geometry data preservation");
             }
 
             var conditions = new List<string>();
