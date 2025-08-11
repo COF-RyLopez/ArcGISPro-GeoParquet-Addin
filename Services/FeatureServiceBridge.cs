@@ -151,7 +151,7 @@ namespace DuckDBGeoparquet.Services
         private string _aoiWkt = null;
         private readonly Dictionary<int, string> _aoiTables = new Dictionary<int, string>();
         private readonly SemaphoreSlim _aoiLock = new SemaphoreSlim(1, 1);
-        private const string _divisionsS3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=divisions/type=division/*.parquet";
+        private const string _divisionAreasS3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=divisions/type=division_area/*.parquet";
 
         /// <summary>
         /// Ensure a materialized export table exists for the given theme and geometry key.
@@ -886,17 +886,14 @@ namespace DuckDBGeoparquet.Services
                 var like = q.Replace("'", "''");
                 // Overture divisions store names as a STRUCT column 'names' with a 'primary' member
                 // Not all releases expose 'admin_level'; to avoid binder errors, surface 'type' as adminLevel
+                // Search division_area polygons (is_land preferred) to get true AOI boundaries
                 var sql = $@"SELECT 
                                      struct_extract(names, 'primary') AS name,
-                                     type AS adminLevel,
-                                     ST_AsText(
-                                         CASE 
-                                             WHEN ST_GeometryType(geometry) = 'POINT' THEN ST_MakeEnvelope(bbox.xmin, bbox.ymin, bbox.xmax, bbox.ymax)
-                                             ELSE geometry
-                                         END
-                                     ) AS wkt
-                              FROM read_parquet('{_divisionsS3Path}', filename=true, hive_partitioning=1)
+                                     subtype AS adminLevel,
+                                     ST_AsText(geometry) AS wkt
+                              FROM read_parquet('{_divisionAreasS3Path}', filename=true, hive_partitioning=1)
                               WHERE LOWER(struct_extract(names, 'primary')) LIKE LOWER('%{like}%')
+                                AND (properties.is_land = true OR properties.is_territorial = true)
                               ORDER BY LENGTH(struct_extract(names, 'primary')) ASC
                               LIMIT {limit}";
                 var rows = await _dataProcessor.ExecuteQueryAsync(sql);
