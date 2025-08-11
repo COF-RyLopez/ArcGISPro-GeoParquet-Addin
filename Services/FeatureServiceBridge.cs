@@ -893,7 +893,6 @@ namespace DuckDBGeoparquet.Services
                                      ST_AsText(geometry) AS wkt
                               FROM read_parquet('{_divisionAreasS3Path}', filename=true, hive_partitioning=1)
                               WHERE LOWER(struct_extract(names, 'primary')) LIKE LOWER('%{like}%')
-                                AND (properties.is_land = true OR properties.is_territorial = true)
                               ORDER BY LENGTH(struct_extract(names, 'primary')) ASC
                               LIMIT {limit}";
                 var rows = await _dataProcessor.ExecuteQueryAsync(sql);
