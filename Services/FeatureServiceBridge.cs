@@ -930,7 +930,7 @@ namespace DuckDBGeoparquet.Services
                 if (!string.IsNullOrWhiteSpace(divisionId))
                 {
                     var didSafe = divisionId.Replace("'", "''");
-                    var sql = $@"SELECT ST_AsText(ST_Union(geometry)) AS wkt
+                    var sql = $@"SELECT ST_AsText(ST_UnaryUnion(ST_Collect(geometry))) AS wkt
                                   FROM read_parquet('{_divisionAreasS3Path}', filename=true, hive_partitioning=1)
                                   WHERE division_id = '{didSafe}'";
                     var res = await _dataProcessor.ExecuteQueryAsync(sql);
