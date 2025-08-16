@@ -404,7 +404,7 @@ namespace DuckDBGeoparquet.Views
         private void InitializeViewModelForRuntime()
         {
             System.Diagnostics.Debug.WriteLine("InitializeViewModelForRuntime executing...");
-            _dataProcessor = new DataProcessor();
+            _dataProcessor = DataProcessor.Shared;
 
             LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => GetSelectedLeafItems().Count > 0);
             ShowThemeInfoCommand = new RelayCommand(() => ShowThemeInfo(), () => SelectedItemForPreview != null);
@@ -1436,7 +1436,8 @@ namespace DuckDBGeoparquet.Views
                 StatusText = $"Loading {selectedLeafItems.Count} selected data types...";
                 AddToLog($"Starting to load {selectedLeafItems.Count} data type(s) from release {LatestRelease}");
 
-                // Get map extent
+                // Ensure DuckDB is initialized and get map extent
+                await _dataProcessor.EnsureInitializedAsync();
                 Envelope extent = null;
                 await QueuedTask.Run(() =>
                 {

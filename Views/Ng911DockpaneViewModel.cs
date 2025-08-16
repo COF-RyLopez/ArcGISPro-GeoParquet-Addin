@@ -30,7 +30,7 @@ namespace DuckDBGeoparquet.Views
 
         protected override Task InitializeAsync()
         {
-            _dataProcessor = new DataProcessor();
+            _dataProcessor = DataProcessor.Shared;
             return base.InitializeAsync();
         }
 
@@ -94,6 +94,7 @@ namespace DuckDBGeoparquet.Views
                 return;
             }
 
+            await _dataProcessor.EnsureInitializedAsync();
             var mapper = new Ng911Mapper(_dataProcessor);
             var progress = new Progress<string>(msg => AddToLog(msg));
 

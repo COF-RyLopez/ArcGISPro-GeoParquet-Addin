@@ -29,7 +29,10 @@ namespace DuckDBGeoparquet.Services
 
     public class DataProcessor : IDisposable
     {
+        public static readonly DataProcessor Shared = new DataProcessor();
+
         private readonly DuckDBConnection _connection;
+        private bool _initialized;
 
         // Constants
         private const string DEFAULT_SRS = "EPSG:4326";
@@ -60,6 +63,9 @@ namespace DuckDBGeoparquet.Services
         {
             try
             {
+                if (_initialized)
+                    return;
+
                 await _connection.OpenAsync();
 
                 // Get the various potential paths where extensions might be found
@@ -137,10 +143,20 @@ namespace DuckDBGeoparquet.Services
                     SET enable_progress_bar=true;
                 ";
                 await command.ExecuteNonQueryAsync(CancellationToken.None);
+
+                _initialized = true;
             }
             catch (Exception ex)
             {
                 throw new Exception($"Failed to initialize DuckDB: {ex.Message}", ex);
+            }
+        }
+
+        public async Task EnsureInitializedAsync()
+        {
+            if (!_initialized)
+            {
+                await InitializeDuckDBAsync();
             }
         }
 
