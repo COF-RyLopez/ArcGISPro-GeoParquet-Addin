@@ -5,12 +5,11 @@ using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using ArcGIS.Desktop.Framework;
 using ArcGIS.Desktop.Framework.Contracts;
-using Microsoft.Win32;
 using DuckDBGeoparquet.Services;
 
 namespace DuckDBGeoparquet.Views
 {
-    internal class Ng911DockpaneViewModel : DockPane, INotifyPropertyChanged
+    internal class Ng911DockpaneViewModel : DockPane
     {
         private const string _dockPaneID = "DuckDBGeoparquet_Views_Ng911Dockpane";
 
@@ -39,7 +38,7 @@ namespace DuckDBGeoparquet.Views
 
         public static void Show()
         {
-            var pane = FrameworkApplication.FindDockPane(_dockPaneID) as Ng911DockpaneViewModel;
+            var pane = FrameworkApplication.DockPaneManager.Find(_dockPaneID) as Ng911DockpaneViewModel;
             pane?.Activate();
         }
 
@@ -113,11 +112,7 @@ namespace DuckDBGeoparquet.Views
             LogOutputText += (string.IsNullOrEmpty(LogOutputText) ? "" : Environment.NewLine) + message;
         }
 
-        public event PropertyChangedEventHandler PropertyChanged;
-        private void NotifyPropertyChanged([CallerMemberName] string propertyName = "")
-        {
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-        }
+        // Use NotifyPropertyChanged from PropertyChangedBase (base of DockPane)
     }
 }
 
