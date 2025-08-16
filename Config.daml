@@ -22,6 +22,7 @@
 				<group id="DuckDBGeoparquet_Group2" caption="Overture Maps" appearsOnAddInTab="false" keytip="M">
 					<labelControl refID="DuckDBGeoparquet_OvertureMapDescription"/>
 					<button refID="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" size="large" />
+					<button refID="DuckDBGeoparquet_Views_Ng911Dockpane_ShowButton" size="large" />
 				</group>
 			</groups>
 			<controls>
@@ -40,6 +41,21 @@
 						Launch the Overture Maps Data Loader to import GeoParquet data
 						<disabledText>Unable to launch Overture Maps Data Loader at this time</disabledText>
 					</tooltip>
+				</button>
+
+				<button id="DuckDBGeoparquet_Views_Ng911Dockpane_ShowButton"
+					   caption="NG911 Mapping"
+					   className="DuckDBGeoparquet.Views.Ng911DockpaneShowButton"
+					   loadOnClick="true"
+					   smallImage="Images\Globe16.png"
+					   largeImage="Images\Globe32.png"
+					   keytip="G"
+					   condition="esri_mapping_mapPane"
+					   extendedCaption="Map Overture to NG911">
+						<tooltip heading="NG911 Prepopulation">
+							Open the NG911 prepopulation workflow
+							<disabledText>Unable to open NG911 workflow right now</disabledText>
+						</tooltip>
 				</button>
 
 				<!-- Custom Extent Tool -->
@@ -64,6 +80,13 @@
                          dock="right"
                          dockWith="esri_core_projectDockPane">
 					<content className="DuckDBGeoparquet.Views.WizardDockpaneView" />
+				</dockPane>
+				<dockPane id="DuckDBGeoparquet_Views_Ng911Dockpane"
+                         caption="NG911 Mapping"
+                         className="DuckDBGeoparquet.Views.Ng911DockpaneViewModel"
+                         dock="right"
+                         dockWith="esri_core_projectDockPane">
+					<content className="DuckDBGeoparquet.Views.Ng911DockpaneView" />
 				</dockPane>
 			</dockPanes>
 		</insertModule>
