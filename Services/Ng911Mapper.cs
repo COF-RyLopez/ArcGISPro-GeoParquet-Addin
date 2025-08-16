@@ -58,24 +58,70 @@ namespace DuckDBGeoparquet.Services
         // Placeholder mapping: Derive NG911 Address Points from Overture addresses where feasible
         private async Task MapAddressPointsAsync(string outputFolder, IProgress<string> progress)
         {
-            progress?.Report("Mapping Overture addresses → NG911 SiteStructureAddressPoint (initial stub)...");
+            progress?.Report("Mapping Overture addresses → NG911 SiteStructureAddressPoint (v0)...");
 
-            // TODO: Implement attribute selection/renames and domain translations
-            // For now, simply export the current filtered table to a namespaced output
-            string layerBaseName = "NG911_SiteStructureAddressPoint";
-            await _dataProcessor.CreateFeatureLayerAsync(layerBaseName, progress, parentS3Theme: "addresses", actualS3Type: "address_point", dataOutputPathRoot: outputFolder);
-            await _dataProcessor.AddAllLayersToMapAsync(progress);
+            // Minimal viable mapping: select common NG911 fields and derive where straightforward
+            // Assumes current_table contains Overture addresses schema (with geometry)
+            string outputPath = Path.Combine(outputFolder, "SiteStructureAddressPoint", "NG911_SiteStructureAddressPoint.parquet");
+            string select = @"
+                SELECT
+                    -- geometry as-is
+                    geometry,
+                    -- NG911 core
+                    CAST(NULL AS VARCHAR) AS AddNum_Pre,
+                    address_number AS AddNum,                                 -- Overture: address_number
+                    CAST(NULL AS VARCHAR) AS AddNum_Suf,
+                    street_name_pre_dir AS PreDir,                            -- Overture: if present
+                    street_name_pre_type AS PreType,
+                    street_name AS StName,                                    -- Overture: street_name
+                    street_name_post_type AS StType,
+                    street_name_post_dir AS PostDir,
+                    unit AS LandUnit,                                         -- Overture: unit/unit_number
+                    city AS Municipal,                                        -- Overture: city or locality
+                    region AS State,                                          -- Overture: region/state
+                    postcode AS ZipCode,                                      -- Overture: postcode
+                    CAST(NULL AS VARCHAR) AS Country,
+                    CAST(NULL AS VARCHAR) AS PlaceType,
+                    CAST(NULL AS VARCHAR) AS Validation,
+                    -- identifiers
+                    id AS SourceOID,
+                    source AS Source,
+                    -- carry through useful attrs
+                    * EXCLUDE geometry                                       -- keep all other attributes for review
+                FROM current_table
+                WHERE geometry IS NOT NULL";
+
+            string actualPath = await _dataProcessor.ExportSelectToGeoParquetAsync(select, outputPath, "NG911_SiteStructureAddressPoint", progress);
+            await _dataProcessor.AddLayerFileToMapAsync(actualPath, "NG911 SiteStructure Address Point", progress);
         }
 
         // Placeholder mapping: Derive NG911 RoadCenterline from Overture base/transportation where feasible
         private async Task MapRoadCenterlinesAsync(string outputFolder, IProgress<string> progress)
         {
-            progress?.Report("Mapping Overture roads → NG911 RoadCenterline (initial stub)...");
+            progress?.Report("Mapping Overture roads → NG911 RoadCenterline (v0)...");
 
-            // TODO: Implement attribute decomposition (pre/post directional, parity, road class)
-            string layerBaseName = "NG911_RoadCenterline";
-            await _dataProcessor.CreateFeatureLayerAsync(layerBaseName, progress, parentS3Theme: "base", actualS3Type: "road", dataOutputPathRoot: outputFolder);
-            await _dataProcessor.AddAllLayersToMapAsync(progress);
+            // Minimal viable mapping for centerlines. Assumes current_table contains Overture 'road' subset.
+            string outputPath = Path.Combine(outputFolder, "RoadCenterline", "NG911_RoadCenterline.parquet");
+            string select = @"
+                SELECT
+                    geometry,
+                    street_name_pre_dir AS PreDir,
+                    street_name_pre_type AS PreType,
+                    street_name AS StName,
+                    street_name_post_type AS StType,
+                    street_name_post_dir AS PostDir,
+                    road_class AS RoadClass,                  -- Overture attribute
+                    one_way AS OneWay,                        -- boolean/string in Overture; later map to domain
+                    CAST(NULL AS VARCHAR) AS ParityLeft,
+                    CAST(NULL AS VARCHAR) AS ParityRight,
+                    id AS SourceOID,
+                    source AS Source,
+                    * EXCLUDE geometry
+                FROM current_table
+                WHERE geometry IS NOT NULL";
+
+            string actualPath = await _dataProcessor.ExportSelectToGeoParquetAsync(select, outputPath, "NG911_RoadCenterline", progress);
+            await _dataProcessor.AddLayerFileToMapAsync(actualPath, "NG911 Road Centerline", progress);
         }
     }
 }

@@ -835,6 +835,33 @@ namespace DuckDBGeoparquet.Services
                 );";
         }
 
+        /// <summary>
+        /// Exports the results of the provided SELECT query to a GeoParquet file and returns the actual path used.
+        /// The SELECT must include a column named 'geometry' for spatial data when applicable.
+        /// </summary>
+        public async Task<string> ExportSelectToGeoParquetAsync(string selectQuery, string outputPath, string layerName, IProgress<string> progress = null)
+        {
+            if (string.IsNullOrWhiteSpace(selectQuery)) throw new ArgumentException("selectQuery is required", nameof(selectQuery));
+            if (string.IsNullOrWhiteSpace(outputPath)) throw new ArgumentException("outputPath is required", nameof(outputPath));
+
+            // Ensure directory exists
+            string directory = Path.GetDirectoryName(outputPath);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            return await ExportToGeoParquet(selectQuery, outputPath, layerName, progress);
+        }
+
+        /// <summary>
+        /// Adds a single exported Parquet file to the active map with the provided layer name.
+        /// </summary>
+        public async Task AddLayerFileToMapAsync(string parquetFilePath, string layerName, IProgress<string> progress = null)
+        {
+            await AddLayerToMapAsync(parquetFilePath, layerName, progress);
+        }
+
         // Helper method to get a more descriptive geometry type name
         private static string GetDescriptiveGeometryType(string geomType) => geomType switch
         {

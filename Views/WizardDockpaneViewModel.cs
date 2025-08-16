@@ -1704,6 +1704,8 @@ namespace DuckDBGeoparquet.Views
 
                 StatusText = $"Successfully loaded all selected themes from release {LatestRelease}";
                 AddToLog($"All selected themes loaded successfully");
+                AddToLog("Opening NG911 Mapping pane...");
+                try { Ng911DockpaneViewModel.Show(); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Failed to open NG911 pane: {ex.Message}"); }
                 AddToLog("----------------");
                 if (extent != null)
                 {
