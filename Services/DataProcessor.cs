@@ -272,6 +272,25 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
+        /// <summary>
+        /// Returns the column names of current_table as a HashSet for quick existence checks.
+        /// </summary>
+        public async Task<HashSet<string>> GetCurrentTableColumnsAsync()
+        {
+            var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using var command = _connection.CreateCommand();
+            command.CommandText = "DESCRIBE current_table";
+            using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
+            while (await reader.ReadAsync())
+            {
+                // DuckDB DESCRIBE: column_name in first column
+                string name = reader.GetString(0);
+                if (!string.IsNullOrWhiteSpace(name))
+                    columns.Add(name);
+            }
+            return columns;
+        }
+
         private static async Task RemoveLayersUsingFileAsync(string filePath)
         {
             // Validate the file path

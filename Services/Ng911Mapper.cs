@@ -60,8 +60,10 @@ namespace DuckDBGeoparquet.Services
         {
             progress?.Report("Mapping Overture addresses → NG911 SiteStructureAddressPoint (v0)...");
 
-            // Minimal viable mapping: select common NG911 fields and derive where straightforward
-            // Assumes current_table contains Overture addresses schema (with geometry)
+            // Build a SELECT that adapts to available columns in current_table
+            var cols = await _dataProcessor.GetCurrentTableColumnsAsync();
+            string Col(string name) => cols.Contains(name) ? name : "NULL";
+
             string outputPath = Path.Combine(outputFolder, "SiteStructureAddressPoint", "NG911_SiteStructureAddressPoint.parquet");
             string select = @"
                 SELECT
@@ -69,23 +71,23 @@ namespace DuckDBGeoparquet.Services
                     geometry,
                     -- NG911 core
                     CAST(NULL AS VARCHAR) AS AddNum_Pre,
-                    address_number AS AddNum,                                 -- Overture: address_number
+                    " + Col("address_number") + @" AS AddNum,
                     CAST(NULL AS VARCHAR) AS AddNum_Suf,
-                    street_name_pre_dir AS PreDir,                            -- Overture: if present
-                    street_name_pre_type AS PreType,
-                    street_name AS StName,                                    -- Overture: street_name
-                    street_name_post_type AS StType,
-                    street_name_post_dir AS PostDir,
-                    unit AS LandUnit,                                         -- Overture: unit/unit_number
-                    city AS Municipal,                                        -- Overture: city or locality
-                    region AS State,                                          -- Overture: region/state
-                    postcode AS ZipCode,                                      -- Overture: postcode
+                    " + Col("street_name_pre_dir") + @" AS PreDir,
+                    " + Col("street_name_pre_type") + @" AS PreType,
+                    " + Col("street_name") + @" AS StName,
+                    " + Col("street_name_post_type") + @" AS StType,
+                    " + Col("street_name_post_dir") + @" AS PostDir,
+                    COALESCE(" + Col("unit") + ", " + Col("unit_number") + @") AS LandUnit,
+                    " + Col("city") + @" AS Municipal,
+                    " + Col("region") + @" AS State,
+                    " + Col("postcode") + @" AS ZipCode,
                     CAST(NULL AS VARCHAR) AS Country,
                     CAST(NULL AS VARCHAR) AS PlaceType,
                     CAST(NULL AS VARCHAR) AS Validation,
                     -- identifiers
-                    id AS SourceOID,
-                    source AS Source,
+                    " + Col("id") + @" AS SourceOID,
+                    " + Col("source") + @" AS Source,
                     -- carry through useful attrs
                     * EXCLUDE geometry                                       -- keep all other attributes for review
                 FROM current_table
@@ -100,22 +102,24 @@ namespace DuckDBGeoparquet.Services
         {
             progress?.Report("Mapping Overture roads → NG911 RoadCenterline (v0)...");
 
-            // Minimal viable mapping for centerlines. Assumes current_table contains Overture 'road' subset.
+            // Minimal viable mapping for centerlines. Adapts to available columns.
+            var cols = await _dataProcessor.GetCurrentTableColumnsAsync();
+            string Col(string name) => cols.Contains(name) ? name : "NULL";
             string outputPath = Path.Combine(outputFolder, "RoadCenterline", "NG911_RoadCenterline.parquet");
             string select = @"
                 SELECT
                     geometry,
-                    street_name_pre_dir AS PreDir,
-                    street_name_pre_type AS PreType,
-                    street_name AS StName,
-                    street_name_post_type AS StType,
-                    street_name_post_dir AS PostDir,
-                    road_class AS RoadClass,                  -- Overture attribute
-                    one_way AS OneWay,                        -- boolean/string in Overture; later map to domain
+                    " + Col("street_name_pre_dir") + @" AS PreDir,
+                    " + Col("street_name_pre_type") + @" AS PreType,
+                    " + Col("street_name") + @" AS StName,
+                    " + Col("street_name_post_type") + @" AS StType,
+                    " + Col("street_name_post_dir") + @" AS PostDir,
+                    COALESCE(" + Col("road_class") + ", " + Col("class") + @") AS RoadClass,
+                    " + Col("one_way") + @" AS OneWay,
                     CAST(NULL AS VARCHAR) AS ParityLeft,
                     CAST(NULL AS VARCHAR) AS ParityRight,
-                    id AS SourceOID,
-                    source AS Source,
+                    " + Col("id") + @" AS SourceOID,
+                    " + Col("source") + @" AS Source,
                     * EXCLUDE geometry
                 FROM current_table
                 WHERE geometry IS NOT NULL";
