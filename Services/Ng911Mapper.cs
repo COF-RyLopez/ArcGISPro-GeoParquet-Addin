@@ -60,6 +60,13 @@ namespace DuckDBGeoparquet.Services
         {
             progress?.Report("Mapping Overture addresses → NG911 SiteStructureAddressPoint (v0)...");
 
+            // Ensure the correct dataset is loaded into current_table
+            if (!await _dataProcessor.LoadLocalDatasetAsCurrentAsync("address", progress))
+            {
+                progress?.Report("NG911 AddressPoints: Could not load local 'address' dataset. Aborting.");
+                return;
+            }
+
             // Build a SELECT that adapts to available columns in current_table
             var cols = await _dataProcessor.GetCurrentTableColumnsAsync();
             string Col(string name) => cols.Contains(name) ? name : "NULL";
@@ -89,6 +96,7 @@ namespace DuckDBGeoparquet.Services
             string select =
                 "SELECT " +
                 "geometry, " +
+                idExpr + " AS NGUID, " +
                 "CAST(NULL AS VARCHAR) AS AddNum_Pre, " +
                 addNumExpr + " AS AddNum, " +
                 "CAST(NULL AS VARCHAR) AS AddNum_Suf, " +
@@ -118,6 +126,13 @@ namespace DuckDBGeoparquet.Services
         {
             progress?.Report("Mapping Overture roads → NG911 RoadCenterline (v0)...");
 
+            // Ensure the correct dataset is loaded into current_table
+            if (!await _dataProcessor.LoadLocalDatasetAsCurrentAsync("segment", progress))
+            {
+                progress?.Report("NG911 RoadCenterline: Could not load local 'segment' dataset. Aborting.");
+                return;
+            }
+
             // Minimal viable mapping for centerlines. Adapts to available columns.
             var cols = await _dataProcessor.GetCurrentTableColumnsAsync();
             string Col(string name) => cols.Contains(name) ? name : "NULL";
@@ -143,6 +158,7 @@ namespace DuckDBGeoparquet.Services
             string select =
                 "SELECT " +
                 "geometry, " +
+                idR + " AS NGUID, " +
                 preDirR + " AS PreDir, " +
                 preTypeR + " AS PreType, " +
                 stNameR + " AS StName, " +

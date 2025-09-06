@@ -50,6 +50,9 @@ namespace DuckDBGeoparquet.Services
         private string _currentParentS3Theme;
         private string _currentActualS3Type;
 
+        // Remember the last output root used by the wizard (e.g., .../OvertureProAddinData/Data/{Release})
+        private string _lastDataOutputRoot;
+
         // Collection to store layer information for bulk creation
         private readonly List<LayerCreationInfo> _pendingLayers;
 
@@ -157,6 +160,43 @@ namespace DuckDBGeoparquet.Services
             if (!_initialized)
             {
                 await InitializeDuckDBAsync();
+            }
+        }
+
+        /// <summary>
+        /// Returns true if the in-memory DuckDB has a table named 'current_table'.
+        /// </summary>
+        public async Task<bool> CurrentTableExistsAsync()
+        {
+            try
+            {
+                using var command = _connection.CreateCommand();
+                // duckdb_tables() is available in DuckDB and lists tables in the current database
+                command.CommandText = "SELECT COUNT(*) FROM duckdb_tables() WHERE table_name = 'current_table'";
+                var result = await command.ExecuteScalarAsync(CancellationToken.None);
+                return Convert.ToInt64(result) > 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Returns true if 'current_table' exists and contains a 'geometry' column.
+        /// </summary>
+        public async Task<bool> CurrentTableHasGeometryAsync()
+        {
+            try
+            {
+                using var command = _connection.CreateCommand();
+                command.CommandText = "SELECT COUNT(*) FROM duckdb_columns() WHERE table_name = 'current_table' AND column_name = 'geometry'";
+                var result = await command.ExecuteScalarAsync(CancellationToken.None);
+                return Convert.ToInt64(result) > 0;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -588,6 +628,12 @@ namespace DuckDBGeoparquet.Services
             System.Diagnostics.Debug.WriteLine($"CreateFeatureLayerAsync called for: {layerNameBase}, ParentS3Theme: {parentS3Theme}, ActualS3Type: {actualS3Type}, DataOutputPathRoot: {dataOutputPathRoot}");
             progress?.Report($"Starting layer creation for {layerNameBase}");
 
+            // Track the last data output root so other workflows (e.g., NG911) can re-open datasets from disk
+            if (!string.IsNullOrWhiteSpace(dataOutputPathRoot))
+            {
+                _lastDataOutputRoot = dataOutputPathRoot;
+            }
+
             if (string.IsNullOrEmpty(parentS3Theme) || string.IsNullOrEmpty(actualS3Type))
             {
                 progress?.Report("Error: Parent theme or actual type not provided. Cannot create feature layer.");
@@ -643,6 +689,54 @@ namespace DuckDBGeoparquet.Services
                 // Clear theme context after operation
                 _currentParentS3Theme = null;
                 _currentActualS3Type = null;
+            }
+        }
+
+        /// <summary>
+        /// Loads a dataset from the most recently used data output root into DuckDB as 'current_table'.
+        /// For example, actualS3Type 'address' will load from '{LastRoot}/address/*.parquet'.
+        /// </summary>
+        public async Task<bool> LoadLocalDatasetAsCurrentAsync(string actualS3Type, IProgress<string> progress = null)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(actualS3Type))
+                {
+                    progress?.Report("Error: Dataset type not specified.");
+                    return false;
+                }
+                if (string.IsNullOrWhiteSpace(_lastDataOutputRoot) || !Directory.Exists(_lastDataOutputRoot))
+                {
+                    progress?.Report("No prior data folder found. Please load data with the Overture wizard first.");
+                    return false;
+                }
+
+                string datasetFolder = Path.Combine(_lastDataOutputRoot, actualS3Type);
+                if (!Directory.Exists(datasetFolder))
+                {
+                    progress?.Report($"Expected dataset folder not found: {datasetFolder}");
+                    return false;
+                }
+
+                string folderForDuck = datasetFolder.Replace('\\', '/');
+                using var command = _connection.CreateCommand();
+                command.CommandText = $@"
+                    CREATE OR REPLACE TABLE current_table AS
+                    SELECT * FROM read_parquet('{folderForDuck}/**/*.parquet')
+                ";
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+
+                // Optional count for confirmation
+                command.CommandText = "SELECT COUNT(*) FROM current_table";
+                var count = await command.ExecuteScalarAsync(CancellationToken.None);
+                progress?.Report($"Loaded {count:N0} rows from local dataset '{actualS3Type}'.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                progress?.Report($"Error loading local dataset '{actualS3Type}': {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"LoadLocalDatasetAsCurrentAsync error: {ex.Message}");
+                return false;
             }
         }
 
