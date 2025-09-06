@@ -96,7 +96,6 @@ namespace DuckDBGeoparquet.Services
 
             string select =
                 "SELECT " +
-                "geometry, " +
                 idExpr + " AS NGUID, " +
                 "CAST(NULL AS VARCHAR) AS AddNum_Pre, " +
                 addNumExpr + " AS AddNum, " +
@@ -114,7 +113,8 @@ namespace DuckDBGeoparquet.Services
                 "CAST(NULL AS VARCHAR) AS PlaceType, " +
                 "CAST(NULL AS VARCHAR) AS Validation, " +
                 idExpr + " AS SourceOID, " +
-                sourceLiteral + " AS Source " +
+                sourceLiteral + " AS Source, " +
+                "geometry " +
                 "FROM current_table WHERE geometry IS NOT NULL";
 
             string actualPath = await _dataProcessor.ExportSelectToGeoParquetAsync(select, outputPath, "NG911_SiteStructureAddressPoint", progress);
@@ -158,7 +158,6 @@ namespace DuckDBGeoparquet.Services
 
             string select =
                 "SELECT " +
-                "geometry, " +
                 idR + " AS NGUID, " +
                 preDirR + " AS PreDir, " +
                 preTypeR + " AS PreType, " +
@@ -166,11 +165,12 @@ namespace DuckDBGeoparquet.Services
                 stTypeR + " AS StType, " +
                 postDirR + " AS PostDir, " +
                 roadClass + " AS RoadClass, " +
-                oneWay + " AS OneWay, " +
+                "CAST(" + oneWay + " AS VARCHAR) AS OneWay, " +
                 "CAST(NULL AS VARCHAR) AS ParityLeft, " +
                 "CAST(NULL AS VARCHAR) AS ParityRight, " +
                 idR + " AS SourceOID, " +
-                sourceLiteralR + " AS Source " +
+                sourceLiteralR + " AS Source, " +
+                "geometry " +
                 "FROM current_table WHERE geometry IS NOT NULL";
 
             string actualPath = await _dataProcessor.ExportSelectToGeoParquetAsync(select, outputPath, "NG911_RoadCenterline", progress);
