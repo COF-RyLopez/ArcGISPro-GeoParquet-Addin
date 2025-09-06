@@ -91,7 +91,8 @@ namespace DuckDBGeoparquet.Services
             var regionExpr = ColAny("region", "state");
             var postcodeExpr = ColAny("postcode", "postal_code", "zip");
             var idExpr = Col("id");
-            var sourceExpr = Col("source");
+            // Use a constant Source to avoid complex struct types from Overture's 'source' column
+            const string sourceLiteral = "'Overture'";
 
             string select =
                 "SELECT " +
@@ -113,8 +114,7 @@ namespace DuckDBGeoparquet.Services
                 "CAST(NULL AS VARCHAR) AS PlaceType, " +
                 "CAST(NULL AS VARCHAR) AS Validation, " +
                 idExpr + " AS SourceOID, " +
-                sourceExpr + " AS Source, " +
-                "* EXCLUDE geometry " +
+                sourceLiteral + " AS Source " +
                 "FROM current_table WHERE geometry IS NOT NULL";
 
             string actualPath = await _dataProcessor.ExportSelectToGeoParquetAsync(select, outputPath, "NG911_SiteStructureAddressPoint", progress);
@@ -153,7 +153,8 @@ namespace DuckDBGeoparquet.Services
             var roadClass = $"COALESCE({Col("road_class")}, {Col("class")})";
             var oneWay = Col("one_way");
             var idR = Col("id");
-            var sourceR = Col("source");
+            // Use a constant for Source to avoid complex struct types
+            const string sourceLiteralR = "'Overture'";
 
             string select =
                 "SELECT " +
@@ -169,8 +170,7 @@ namespace DuckDBGeoparquet.Services
                 "CAST(NULL AS VARCHAR) AS ParityLeft, " +
                 "CAST(NULL AS VARCHAR) AS ParityRight, " +
                 idR + " AS SourceOID, " +
-                sourceR + " AS Source, " +
-                "* EXCLUDE geometry " +
+                sourceLiteralR + " AS Source " +
                 "FROM current_table WHERE geometry IS NOT NULL";
 
             string actualPath = await _dataProcessor.ExportSelectToGeoParquetAsync(select, outputPath, "NG911_RoadCenterline", progress);
