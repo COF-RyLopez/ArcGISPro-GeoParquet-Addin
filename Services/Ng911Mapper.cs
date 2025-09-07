@@ -86,30 +86,49 @@ namespace DuckDBGeoparquet.Services
             var stNameExpr = ColAny("street_name", "name");
             var stTypeExpr = Col("street_name_post_type");
             var postDirExpr = Col("street_name_post_dir");
+            var streetRawExpr = cols.Contains("street") ? "street" : stNameExpr; // fallback to generic name
             var landUnitExpr = $"COALESCE({Col("unit")}, {Col("unit_number")})";
-            var cityExpr = ColAny("city", "locality");
+            var cityExpr = ColAny("postal_city", "city", "locality");
             var regionExpr = ColAny("region", "state");
             var postcodeExpr = ColAny("postcode", "postal_code", "zip");
+            var countryExpr = Col("country");
             var idExpr = Col("id");
             // Use a constant Source to avoid complex struct types from Overture's 'source' column
             const string sourceLiteral = "'Overture'";
 
+            // Derive fields where source columns are missing
+            string addNumPre = addNumExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(regexp_extract({addNumExpr}, '^(?i)(\\\
+D*)(\\\
+d+)(.*)$', 1), '')";
+            string addNumCore = addNumExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(regexp_extract({addNumExpr}, '^(?i)(\\\
+D*)(\\\
+d+)(.*)$', 2), '')";
+            string addNumSuf = addNumExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(regexp_extract({addNumExpr}, '^(?i)(\\\
+D*)(\\\
+d+)(.*)$', 3), '')";
+
+            string preDirOut = preDirExpr != "NULL" ? preDirExpr : (streetRawExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(UPPER(regexp_extract({streetRawExpr}, '^(?i)(N|S|E|W|NE|NW|SE|SW)\\\\b', 1)), '')");
+            string preTypeOut = preTypeExpr != "NULL" ? preTypeExpr : "CAST(NULL AS VARCHAR)";
+            string stTypeOut = stTypeExpr != "NULL" ? stTypeExpr : (streetRawExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(UPPER(regexp_extract({streetRawExpr}, '\\\\b(AVE|BLVD|CIR|CT|DR|RD|ST|STREET|AVENUE|BOULEVARD|LANE|LN|WAY|ROAD|HIGHWAY|HWY|PKWY|PATH|TERRACE|TER|PLACE|PL|COURT|CT)\\\\b', 1)), '')");
+            string postDirOut = postDirExpr != "NULL" ? postDirExpr : (streetRawExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(UPPER(regexp_extract({streetRawExpr}, '\\\\b(N|S|E|W|NE|NW|SE|SW)$', 1)), '')");
+            string stNameOut = stNameExpr != "NULL" ? stNameExpr : (streetRawExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"TRIM(regexp_replace(regexp_replace(regexp_replace({streetRawExpr}, '^(?i)(?:\\\\s*(?:N|S|E|W|NE|NW|SE|SW)\\\\s+)', ''), '(?i)\\\\s+(?:N|S|E|W|NE|NW|SE|SW)\\\\s*$', ''), '(?i)\\\\s+(?:AVE|BLVD|CIR|CT|DR|RD|ST|STREET|AVENUE|BOULEVARD|LANE|LN|WAY|ROAD|HIGHWAY|HWY|PKWY|PATH|TERRACE|TER|PLACE|PL|COURT|CT)\\\\s*$', ''))");
+
             string select =
                 "SELECT " +
                 idExpr + " AS NGUID, " +
-                "CAST(NULL AS VARCHAR) AS AddNum_Pre, " +
-                addNumExpr + " AS AddNum, " +
-                "CAST(NULL AS VARCHAR) AS AddNum_Suf, " +
-                preDirExpr + " AS PreDir, " +
-                preTypeExpr + " AS PreType, " +
-                stNameExpr + " AS StName, " +
-                stTypeExpr + " AS StType, " +
-                postDirExpr + " AS PostDir, " +
+                addNumPre + " AS AddNum_Pre, " +
+                addNumCore + " AS AddNum, " +
+                addNumSuf + " AS AddNum_Suf, " +
+                preDirOut + " AS PreDir, " +
+                preTypeOut + " AS PreType, " +
+                stNameOut + " AS StName, " +
+                stTypeOut + " AS StType, " +
+                postDirOut + " AS PostDir, " +
                 landUnitExpr + " AS LandUnit, " +
                 cityExpr + " AS Municipal, " +
                 regionExpr + " AS State, " +
                 postcodeExpr + " AS ZipCode, " +
-                "CAST(NULL AS VARCHAR) AS Country, " +
+                (countryExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : countryExpr) + " AS Country, " +
                 "CAST(NULL AS VARCHAR) AS PlaceType, " +
                 "CAST(NULL AS VARCHAR) AS Validation, " +
                 idExpr + " AS SourceOID, " +
@@ -145,16 +164,23 @@ namespace DuckDBGeoparquet.Services
                 return "NULL";
             }
             string outputPath = Path.Combine(outputFolder, "RoadCenterline", "NG911_RoadCenterline.parquet");
-            var preDirR = Col("street_name_pre_dir");
-            var preTypeR = Col("street_name_pre_type");
-            var stNameR = ColAny("street_name", "name");
-            var stTypeR = Col("street_name_post_type");
-            var postDirR = Col("street_name_post_dir");
+            var preDirRCol = Col("street_name_pre_dir");
+            var preTypeRCol = Col("street_name_pre_type");
+            var stNameRCol = ColAny("street_name", "name");
+            var stTypeRCol = Col("street_name_post_type");
+            var postDirRCol = Col("street_name_post_dir");
+            var nameBaseR = stNameRCol != "NULL" ? stNameRCol : (cols.Contains("names_primary") ? "names_primary" : (cols.Contains("names") ? "names.primary" : "NULL"));
             var roadClass = $"COALESCE({Col("road_class")}, {Col("class")})";
             var oneWay = Col("one_way");
             var idR = Col("id");
             // Use a constant for Source to avoid complex struct types
             const string sourceLiteralR = "'Overture'";
+
+            string preDirR = preDirRCol != "NULL" ? preDirRCol : (nameBaseR == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(UPPER(regexp_extract({nameBaseR}, '^(?i)(N|S|E|W|NE|NW|SE|SW)\\\\b', 1)), '')");
+            string preTypeR = preTypeRCol != "NULL" ? preTypeRCol : "CAST(NULL AS VARCHAR)";
+            string stTypeR = stTypeRCol != "NULL" ? stTypeRCol : (nameBaseR == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(UPPER(regexp_extract({nameBaseR}, '\\\\b(AVE|BLVD|CIR|CT|DR|RD|ST|STREET|AVENUE|BOULEVARD|LANE|LN|WAY|ROAD|HIGHWAY|HWY|PKWY|PATH|TERRACE|TER|PLACE|PL|COURT|CT)\\\\b', 1)), '')");
+            string postDirR = postDirRCol != "NULL" ? postDirRCol : (nameBaseR == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(UPPER(regexp_extract({nameBaseR}, '\\\\b(N|S|E|W|NE|NW|SE|SW)$', 1)), '')");
+            string stNameR = nameBaseR == "NULL" ? "CAST(NULL AS VARCHAR)" : $"TRIM(regexp_replace(regexp_replace(regexp_replace({nameBaseR}, '^(?i)(?:\\\\s*(?:N|S|E|W|NE|NW|SE|SW)\\\\s+)', ''), '(?i)\\\\s+(?:N|S|E|W|NE|NW|SE|SW)\\\\s*$', ''), '(?i)\\\\s+(?:AVE|BLVD|CIR|CT|DR|RD|ST|STREET|AVENUE|BOULEVARD|LANE|LN|WAY|ROAD|HIGHWAY|HWY|PKWY|PATH|TERRACE|TER|PLACE|PL|COURT|CT)\\\\s*$', ''))";
 
             string select =
                 "SELECT " +
