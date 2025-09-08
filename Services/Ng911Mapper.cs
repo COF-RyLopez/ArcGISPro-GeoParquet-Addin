@@ -80,6 +80,8 @@ namespace DuckDBGeoparquet.Services
             }
 
             string outputPath = Path.Combine(outputFolder, "SiteStructureAddressPoint", "NG911_SiteStructureAddressPoint.parquet");
+
+            // Candidate source fields
             var addNumExpr = ColAny("address_number", "number", "house_number", "housenumber");
             var preDirExpr = Col("street_name_pre_dir");
             var preTypeExpr = Col("street_name_pre_type");
@@ -93,48 +95,52 @@ namespace DuckDBGeoparquet.Services
             var postcodeExpr = ColAny("postcode", "postal_code", "zip");
             var countryExpr = Col("country");
             var idExpr = Col("id");
+
             // Use a constant Source to avoid complex struct types from Overture's 'source' column
             const string sourceLiteral = "'Overture'";
 
-            // Derive fields where source columns are missing
-            string addNumPre = addNumExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(regexp_extract({addNumExpr}, '^(?i)(\\\
-D*)(\\\
-d+)(.*)$', 1), '')";
-            string addNumCore = addNumExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(regexp_extract({addNumExpr}, '^(?i)(\\\
-D*)(\\\
-d+)(.*)$', 2), '')";
-            string addNumSuf = addNumExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(regexp_extract({addNumExpr}, '^(?i)(\\\
-D*)(\\\
-d+)(.*)$', 3), '')";
+            // Regex patterns as SQL string literals (verbatim C# strings to simplify escaping)
+            string reNum = @"'^(?i)(\D*)(\d+)(.*)$'";
+            string reDirStart = @"'^(?i)(N|S|E|W|NE|NW|SE|SW)\b'";
+            string reDirEnd = @"'\b(N|S|E|W|NE|NW|SE|SW)$'";
+            string reType = @"'\\b(AVE|BLVD|CIR|CT|DR|RD|ST|STREET|AVENUE|BOULEVARD|LANE|LN|WAY|ROAD|HIGHWAY|HWY|PKWY|PATH|TERRACE|TER|PLACE|PL|COURT|CT)\b'";
+            string reStripPreDir = @"'^(?i)(?:\s*(?:N|S|E|W|NE|NW|SE|SW)\s+)'";
+            string reStripPostDir = @"'(?i)\s+(?:N|S|E|W|NE|NW|SE|SW)\s*$'";
+            string reStripType = @"'(?i)\s+(?:AVE|BLVD|CIR|CT|DR|RD|ST|STREET|AVENUE|BOULEVARD|LANE|LN|WAY|ROAD|HIGHWAY|HWY|PKWY|PATH|TERRACE|TER|PLACE|PL|COURT|CT)\s*$'";
 
-            string preDirOut = preDirExpr != "NULL" ? preDirExpr : (streetRawExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(UPPER(regexp_extract({streetRawExpr}, '^(?i)(N|S|E|W|NE|NW|SE|SW)\\\\b', 1)), '')");
+            // Derived expressions
+            string addNumPre = addNumExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(regexp_extract({addNumExpr}, {reNum}, 1), '')";
+            string addNumCore = addNumExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(regexp_extract({addNumExpr}, {reNum}, 2), '')";
+            string addNumSuf = addNumExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(regexp_extract({addNumExpr}, {reNum}, 3), '')";
+
+            string preDirOut = preDirExpr != "NULL" ? preDirExpr : (streetRawExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(UPPER(regexp_extract({streetRawExpr}, {reDirStart}, 1)), '')");
             string preTypeOut = preTypeExpr != "NULL" ? preTypeExpr : "CAST(NULL AS VARCHAR)";
-            string stTypeOut = stTypeExpr != "NULL" ? stTypeExpr : (streetRawExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(UPPER(regexp_extract({streetRawExpr}, '\\\\b(AVE|BLVD|CIR|CT|DR|RD|ST|STREET|AVENUE|BOULEVARD|LANE|LN|WAY|ROAD|HIGHWAY|HWY|PKWY|PATH|TERRACE|TER|PLACE|PL|COURT|CT)\\\\b', 1)), '')");
-            string postDirOut = postDirExpr != "NULL" ? postDirExpr : (streetRawExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(UPPER(regexp_extract({streetRawExpr}, '\\\\b(N|S|E|W|NE|NW|SE|SW)$', 1)), '')");
-            string stNameOut = stNameExpr != "NULL" ? stNameExpr : (streetRawExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"TRIM(regexp_replace(regexp_replace(regexp_replace({streetRawExpr}, '^(?i)(?:\\\\s*(?:N|S|E|W|NE|NW|SE|SW)\\\\s+)', ''), '(?i)\\\\s+(?:N|S|E|W|NE|NW|SE|SW)\\\\s*$', ''), '(?i)\\\\s+(?:AVE|BLVD|CIR|CT|DR|RD|ST|STREET|AVENUE|BOULEVARD|LANE|LN|WAY|ROAD|HIGHWAY|HWY|PKWY|PATH|TERRACE|TER|PLACE|PL|COURT|CT)\\\\s*$', ''))");
+            string stTypeOut = stTypeExpr != "NULL" ? stTypeExpr : (streetRawExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(UPPER(regexp_extract({streetRawExpr}, {reType}, 1)), '')");
+            string postDirOut = postDirExpr != "NULL" ? postDirExpr : (streetRawExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"NULLIF(UPPER(regexp_extract({streetRawExpr}, {reDirEnd}, 1)), '')");
+            string stNameOut = stNameExpr != "NULL" ? stNameExpr : (streetRawExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : $"TRIM(regexp_replace(regexp_replace(regexp_replace({streetRawExpr}, {reStripPreDir}, ''), {reStripPostDir}, ''), {reStripType}, ''))");
 
-            string select =
-                "SELECT " +
-                idExpr + " AS NGUID, " +
-                addNumPre + " AS AddNum_Pre, " +
-                addNumCore + " AS AddNum, " +
-                addNumSuf + " AS AddNum_Suf, " +
-                preDirOut + " AS PreDir, " +
-                preTypeOut + " AS PreType, " +
-                stNameOut + " AS StName, " +
-                stTypeOut + " AS StType, " +
-                postDirOut + " AS PostDir, " +
-                landUnitExpr + " AS LandUnit, " +
-                cityExpr + " AS Municipal, " +
-                regionExpr + " AS State, " +
-                postcodeExpr + " AS ZipCode, " +
-                (countryExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : countryExpr) + " AS Country, " +
-                "CAST(NULL AS VARCHAR) AS PlaceType, " +
-                "CAST(NULL AS VARCHAR) AS Validation, " +
-                idExpr + " AS SourceOID, " +
-                sourceLiteral + " AS Source, " +
-                "geometry " +
-                "FROM current_table WHERE geometry IS NOT NULL";
+            var select = $@"
+SELECT
+  {idExpr} AS NGUID,
+  {addNumPre} AS AddNum_Pre,
+  {addNumCore} AS AddNum,
+  {addNumSuf} AS AddNum_Suf,
+  {preDirOut} AS PreDir,
+  {preTypeOut} AS PreType,
+  {stNameOut} AS StName,
+  {stTypeOut} AS StType,
+  {postDirOut} AS PostDir,
+  {landUnitExpr} AS LandUnit,
+  {cityExpr} AS Municipal,
+  {regionExpr} AS State,
+  {postcodeExpr} AS ZipCode,
+  {(countryExpr == "NULL" ? "CAST(NULL AS VARCHAR)" : countryExpr)} AS Country,
+  CAST(NULL AS VARCHAR) AS PlaceType,
+  CAST(NULL AS VARCHAR) AS Validation,
+  {idExpr} AS SourceOID,
+  {sourceLiteral} AS Source,
+  geometry
+FROM current_table WHERE geometry IS NOT NULL";
 
             string actualPath = await _dataProcessor.ExportSelectToGeoParquetAsync(select, outputPath, "NG911_SiteStructureAddressPoint", progress);
             await _dataProcessor.AddLayerFileToMapAsync(actualPath, "NG911 SiteStructure Address Point", progress);
