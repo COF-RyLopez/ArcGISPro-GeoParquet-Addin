@@ -2,7 +2,7 @@
 
 A powerful ArcGIS Pro add-in that simplifies working with cloud-native geospatial data formats, especially GeoParquet files. This tool uses [DuckDB](https://duckdb.org/) to deliver high-performance data processing directly within ArcGIS Pro, making it ideal for both GIS professionals and newcomers alike.
 
-![ArcGIS Pro GeoParquet Add-in](https://raw.githubusercontent.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin/main/Images/addin-icon.png)
+![ArcGIS Pro GeoParquet Add-in](https://cofgisonline.maps.arcgis.com/home/item.html?id=8293d1220b7848848ce316b4fa3263b5)
 
 ## 🎥 See It In Action
 
