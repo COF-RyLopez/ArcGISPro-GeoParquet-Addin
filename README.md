@@ -167,7 +167,11 @@ The add-in maintains detailed logs that can help diagnose issues:
 
 ## Recent Improvements
 
-### Version 0.1.1 (Latest)
+### Version 0.1.2 (Latest)
+- **Version Synchronization**: Fixed version mismatch between releases and installed add-in
+- **Automated Versioning**: Implemented CI/CD automation to sync versions from git tags
+
+### Version 0.1.1
 - **Enhanced DAML Configuration**: Improved UI integration with ArcGIS Pro standards
 - **Better Accessibility**: Enhanced keytips and standard condition usage
 - **Cleaner Codebase**: Removed unused UI elements and optimized configuration

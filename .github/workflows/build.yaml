@@ -2,11 +2,14 @@ name: Build ArcGIS Pro GeoParquet Add-in
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+      - dev  # Test workflow changes on dev branch
     tags:
-      - 'v*'  # Run workflow on version tags, e.g. v1.0.0
+      - 'v*'  # Production release tags, e.g. v1.0.0
+      - 'v*-dev'  # Dev/test release tags, e.g. v0.1.3-dev
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
   workflow_dispatch:  # Allows manual triggering
 
 permissions:
@@ -19,6 +22,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for proper git operations
       
     - name: Add MSBuild to PATH
       uses: microsoft/setup-msbuild@v2
@@ -28,22 +33,58 @@ jobs:
       with:
         dotnet-version: '8.0.x'
     
-    - name: Install ArcGIS Pro SDK NuGet Package
-      run: |
-        nuget sources add -name nuget.org -source https://api.nuget.org/v3/index.json
-        nuget install Esri.ArcGISPro.Extensions30 -Version 3.5.0.57366 -OutputDirectory packages
-    
-    - name: Update csproj to use NuGet references
+    - name: Update Config.daml version from tag
+      if: startsWith(github.ref, 'refs/tags/v')
       shell: powershell
       run: |
-        pwsh ./.github/workflows/update-csproj.ps1 -ProjectFile "DuckDBGeoparquet.csproj" -NuGetVersion "3.5.0.57366"
-        
+        $version = "${{ github.ref }}".Replace('refs/tags/v', '')
+        Write-Host "Updating Config.daml to version: $version"
+
+        # Remove -dev suffix for version number in Config.daml
+        $cleanVersion = $version -replace '-dev$', ''
+        pwsh ./.github/workflows/update-version.ps1 -Version $cleanVersion -ConfigPath "Config.daml"
+
     - name: Restore NuGet packages
       run: nuget restore DuckDBGeoparquet.sln
       
     - name: Build solution with MSBuild
       run: msbuild DuckDBGeoparquet.sln /p:Configuration=Release /p:Platform="Any CPU"
-      
+
+    - name: Commit version update back to main branch
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
+      shell: bash
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+
+        echo "📝 Committing version $VERSION back to main branch..."
+
+        # Configure git with GitHub Actions bot identity
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+        # Check if Config.daml has changes
+        if git diff --quiet Config.daml; then
+          echo "⚠️  No version changes to commit (Config.daml unchanged)"
+          exit 0
+        fi
+
+        # Fetch the main branch and switch to it
+        git fetch origin main
+        git checkout main
+
+        # Add and commit the version update
+        git add Config.daml
+        git commit -m "chore: bump version to $VERSION [skip ci]
+
+        Automated version update from release tag v$VERSION
+
+        Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+
+        # Push to main branch
+        git push origin main
+
+        echo "✅ Version $VERSION committed back to main branch"
+
     - name: Get version from tag
       id: get_version
       shell: bash
@@ -99,11 +140,22 @@ jobs:
         path: "release/*.zip"
         if-no-files-found: error
         
-    # Create GitHub Release when a version tag is pushed
+    # Create GitHub Release when a production version tag is pushed (not -dev tags)
     - name: Create GitHub Release
-      if: startsWith(github.ref, 'refs/tags/v')
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
       uses: softprops/action-gh-release@v2.3.2
       with:
         files: release/*.zip
         name: v${{ steps.get_version.outputs.VERSION }}
         generate_release_notes: true
+
+    # For dev tags, mark as pre-release
+    - name: Create GitHub Pre-Release (Dev)
+      if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-dev')
+      uses: softprops/action-gh-release@v2.3.2
+      with:
+        files: release/*.zip
+        name: v${{ steps.get_version.outputs.VERSION }}
+        generate_release_notes: true
+        prerelease: true
+        draft: false
