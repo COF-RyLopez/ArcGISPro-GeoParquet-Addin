@@ -212,5 +212,5 @@ This project is licensed under the MIT License - see the [LICENSE.txt](LICENSE.t
 - [ArcGIS Pro SDK](https://pro.arcgis.com/en/pro-app/latest/sdk/) for development tools
 - [Chris Holmes](https://github.com/cholmes) for pioneering the DuckDB + Overture approach in QGIS
 - [Mark Litwintschik](https://tech.marksblogg.com/) for the excellent technical documentation
-- [Youssef Harby](https://www.linkedin.com/in/youssef-harby/) for implementing the professional CI/CD pipeline
+- [Youssef Harby](https://www.linkedin.com/in/yharby/) for implementing the professional CI/CD pipeline
 - All contributors who have helped improve this add-in
