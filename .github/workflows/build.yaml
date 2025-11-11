@@ -162,7 +162,7 @@ jobs:
 
     # Publish to ArcGIS Online (only for production releases)
     - name: Publish to ArcGIS Online
-      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev') && (secrets.AGOL_CLIENT_ID != '' || secrets.AGOL_USERNAME != '')
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
       shell: powershell
       run: |
         $addinFile = Get-ChildItem -Path "bin/Release/net8.0-windows" -Filter "*.esriAddInX" | Select-Object -First 1
