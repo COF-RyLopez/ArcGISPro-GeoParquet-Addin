@@ -189,10 +189,10 @@ jobs:
         AUTH_ARGS=""
         if [ -n "$AGOL_CLIENT_ID" ] && [ -n "$AGOL_CLIENT_SECRET" ]; then
           echo "✅ Using OAuth2 token authentication"
-          AUTH_ARGS="--client-id $AGOL_CLIENT_ID --client-secret $AGOL_CLIENT_SECRET"
+          AUTH_ARGS="--auth-method token --client-id \"$AGOL_CLIENT_ID\" --client-secret \"$AGOL_CLIENT_SECRET\""
         elif [ -n "$AGOL_USERNAME" ] && [ -n "$AGOL_PASSWORD" ]; then
           echo "✅ Using username/password authentication"
-          AUTH_ARGS="--username $AGOL_USERNAME --password $AGOL_PASSWORD"
+          AUTH_ARGS="--auth-method username --username \"$AGOL_USERNAME\" --password \"$AGOL_PASSWORD\""
         else
           echo "WARNING: No AGOL credentials found. Skipping AGOL publishing."
           echo "Please ensure AGOL_CLIENT_ID and AGOL_CLIENT_SECRET are set in GitHub Secrets"
