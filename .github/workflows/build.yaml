@@ -173,13 +173,20 @@ jobs:
         }
 
         # Determine authentication method
+        Write-Host "Checking for AGOL credentials..."
+        Write-Host "AGOL_CLIENT_ID exists: $($env:AGOL_CLIENT_ID -ne $null -and $env:AGOL_CLIENT_ID -ne '')"
+        Write-Host "AGOL_CLIENT_SECRET exists: $($env:AGOL_CLIENT_SECRET -ne $null -and $env:AGOL_CLIENT_SECRET -ne '')"
+        
         $authMethod = "token"
         if ($env:AGOL_CLIENT_ID -and $env:AGOL_CLIENT_SECRET) {
           $authMethod = "token"
+          Write-Host "✅ Using OAuth2 token authentication"
         } elseif ($env:AGOL_USERNAME -and $env:AGOL_PASSWORD) {
           $authMethod = "username"
+          Write-Host "✅ Using username/password authentication"
         } else {
           Write-Warning "No AGOL credentials found. Skipping AGOL publishing."
+          Write-Warning "Please ensure AGOL_CLIENT_ID and AGOL_CLIENT_SECRET are set in GitHub Secrets"
           exit 0
         }
 
