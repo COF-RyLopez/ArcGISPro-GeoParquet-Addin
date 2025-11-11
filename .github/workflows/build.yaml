@@ -159,3 +159,67 @@ jobs:
         generate_release_notes: true
         prerelease: true
         draft: false
+
+    # Publish to ArcGIS Online (only for production releases)
+    - name: Publish to ArcGIS Online
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev') && (secrets.AGOL_CLIENT_ID != '' || secrets.AGOL_USERNAME != '')
+      shell: powershell
+      run: |
+        $addinFile = Get-ChildItem -Path "bin/Release/net8.0-windows" -Filter "*.esriAddInX" | Select-Object -First 1
+        
+        if (-not $addinFile) {
+          Write-Error "No .esriAddInX file found"
+          exit 1
+        }
+
+        # Determine authentication method
+        $authMethod = "token"
+        if ($env:AGOL_CLIENT_ID -and $env:AGOL_CLIENT_SECRET) {
+          $authMethod = "token"
+        } elseif ($env:AGOL_USERNAME -and $env:AGOL_PASSWORD) {
+          $authMethod = "username"
+        } else {
+          Write-Warning "No AGOL credentials found. Skipping AGOL publishing."
+          exit 0
+        }
+
+        # Build script parameters
+        $scriptParams = @{
+          AddInFile = $addinFile.FullName
+          ItemId = "${{ secrets.AGOL_ITEM_ID }}"
+          AuthMethod = $authMethod
+        }
+
+        # Add authentication parameters
+        if ($authMethod -eq "token") {
+          $scriptParams.ClientId = "${{ secrets.AGOL_CLIENT_ID }}"
+          $scriptParams.ClientSecret = "${{ secrets.AGOL_CLIENT_SECRET }}"
+        } else {
+          $scriptParams.Username = "${{ secrets.AGOL_USERNAME }}"
+          $scriptParams.Password = "${{ secrets.AGOL_PASSWORD }}"
+        }
+
+        # Add optional parameters if provided
+        if ("${{ secrets.AGOL_PORTAL_URL }}" -ne "") {
+          $scriptParams.PortalUrl = "${{ secrets.AGOL_PORTAL_URL }}"
+        }
+
+        if ("${{ secrets.AGOL_TITLE }}" -ne "") {
+          $scriptParams.Title = "${{ secrets.AGOL_TITLE }}"
+        }
+
+        if ("${{ secrets.AGOL_DESCRIPTION }}" -ne "") {
+          $scriptParams.Description = "${{ secrets.AGOL_DESCRIPTION }}"
+        }
+
+        if ("${{ secrets.AGOL_TAGS }}" -ne "") {
+          $scriptParams.Tags = "${{ secrets.AGOL_TAGS }}"
+        }
+
+        # Run the publishing script
+        pwsh ./.github/workflows/publish-agol.ps1 @scriptParams
+      env:
+        AGOL_CLIENT_ID: ${{ secrets.AGOL_CLIENT_ID }}
+        AGOL_CLIENT_SECRET: ${{ secrets.AGOL_CLIENT_SECRET }}
+        AGOL_USERNAME: ${{ secrets.AGOL_USERNAME }}
+        AGOL_PASSWORD: ${{ secrets.AGOL_PASSWORD }}
