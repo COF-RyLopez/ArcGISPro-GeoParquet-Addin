@@ -138,7 +138,11 @@ def main():
             sys.exit(1)
         
         print(f"[OK] Authentication successful")
-        print(f"     Logged in as: {gis.users.me.username}")
+        # With OAuth2 app client authentication, there may not be a user object
+        if gis.users.me:
+            print(f"     Logged in as: {gis.users.me.username}")
+        else:
+            print(f"     Authenticated as application (OAuth2 client credentials)")
         print()
         
         # Step 2: Get the item
