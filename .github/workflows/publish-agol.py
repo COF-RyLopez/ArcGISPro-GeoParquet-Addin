@@ -106,20 +106,26 @@ def main():
         # Step 1: Authenticate
         print("🔐 Authenticating with ArcGIS Online...")
         
-        if args.auth_method == "token":
-            # OAuth2 app client authentication
-            gis = GIS(
-                url=args.portal_url,
-                client_id=args.client_id,
-                client_secret=args.client_secret
-            )
-        else:
-            # Username/password authentication
-            gis = GIS(
-                url=args.portal_url,
-                username=args.username,
-                password=args.password
-            )
+        try:
+            if args.auth_method == "token":
+                # OAuth2 app client authentication
+                gis = GIS(
+                    url=args.portal_url,
+                    client_id=args.client_id,
+                    client_secret=args.client_secret
+                )
+            else:
+                # Username/password authentication
+                gis = GIS(
+                    url=args.portal_url,
+                    username=args.username,
+                    password=args.password
+                )
+        except Exception as e:
+            print(f"ERROR: Authentication failed: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
         
         print(f"✅ Authentication successful")
         print(f"   Logged in as: {gis.users.me.username}")
@@ -127,7 +133,13 @@ def main():
         
         # Step 2: Get the item
         print("📦 Retrieving add-in item...")
-        item = gis.content.get(args.item_id)
+        try:
+            item = gis.content.get(args.item_id)
+        except Exception as e:
+            print(f"ERROR: Failed to retrieve item: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
         
         if not item:
             print(f"ERROR: Item {args.item_id} not found or you don't have access to it")
@@ -138,15 +150,26 @@ def main():
         
         # Step 3: Update the file
         print("📤 Uploading add-in file...")
-        update_result = item.update(
-            data=str(addin_path),
-            thumbnail=None  # Keep existing thumbnail
-        )
+        print(f"   File path: {addin_path}")
+        print(f"   File exists: {addin_path.exists()}")
+        print(f"   File size: {addin_path.stat().st_size / 1024 / 1024:.2f} MB")
+        print()
         
-        if update_result:
-            print("✅ File uploaded successfully")
-        else:
-            print("WARNING: Update returned False, but file may have been uploaded")
+        try:
+            update_result = item.update(
+                data=str(addin_path),
+                thumbnail=None  # Keep existing thumbnail
+            )
+            
+            if update_result:
+                print("✅ File uploaded successfully")
+            else:
+                print("WARNING: Update returned False, but file may have been uploaded")
+        except Exception as e:
+            print(f"ERROR: File upload failed: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
         print()
         
         # Step 4: Update metadata (if provided)
