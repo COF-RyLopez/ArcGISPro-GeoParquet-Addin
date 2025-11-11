@@ -185,29 +185,36 @@ jobs:
         
         echo "Found add-in file: $ADDIN_FILE"
         
-        # Determine authentication method
-        AUTH_ARGS=""
+        # Determine authentication method and build Python command
         if [ -n "$AGOL_CLIENT_ID" ] && [ -n "$AGOL_CLIENT_SECRET" ]; then
           echo "✅ Using OAuth2 token authentication"
-          AUTH_ARGS="--auth-method token --client-id \"$AGOL_CLIENT_ID\" --client-secret \"$AGOL_CLIENT_SECRET\""
+          python ./.github/workflows/publish-agol.py \
+            --auth-method token \
+            --client-id "$AGOL_CLIENT_ID" \
+            --client-secret "$AGOL_CLIENT_SECRET" \
+            --addin-file "$ADDIN_FILE" \
+            --item-id "$AGOL_ITEM_ID" \
+            ${AGOL_PORTAL_URL:+--portal-url "$AGOL_PORTAL_URL"} \
+            ${AGOL_TITLE:+--title "$AGOL_TITLE"} \
+            ${AGOL_DESCRIPTION:+--description "$AGOL_DESCRIPTION"} \
+            ${AGOL_TAGS:+--tags "$AGOL_TAGS"}
         elif [ -n "$AGOL_USERNAME" ] && [ -n "$AGOL_PASSWORD" ]; then
           echo "✅ Using username/password authentication"
-          AUTH_ARGS="--auth-method username --username \"$AGOL_USERNAME\" --password \"$AGOL_PASSWORD\""
+          python ./.github/workflows/publish-agol.py \
+            --auth-method username \
+            --username "$AGOL_USERNAME" \
+            --password "$AGOL_PASSWORD" \
+            --addin-file "$ADDIN_FILE" \
+            --item-id "$AGOL_ITEM_ID" \
+            ${AGOL_PORTAL_URL:+--portal-url "$AGOL_PORTAL_URL"} \
+            ${AGOL_TITLE:+--title "$AGOL_TITLE"} \
+            ${AGOL_DESCRIPTION:+--description "$AGOL_DESCRIPTION"} \
+            ${AGOL_TAGS:+--tags "$AGOL_TAGS"}
         else
           echo "WARNING: No AGOL credentials found. Skipping AGOL publishing."
           echo "Please ensure AGOL_CLIENT_ID and AGOL_CLIENT_SECRET are set in GitHub Secrets"
           exit 0
         fi
-        
-        # Run the Python script with proper argument handling
-        python ./.github/workflows/publish-agol.py \
-          $AUTH_ARGS \
-          --addin-file "$ADDIN_FILE" \
-          --item-id "$AGOL_ITEM_ID" \
-          ${AGOL_PORTAL_URL:+--portal-url "$AGOL_PORTAL_URL"} \
-          ${AGOL_TITLE:+--title "$AGOL_TITLE"} \
-          ${AGOL_DESCRIPTION:+--description "$AGOL_DESCRIPTION"} \
-          ${AGOL_TAGS:+--tags "$AGOL_TAGS"}
       env:
         AGOL_CLIENT_ID: ${{ secrets.AGOL_CLIENT_ID }}
         AGOL_CLIENT_SECRET: ${{ secrets.AGOL_CLIENT_SECRET }}
