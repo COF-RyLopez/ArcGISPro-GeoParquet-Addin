@@ -12,6 +12,16 @@ import sys
 import argparse
 from pathlib import Path
 
+# Fix Windows console encoding issues
+if sys.platform == "win32":
+    # Set UTF-8 encoding for stdout/stderr on Windows
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    # Also set environment variable for subprocess calls
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+
 try:
     from arcgis.gis import GIS
     from arcgis import __version__ as arcgis_version
@@ -104,7 +114,7 @@ def main():
     
     try:
         # Step 1: Authenticate
-        print("🔐 Authenticating with ArcGIS Online...")
+        print("[AUTH] Authenticating with ArcGIS Online...")
         
         try:
             if args.auth_method == "token":
@@ -127,12 +137,12 @@ def main():
             traceback.print_exc()
             sys.exit(1)
         
-        print(f"✅ Authentication successful")
-        print(f"   Logged in as: {gis.users.me.username}")
+        print(f"[OK] Authentication successful")
+        print(f"     Logged in as: {gis.users.me.username}")
         print()
         
         # Step 2: Get the item
-        print("📦 Retrieving add-in item...")
+        print("[GET] Retrieving add-in item...")
         try:
             item = gis.content.get(args.item_id)
         except Exception as e:
@@ -145,14 +155,14 @@ def main():
             print(f"ERROR: Item {args.item_id} not found or you don't have access to it")
             sys.exit(1)
         
-        print(f"✅ Found item: {item.title}")
+        print(f"[OK] Found item: {item.title}")
         print()
         
         # Step 3: Update the file
-        print("📤 Uploading add-in file...")
-        print(f"   File path: {addin_path}")
-        print(f"   File exists: {addin_path.exists()}")
-        print(f"   File size: {addin_path.stat().st_size / 1024 / 1024:.2f} MB")
+        print("[UPLOAD] Uploading add-in file...")
+        print(f"        File path: {addin_path}")
+        print(f"        File exists: {addin_path.exists()}")
+        print(f"        File size: {addin_path.stat().st_size / 1024 / 1024:.2f} MB")
         print()
         
         try:
@@ -162,7 +172,7 @@ def main():
             )
             
             if update_result:
-                print("✅ File uploaded successfully")
+                print("[OK] File uploaded successfully")
             else:
                 print("WARNING: Update returned False, but file may have been uploaded")
         except Exception as e:
@@ -184,24 +194,24 @@ def main():
             metadata_updates["tags"] = tag_list
         
         if metadata_updates:
-            print("📝 Updating item metadata...")
+            print("[METADATA] Updating item metadata...")
             try:
                 item.update(metadata_updates)
-                print("✅ Metadata updated successfully")
+                print("[OK] Metadata updated successfully")
             except Exception as e:
                 print(f"WARNING: Metadata update failed: {e}")
                 # Don't fail the whole process for metadata issues
         print()
         
         # Step 5: Verify the update
-        print("🔍 Verifying update...")
+        print("[VERIFY] Verifying update...")
         updated_item = gis.content.get(args.item_id)
-        print(f"✅ Item updated successfully")
-        print(f"   Item URL: {args.portal_url}/home/item.html?id={args.item_id}")
-        print(f"   Modified: {updated_item.modified}")
+        print(f"[OK] Item updated successfully")
+        print(f"     Item URL: {args.portal_url}/home/item.html?id={args.item_id}")
+        print(f"     Modified: {updated_item.modified}")
         print()
         
-        print("✅ Successfully published to ArcGIS Online!" + "\033[92m")  # Green color
+        print("[SUCCESS] Successfully published to ArcGIS Online!")
         print()
         
         sys.exit(0)
