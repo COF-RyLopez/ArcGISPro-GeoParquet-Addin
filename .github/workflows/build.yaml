@@ -161,72 +161,72 @@ jobs:
         draft: false
 
     # Publish to ArcGIS Online (only for production releases)
+    - name: Setup Python
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install arcgis-python-api
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
+      run: pip install arcgis
+    
     - name: Publish to ArcGIS Online
       if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
-      shell: powershell
+      shell: bash
       run: |
-        $addinFile = Get-ChildItem -Path "bin/Release/net8.0-windows" -Filter "*.esriAddInX" | Select-Object -First 1
+        # Find the add-in file
+        ADDIN_FILE=$(find bin/Release/net8.0-windows -name "*.esriAddInX" -type f | head -n 1)
         
-        if (-not $addinFile) {
-          Write-Error "No .esriAddInX file found"
+        if [ -z "$ADDIN_FILE" ]; then
+          echo "ERROR: No .esriAddInX file found"
           exit 1
-        }
-
-        # Determine authentication method
-        Write-Host "Checking for AGOL credentials..."
-        Write-Host "AGOL_CLIENT_ID exists: $($env:AGOL_CLIENT_ID -ne $null -and $env:AGOL_CLIENT_ID -ne '')"
-        Write-Host "AGOL_CLIENT_SECRET exists: $($env:AGOL_CLIENT_SECRET -ne $null -and $env:AGOL_CLIENT_SECRET -ne '')"
+        fi
         
-        $authMethod = "token"
-        if ($env:AGOL_CLIENT_ID -and $env:AGOL_CLIENT_SECRET) {
-          $authMethod = "token"
-          Write-Host "✅ Using OAuth2 token authentication"
-        } elseif ($env:AGOL_USERNAME -and $env:AGOL_PASSWORD) {
-          $authMethod = "username"
-          Write-Host "✅ Using username/password authentication"
-        } else {
-          Write-Warning "No AGOL credentials found. Skipping AGOL publishing."
-          Write-Warning "Please ensure AGOL_CLIENT_ID and AGOL_CLIENT_SECRET are set in GitHub Secrets"
+        echo "Found add-in file: $ADDIN_FILE"
+        
+        # Determine authentication method
+        AUTH_ARGS=""
+        if [ -n "$AGOL_CLIENT_ID" ] && [ -n "$AGOL_CLIENT_SECRET" ]; then
+          echo "✅ Using OAuth2 token authentication"
+          AUTH_ARGS="--client-id $AGOL_CLIENT_ID --client-secret $AGOL_CLIENT_SECRET"
+        elif [ -n "$AGOL_USERNAME" ] && [ -n "$AGOL_PASSWORD" ]; then
+          echo "✅ Using username/password authentication"
+          AUTH_ARGS="--username $AGOL_USERNAME --password $AGOL_PASSWORD"
+        else
+          echo "WARNING: No AGOL credentials found. Skipping AGOL publishing."
+          echo "Please ensure AGOL_CLIENT_ID and AGOL_CLIENT_SECRET are set in GitHub Secrets"
           exit 0
-        }
-
-        # Build script parameters
-        $scriptParams = @{
-          AddInFile = $addinFile.FullName
-          ItemId = "${{ secrets.AGOL_ITEM_ID }}"
-          AuthMethod = $authMethod
-        }
-
-        # Add authentication parameters
-        if ($authMethod -eq "token") {
-          $scriptParams.ClientId = "${{ secrets.AGOL_CLIENT_ID }}"
-          $scriptParams.ClientSecret = "${{ secrets.AGOL_CLIENT_SECRET }}"
-        } else {
-          $scriptParams.Username = "${{ secrets.AGOL_USERNAME }}"
-          $scriptParams.Password = "${{ secrets.AGOL_PASSWORD }}"
-        }
-
-        # Add optional parameters if provided
-        if ("${{ secrets.AGOL_PORTAL_URL }}" -ne "") {
-          $scriptParams.PortalUrl = "${{ secrets.AGOL_PORTAL_URL }}"
-        }
-
-        if ("${{ secrets.AGOL_TITLE }}" -ne "") {
-          $scriptParams.Title = "${{ secrets.AGOL_TITLE }}"
-        }
-
-        if ("${{ secrets.AGOL_DESCRIPTION }}" -ne "") {
-          $scriptParams.Description = "${{ secrets.AGOL_DESCRIPTION }}"
-        }
-
-        if ("${{ secrets.AGOL_TAGS }}" -ne "") {
-          $scriptParams.Tags = "${{ secrets.AGOL_TAGS }}"
-        }
-
-        # Run the publishing script
-        pwsh ./.github/workflows/publish-agol.ps1 @scriptParams
+        fi
+        
+        # Build command arguments
+        CMD_ARGS="--addin-file \"$ADDIN_FILE\" --item-id $AGOL_ITEM_ID"
+        
+        if [ -n "$AGOL_PORTAL_URL" ]; then
+          CMD_ARGS="$CMD_ARGS --portal-url $AGOL_PORTAL_URL"
+        fi
+        
+        if [ -n "$AGOL_TITLE" ]; then
+          CMD_ARGS="$CMD_ARGS --title \"$AGOL_TITLE\""
+        fi
+        
+        if [ -n "$AGOL_DESCRIPTION" ]; then
+          CMD_ARGS="$CMD_ARGS --description \"$AGOL_DESCRIPTION\""
+        fi
+        
+        if [ -n "$AGOL_TAGS" ]; then
+          CMD_ARGS="$CMD_ARGS --tags \"$AGOL_TAGS\""
+        fi
+        
+        # Run the Python script
+        python ./.github/workflows/publish-agol.py $AUTH_ARGS $CMD_ARGS
       env:
         AGOL_CLIENT_ID: ${{ secrets.AGOL_CLIENT_ID }}
         AGOL_CLIENT_SECRET: ${{ secrets.AGOL_CLIENT_SECRET }}
         AGOL_USERNAME: ${{ secrets.AGOL_USERNAME }}
         AGOL_PASSWORD: ${{ secrets.AGOL_PASSWORD }}
+        AGOL_ITEM_ID: ${{ secrets.AGOL_ITEM_ID }}
+        AGOL_PORTAL_URL: ${{ secrets.AGOL_PORTAL_URL }}
+        AGOL_TITLE: ${{ secrets.AGOL_TITLE }}
+        AGOL_DESCRIPTION: ${{ secrets.AGOL_DESCRIPTION }}
+        AGOL_TAGS: ${{ secrets.AGOL_TAGS }}
