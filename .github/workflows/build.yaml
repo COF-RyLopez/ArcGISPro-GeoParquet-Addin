@@ -199,27 +199,15 @@ jobs:
           exit 0
         fi
         
-        # Build command arguments
-        CMD_ARGS="--addin-file \"$ADDIN_FILE\" --item-id $AGOL_ITEM_ID"
-        
-        if [ -n "$AGOL_PORTAL_URL" ]; then
-          CMD_ARGS="$CMD_ARGS --portal-url $AGOL_PORTAL_URL"
-        fi
-        
-        if [ -n "$AGOL_TITLE" ]; then
-          CMD_ARGS="$CMD_ARGS --title \"$AGOL_TITLE\""
-        fi
-        
-        if [ -n "$AGOL_DESCRIPTION" ]; then
-          CMD_ARGS="$CMD_ARGS --description \"$AGOL_DESCRIPTION\""
-        fi
-        
-        if [ -n "$AGOL_TAGS" ]; then
-          CMD_ARGS="$CMD_ARGS --tags \"$AGOL_TAGS\""
-        fi
-        
-        # Run the Python script
-        python ./.github/workflows/publish-agol.py $AUTH_ARGS $CMD_ARGS
+        # Run the Python script with proper argument handling
+        python ./.github/workflows/publish-agol.py \
+          $AUTH_ARGS \
+          --addin-file "$ADDIN_FILE" \
+          --item-id "$AGOL_ITEM_ID" \
+          ${AGOL_PORTAL_URL:+--portal-url "$AGOL_PORTAL_URL"} \
+          ${AGOL_TITLE:+--title "$AGOL_TITLE"} \
+          ${AGOL_DESCRIPTION:+--description "$AGOL_DESCRIPTION"} \
+          ${AGOL_TAGS:+--tags "$AGOL_TAGS"}
       env:
         AGOL_CLIENT_ID: ${{ secrets.AGOL_CLIENT_ID }}
         AGOL_CLIENT_SECRET: ${{ secrets.AGOL_CLIENT_SECRET }}
