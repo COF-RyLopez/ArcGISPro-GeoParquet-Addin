@@ -171,19 +171,34 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
       run: pip install arcgis
     
+    - name: Find add-in file
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
+      id: find_addin
+      shell: powershell
+      run: |
+        $addinFile = Get-ChildItem -Path "bin/Release/net8.0-windows" -Filter "*.esriAddInX" -Recurse | Select-Object -First 1
+        if ($addinFile) {
+          $fullPath = $addinFile.FullName
+          Write-Host "Found add-in file: $fullPath"
+          echo "ADDIN_FILE=$fullPath" >> $env:GITHUB_OUTPUT
+        } else {
+          Write-Host "ERROR: No .esriAddInX file found in bin/Release/net8.0-windows"
+          Get-ChildItem -Path "bin/Release" -Recurse | Select-Object FullName | Format-Table
+          exit 1
+        }
+    
     - name: Publish to ArcGIS Online
       if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
       shell: bash
       run: |
-        # Find the add-in file
-        ADDIN_FILE=$(find bin/Release/net8.0-windows -name "*.esriAddInX" -type f | head -n 1)
+        ADDIN_FILE="${{ steps.find_addin.outputs.ADDIN_FILE }}"
         
         if [ -z "$ADDIN_FILE" ]; then
           echo "ERROR: No .esriAddInX file found"
           exit 1
         fi
         
-        echo "Found add-in file: $ADDIN_FILE"
+        echo "Using add-in file: $ADDIN_FILE"
         
         # Determine authentication method and build Python command
         if [ -n "$AGOL_CLIENT_ID" ] && [ -n "$AGOL_CLIENT_SECRET" ]; then
