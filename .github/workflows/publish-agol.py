@@ -180,7 +180,41 @@ def main():
             else:
                 print("WARNING: Update returned False, but file may have been uploaded")
         except Exception as e:
-            print(f"ERROR: File upload failed: {e}")
+            error_msg = str(e)
+            print(f"ERROR: File upload failed: {error_msg}")
+            
+            # Provide helpful guidance for common errors
+            if "403" in error_msg or "permissions" in error_msg.lower():
+                print()
+                print("=" * 70)
+                print("PERMISSION ERROR - Troubleshooting Steps:")
+                print("=" * 70)
+                print()
+                if args.auth_method == "token":
+                    print("OAuth2 App Client Credentials may not have permission to update items.")
+                    print()
+                    print("SOLUTION 1: Grant permissions to the OAuth2 app:")
+                    print("  1. Go to ArcGIS Online → Content → Your OAuth credentials item")
+                    print("  2. Check the Settings tab for permission/scopes configuration")
+                    print("  3. Ensure the app has 'Content: Update' or similar permissions")
+                    print()
+                    print("SOLUTION 2: Use username/password authentication instead:")
+                    print("  - Set AGOL_USERNAME and AGOL_PASSWORD in GitHub Secrets")
+                    print("  - Remove AGOL_CLIENT_ID and AGOL_CLIENT_SECRET")
+                    print("  - Username/password auth has full user permissions")
+                    print()
+                    print("SOLUTION 3: Ensure the item is owned/shared with the app:")
+                    print("  - The add-in item must be accessible to the OAuth2 app")
+                    print("  - Check item sharing settings in ArcGIS Online")
+                else:
+                    print("Username/password authentication should have full permissions.")
+                    print("Check that:")
+                    print("  1. The username/password are correct")
+                    print("  2. The account has permission to update the item")
+                    print("  3. The item ID is correct")
+                print("=" * 70)
+                print()
+            
             import traceback
             traceback.print_exc()
             sys.exit(1)

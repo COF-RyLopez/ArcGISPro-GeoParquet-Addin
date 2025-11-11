@@ -127,8 +127,26 @@ If the publishing step is skipped, check:
 - **Username/Password**: Verify credentials are correct and account is active
 - Check that the app/client has permission to update items
 
-### Upload Fails
+### Upload Fails (403 Permission Error)
 
+If you see a "403 - You do not have permissions" error:
+
+**For OAuth2 App Client Credentials:**
+- OAuth2 app client credentials may not have permission to update items by default
+- **Solution 1**: Grant permissions to the OAuth2 app:
+  1. Go to ArcGIS Online → Content → Your OAuth credentials item
+  2. Check the Settings tab for permission/scopes configuration
+  3. Ensure the app has "Content: Update" or similar permissions
+- **Solution 2**: Use username/password authentication instead (recommended):
+  - OAuth2 app client credentials have limited permissions
+  - Username/password authentication has full user permissions
+  - Set `AGOL_USERNAME` and `AGOL_PASSWORD` in GitHub Secrets
+  - Remove `AGOL_CLIENT_ID` and `AGOL_CLIENT_SECRET` (or leave them empty)
+- **Solution 3**: Ensure the item is owned/shared with the app:
+  - The add-in item must be accessible to the OAuth2 app
+  - Check item sharing settings in ArcGIS Online
+
+**For Username/Password:**
 - Verify the Item ID is correct
 - Check that you have permission to update the item
 - Ensure the item exists in ArcGIS Online
