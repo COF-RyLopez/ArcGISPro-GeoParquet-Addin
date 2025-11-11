@@ -111,13 +111,26 @@ try {
             client_id = $ClientId
             client_secret = $ClientSecret
             grant_type = "client_credentials"
-        } | ConvertTo-Json
+        }
         
-        $tokenResponse = Invoke-RestMethod -Uri $tokenUrl -Method Post -Body $tokenBody -ContentType "application/x-www-form-urlencoded"
-        $token = $tokenResponse.access_token
-        
-        if (-not $token) {
-            Write-Error "Failed to obtain access token"
+        try {
+            $tokenResponse = Invoke-RestMethod -Uri $tokenUrl -Method Post -Body $tokenBody -ContentType "application/x-www-form-urlencoded"
+            $token = $tokenResponse.access_token
+            
+            if (-not $token) {
+                if ($tokenResponse.error) {
+                    Write-Error "Failed to obtain access token: $($tokenResponse.error.message) - $($tokenResponse.error.details)"
+                } else {
+                    Write-Error "Failed to obtain access token: No access_token in response"
+                }
+                exit 1
+            }
+        }
+        catch {
+            Write-Error "Authentication request failed: $_"
+            if ($_.ErrorDetails.Message) {
+                Write-Error "Response: $($_.ErrorDetails.Message)"
+            }
             exit 1
         }
         Write-Host "✅ Authentication successful (OAuth2)"
