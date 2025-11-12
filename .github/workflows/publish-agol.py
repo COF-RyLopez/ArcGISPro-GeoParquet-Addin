@@ -162,21 +162,46 @@ def main():
         print(f"[OK] Found item: {item.title}")
         print()
         
-        # Step 3: Update the file
+        # Step 3: Prepare metadata updates (if provided)
+        metadata_updates = {}
+        if args.title:
+            metadata_updates["title"] = args.title
+        if args.description:
+            metadata_updates["description"] = args.description
+        if args.tags:
+            # Tags should be a list
+            tag_list = [tag.strip() for tag in args.tags.split(",")]
+            metadata_updates["tags"] = tag_list
+        
+        # Step 4: Update the file and metadata together
         print("[UPLOAD] Uploading add-in file...")
         print(f"        File path: {addin_path}")
         print(f"        File exists: {addin_path.exists()}")
         print(f"        File size: {addin_path.stat().st_size / 1024 / 1024:.2f} MB")
+        if metadata_updates:
+            print(f"        Also updating metadata: {', '.join(metadata_updates.keys())}")
+            if args.description:
+                print(f"        Description length: {len(args.description)} characters")
         print()
         
         try:
-            update_result = item.update(
-                data=str(addin_path),
-                thumbnail=None  # Keep existing thumbnail
-            )
+            # Update file and metadata together if metadata is provided
+            if metadata_updates:
+                update_result = item.update(
+                    data=str(addin_path),
+                    thumbnail=None,  # Keep existing thumbnail
+                    item_properties=metadata_updates
+                )
+            else:
+                update_result = item.update(
+                    data=str(addin_path),
+                    thumbnail=None  # Keep existing thumbnail
+                )
             
             if update_result:
                 print("[OK] File uploaded successfully")
+                if metadata_updates:
+                    print("[OK] Metadata updated successfully")
             else:
                 print("WARNING: Update returned False, but file may have been uploaded")
         except Exception as e:
@@ -220,51 +245,29 @@ def main():
             sys.exit(1)
         print()
         
-        # Step 4: Update metadata (if provided)
-        metadata_updates = {}
-        if args.title:
-            metadata_updates["title"] = args.title
+        # Step 5: Verify metadata update (if description was provided)
         if args.description:
-            metadata_updates["description"] = args.description
-        if args.tags:
-            # Tags should be a list
-            tag_list = [tag.strip() for tag in args.tags.split(",")]
-            metadata_updates["tags"] = tag_list
-        
-        if metadata_updates:
-            print("[METADATA] Updating item metadata...")
-            print(f"        Updating: {', '.join(metadata_updates.keys())}")
-            if args.description:
-                print(f"        Description length: {len(args.description)} characters")
-                print(f"        Description preview: {args.description[:200]}...")
+            print("[VERIFY] Verifying description update...")
             try:
-                # Use item_properties parameter as per ArcGIS API documentation
-                result = item.update(item_properties=metadata_updates)
-                print(f"[OK] Metadata update returned: {result}")
-                if args.description:
-                    # Verify the update by fetching the item again
-                    updated_item = gis.content.get(args.item_id)
-                    if updated_item.description:
-                        print(f"        Verified: Description updated ({len(updated_item.description)} chars)")
-                    else:
-                        print("        WARNING: Description appears empty after update")
+                # Refresh the item to get latest data
+                updated_item = gis.content.get(args.item_id)
+                if updated_item.description:
+                    print(f"        Verified: Description updated ({len(updated_item.description)} chars)")
+                    print(f"        Preview: {updated_item.description[:200]}...")
+                else:
+                    print("        WARNING: Description appears empty after update")
+                    # Try updating description separately as fallback
+                    print("        Attempting separate description update...")
+                    try:
+                        item.update(item_properties={"description": args.description})
+                        print("        [OK] Description updated via separate call")
+                    except Exception as e2:
+                        print(f"        ERROR: Separate update also failed: {e2}")
             except Exception as e:
-                print(f"WARNING: Metadata update failed: {e}")
-                import traceback
-                traceback.print_exc()
-                # Try alternative method (some API versions accept dict directly)
-                try:
-                    print("        Trying alternative update method...")
-                    result = item.update(metadata_updates)
-                    print(f"[OK] Metadata updated successfully (alternative method): {result}")
-                except Exception as e2:
-                    print(f"ERROR: Both update methods failed: {e2}")
-                    import traceback
-                    traceback.print_exc()
-                    # Don't fail the whole process for metadata issues
-        print()
+                print(f"        WARNING: Verification failed: {e}")
+            print()
         
-        # Step 5: Verify the update
+        # Step 6: Final verification
         print("[VERIFY] Verifying update...")
         updated_item = gis.content.get(args.item_id)
         print(f"[OK] Item updated successfully")
