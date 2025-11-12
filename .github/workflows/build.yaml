@@ -186,37 +186,38 @@ jobs:
         # Get previous tag (excluding -dev and -test tags)
         PREV_TAG=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | grep -v "$CURRENT_TAG" | head -1 || echo "")
         
-        # Get commits - handle errors gracefully
+        # Get commits - handle errors gracefully, filter out CI/CD noise
         COMMITS=""
         if [ -z "$PREV_TAG" ]; then
           # If no previous tag, get last 10 commits
-          COMMITS=$(git log --oneline --pretty=format:"- %s" -10 2>/dev/null || echo "")
+          COMMITS=$(git log --oneline --pretty=format:"%s" -10 2>/dev/null || echo "")
         else
-          # Get commits since previous release (excluding merge commits and version bumps)
-          COMMITS=$(git log ${PREV_TAG}..HEAD --oneline --pretty=format:"- %s" --no-merges 2>/dev/null | grep -v "chore: bump version" | head -10 || echo "")
+          # Get commits since previous release (excluding merge commits, version bumps, debug, and CI/CD commits)
+          COMMITS=$(git log ${PREV_TAG}..HEAD --oneline --pretty=format:"%s" --no-merges 2>/dev/null | \
+            grep -v -E "(chore: bump version|debug:|fix:.*workflow|feat:.*workflow|ci:|skip ci)" | \
+            head -5 || echo "")
         fi
         
-        # Build description using a here-doc to avoid escaping issues
+        # Build a clean version line with meaningful improvements
+        VERSION_LINE="Latest Version: v${VERSION}"
+        if [ -n "$COMMITS" ] && [ "$COMMITS" != "" ]; then
+          # Extract meaningful improvements (remove prefixes, make user-friendly)
+          IMPROVEMENTS=$(echo "$COMMITS" | \
+            sed 's/^fix: //' | sed 's/^feat: //' | sed 's/^chore: //' | \
+            sed 's/^docs: //' | sed 's/^refactor: //' | \
+            head -3 | \
+            sed 's/^/• /' | \
+            tr '\n' ' ' | sed 's/  */ /g')
+          
+          if [ -n "$IMPROVEMENTS" ] && [ "$IMPROVEMENTS" != "" ]; then
+            VERSION_LINE="${VERSION_LINE} with ${IMPROVEMENTS}"
+          fi
+        fi
+        
+        # Build description - only the version line to update existing description
         {
           echo 'DESCRIPTION<<EOF'
-          echo "Latest Version: v${VERSION}"
-          echo ""
-          if [ -n "$COMMITS" ] && [ "$COMMITS" != "" ]; then
-            echo "with the following improvements:"
-            echo ""
-            echo "$COMMITS"
-            echo ""
-          fi
-          echo "Key Features:"
-          echo "- Automated publishing to ArcGIS Online from GitHub Actions"
-          echo "- High-performance GeoParquet processing with DuckDB"
-          echo "- Overture Maps Foundation data integration"
-          echo "- Multi-file feature connection (MFC) support"
-          echo "- Spatial filtering by map extent"
-          echo "- Cloud-native data access (S3, Azure, etc.)"
-          echo "- Automated version synchronization from git tags"
-          echo ""
-          echo "For detailed release notes and installation instructions, visit: https://github.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin"
+          echo "$VERSION_LINE"
           echo 'EOF'
         } >> $GITHUB_OUTPUT
         

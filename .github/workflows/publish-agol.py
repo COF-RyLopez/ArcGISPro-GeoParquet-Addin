@@ -167,7 +167,28 @@ def main():
         if args.title:
             metadata_updates["title"] = args.title
         if args.description:
-            metadata_updates["description"] = args.description
+            # If description is just a version line, update only that part of existing description
+            # Otherwise, replace entire description
+            if args.description.startswith("Latest Version:"):
+                # Get current description and update just the version line
+                current_desc = item.description or ""
+                # Replace the "Latest Version:" line if it exists, otherwise prepend
+                import re
+                if re.search(r'Latest Version:\s*v[\d.]+', current_desc):
+                    # Replace existing version line
+                    updated_desc = re.sub(
+                        r'Latest Version:\s*v[\d.]+[^\n]*',
+                        args.description.strip(),
+                        current_desc,
+                        count=1
+                    )
+                else:
+                    # Prepend version line to existing description
+                    updated_desc = args.description.strip() + "\n\n" + current_desc
+                metadata_updates["description"] = updated_desc
+            else:
+                # Full description replacement
+                metadata_updates["description"] = args.description
         if args.tags:
             # Tags should be a list
             tag_list = [tag.strip() for tag in args.tags.split(",")]
