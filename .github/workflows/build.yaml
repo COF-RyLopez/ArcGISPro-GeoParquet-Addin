@@ -171,6 +171,57 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
       run: pip install arcgis
     
+    - name: Generate AGOL description
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
+      id: generate_description
+      shell: bash
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        
+        # Get all tags sorted by version, find the one before current
+        # Get current tag name
+        CURRENT_TAG=$(git describe --tags --exact-match HEAD 2>/dev/null || echo "")
+        
+        # Get previous tag (excluding -dev and -test tags)
+        PREV_TAG=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | grep -v "$CURRENT_TAG" | head -1)
+        
+        if [ -z "$PREV_TAG" ]; then
+          # If no previous tag, get last 10 commits
+          COMMITS=$(git log --oneline --pretty=format:"- %s" -10)
+        else
+          # Get commits since previous release (excluding merge commits and version bumps)
+          COMMITS=$(git log ${PREV_TAG}..HEAD --oneline --pretty=format:"- %s" --no-merges | grep -v "chore: bump version" | head -10)
+        fi
+        
+        # Build description
+        DESCRIPTION="Latest Version: v${VERSION}"
+        
+        # Add key improvements from commits
+        if [ -n "$COMMITS" ]; then
+          DESCRIPTION="${DESCRIPTION} with the following improvements:\n\n"
+          DESCRIPTION="${DESCRIPTION}${COMMITS}\n\n"
+        fi
+        
+        # Add standard features
+        DESCRIPTION="${DESCRIPTION}Key Features:\n"
+        DESCRIPTION="${DESCRIPTION}- Automated publishing to ArcGIS Online from GitHub Actions\n"
+        DESCRIPTION="${DESCRIPTION}- High-performance GeoParquet processing with DuckDB\n"
+        DESCRIPTION="${DESCRIPTION}- Overture Maps Foundation data integration\n"
+        DESCRIPTION="${DESCRIPTION}- Multi-file feature connection (MFC) support\n"
+        DESCRIPTION="${DESCRIPTION}- Spatial filtering by map extent\n"
+        DESCRIPTION="${DESCRIPTION}- Cloud-native data access (S3, Azure, etc.)\n"
+        DESCRIPTION="${DESCRIPTION}- Automated version synchronization from git tags\n\n"
+        DESCRIPTION="${DESCRIPTION}For detailed release notes and installation instructions, visit: https://github.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin"
+        
+        # Output as multiline using GitHub Actions delimiter syntax
+        {
+          echo 'DESCRIPTION<<EOF'
+          echo -e "$DESCRIPTION"
+          echo 'EOF'
+        } >> $GITHUB_OUTPUT
+        
+        echo "Generated description for v${VERSION}"
+    
     - name: Find add-in file
       if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
       id: find_addin
@@ -200,6 +251,18 @@ jobs:
         
         echo "Using add-in file: $ADDIN_FILE"
         
+        # Use generated description if available, otherwise use secret
+        if [ -n "${{ steps.generate_description.outputs.DESCRIPTION }}" ]; then
+          AGOL_DESC="${{ steps.generate_description.outputs.DESCRIPTION }}"
+          echo "✅ Using auto-generated description from git commits"
+        elif [ -n "$AGOL_DESCRIPTION" ]; then
+          AGOL_DESC="$AGOL_DESCRIPTION"
+          echo "✅ Using description from AGOL_DESCRIPTION secret"
+        else
+          AGOL_DESC=""
+          echo "ℹ️  No description provided (using default)"
+        fi
+        
         # Determine authentication method and build Python command
         if [ -n "$AGOL_CLIENT_ID" ] && [ -n "$AGOL_CLIENT_SECRET" ]; then
           echo "✅ Using OAuth2 token authentication"
@@ -211,7 +274,7 @@ jobs:
             --item-id "$AGOL_ITEM_ID" \
             ${AGOL_PORTAL_URL:+--portal-url "$AGOL_PORTAL_URL"} \
             ${AGOL_TITLE:+--title "$AGOL_TITLE"} \
-            ${AGOL_DESCRIPTION:+--description "$AGOL_DESCRIPTION"} \
+            ${AGOL_DESC:+--description "$AGOL_DESC"} \
             ${AGOL_TAGS:+--tags "$AGOL_TAGS"}
         elif [ -n "$AGOL_USERNAME" ] && [ -n "$AGOL_PASSWORD" ]; then
           echo "✅ Using username/password authentication"
@@ -223,7 +286,7 @@ jobs:
             --item-id "$AGOL_ITEM_ID" \
             ${AGOL_PORTAL_URL:+--portal-url "$AGOL_PORTAL_URL"} \
             ${AGOL_TITLE:+--title "$AGOL_TITLE"} \
-            ${AGOL_DESCRIPTION:+--description "$AGOL_DESCRIPTION"} \
+            ${AGOL_DESC:+--description "$AGOL_DESC"} \
             ${AGOL_TAGS:+--tags "$AGOL_TAGS"}
         else
           echo "WARNING: No AGOL credentials found. Skipping AGOL publishing."
