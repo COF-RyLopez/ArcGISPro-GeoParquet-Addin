@@ -234,21 +234,33 @@ def main():
         if metadata_updates:
             print("[METADATA] Updating item metadata...")
             print(f"        Updating: {', '.join(metadata_updates.keys())}")
+            if args.description:
+                print(f"        Description length: {len(args.description)} characters")
+                print(f"        Description preview: {args.description[:200]}...")
             try:
                 # Use item_properties parameter as per ArcGIS API documentation
-                item.update(item_properties=metadata_updates)
-                print("[OK] Metadata updated successfully")
+                result = item.update(item_properties=metadata_updates)
+                print(f"[OK] Metadata update returned: {result}")
                 if args.description:
-                    print(f"        Description length: {len(args.description)} characters")
+                    # Verify the update by fetching the item again
+                    updated_item = gis.content.get(args.item_id)
+                    if updated_item.description:
+                        print(f"        Verified: Description updated ({len(updated_item.description)} chars)")
+                    else:
+                        print("        WARNING: Description appears empty after update")
             except Exception as e:
                 print(f"WARNING: Metadata update failed: {e}")
+                import traceback
+                traceback.print_exc()
                 # Try alternative method (some API versions accept dict directly)
                 try:
                     print("        Trying alternative update method...")
-                    item.update(metadata_updates)
-                    print("[OK] Metadata updated successfully (alternative method)")
+                    result = item.update(metadata_updates)
+                    print(f"[OK] Metadata updated successfully (alternative method): {result}")
                 except Exception as e2:
                     print(f"ERROR: Both update methods failed: {e2}")
+                    import traceback
+                    traceback.print_exc()
                     # Don't fail the whole process for metadata issues
         print()
         

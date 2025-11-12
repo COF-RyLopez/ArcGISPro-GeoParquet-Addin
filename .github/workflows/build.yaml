@@ -249,15 +249,19 @@ jobs:
         echo "Using add-in file: $ADDIN_FILE"
         
         # Use generated description if available, otherwise use secret
-        if [ -n "${{ steps.generate_description.outputs.DESCRIPTION }}" ]; then
-          AGOL_DESC="${{ steps.generate_description.outputs.DESCRIPTION }}"
+        GENERATED_DESC="${{ steps.generate_description.outputs.DESCRIPTION }}"
+        if [ -n "$GENERATED_DESC" ] && [ "$GENERATED_DESC" != "" ]; then
+          AGOL_DESC="$GENERATED_DESC"
           echo "✅ Using auto-generated description from git commits"
-        elif [ -n "$AGOL_DESCRIPTION" ]; then
+          echo "Description preview (first 200 chars): ${AGOL_DESC:0:200}..."
+        elif [ -n "$AGOL_DESCRIPTION" ] && [ "$AGOL_DESCRIPTION" != "" ]; then
           AGOL_DESC="$AGOL_DESCRIPTION"
           echo "✅ Using description from AGOL_DESCRIPTION secret"
         else
           AGOL_DESC=""
           echo "ℹ️  No description provided (using default)"
+          echo "DEBUG: GENERATED_DESC length: ${#GENERATED_DESC}"
+          echo "DEBUG: AGOL_DESCRIPTION length: ${#AGOL_DESCRIPTION}"
         fi
         
         # Determine authentication method and build Python command
