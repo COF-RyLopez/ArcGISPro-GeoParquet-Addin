@@ -233,12 +233,23 @@ def main():
         
         if metadata_updates:
             print("[METADATA] Updating item metadata...")
+            print(f"        Updating: {', '.join(metadata_updates.keys())}")
             try:
-                item.update(metadata_updates)
+                # Use item_properties parameter as per ArcGIS API documentation
+                item.update(item_properties=metadata_updates)
                 print("[OK] Metadata updated successfully")
+                if args.description:
+                    print(f"        Description length: {len(args.description)} characters")
             except Exception as e:
                 print(f"WARNING: Metadata update failed: {e}")
-                # Don't fail the whole process for metadata issues
+                # Try alternative method (some API versions accept dict directly)
+                try:
+                    print("        Trying alternative update method...")
+                    item.update(metadata_updates)
+                    print("[OK] Metadata updated successfully (alternative method)")
+                except Exception as e2:
+                    print(f"ERROR: Both update methods failed: {e2}")
+                    # Don't fail the whole process for metadata issues
         print()
         
         # Step 5: Verify the update
