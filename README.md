@@ -2,7 +2,7 @@
 
 A powerful ArcGIS Pro add-in that simplifies working with cloud-native geospatial data formats, especially GeoParquet files. This tool uses [DuckDB](https://duckdb.org/) to deliver high-performance data processing directly within ArcGIS Pro, making it ideal for both GIS professionals and newcomers alike.
 
-![ArcGIS Pro GeoParquet Add-in](https://raw.githubusercontent.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin/main/Images/addin-icon.png)
+![ArcGIS Pro GeoParquet Add-in](https://cofgisonline.maps.arcgis.com/home/item.html?id=8293d1220b7848848ce316b4fa3263b5)
 
 ## 🎥 See It In Action
 
@@ -167,17 +167,16 @@ The add-in maintains detailed logs that can help diagnose issues:
 
 ## Recent Improvements
 
-### Version 0.1.1 (Latest)
-- **Enhanced DAML Configuration**: Improved UI integration with ArcGIS Pro standards
-- **Better Accessibility**: Enhanced keytips and standard condition usage
-- **Cleaner Codebase**: Removed unused UI elements and optimized configuration
+📦 **Latest Release**: See [GitHub Releases](https://github.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin/releases) for complete release notes and changelog.
 
-### Version 0.1.0
-- **Performance Boost**: 5-15% faster processing through optimized file operations
-- **Smart Dataset Handling**: Automatically skips empty datasets (e.g., bathymetry in inland areas)  
+Release notes are automatically generated from git commits, ensuring you always have the most up-to-date information about what's new in each version.
+
+### Key Recent Features
+- **Automated Releases**: Fully automated CI/CD pipeline for seamless version management
+- **ArcGIS Online Publishing**: Automatic publishing to ArcGIS Marketplace with each release
+- **Performance Optimizations**: 5-15% faster processing through optimized file operations
+- **Smart Dataset Handling**: Automatically skips empty datasets for faster processing
 - **Native GeoParquet**: Fully utilizes ArcGIS Pro 3.5's built-in GeoParquet support
-- **Cleaner Logging**: 70% reduction in debug noise while maintaining essential information
-- **Improved Reliability**: Enhanced error handling and retry logic
 
 ## Contributing
 
@@ -208,5 +207,5 @@ This project is licensed under the MIT License - see the [LICENSE.txt](LICENSE.t
 - [ArcGIS Pro SDK](https://pro.arcgis.com/en/pro-app/latest/sdk/) for development tools
 - [Chris Holmes](https://github.com/cholmes) for pioneering the DuckDB + Overture approach in QGIS
 - [Mark Litwintschik](https://tech.marksblogg.com/) for the excellent technical documentation
-- [Youssef Harby](https://www.linkedin.com/in/youssef-harby/) for implementing the professional CI/CD pipeline
+- [Youssef Harby](https://www.linkedin.com/in/yharby/) for implementing the professional CI/CD pipeline
 - All contributors who have helped improve this add-in

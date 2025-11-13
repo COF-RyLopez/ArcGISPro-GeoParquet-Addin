@@ -27,6 +27,24 @@
         <!-- Header with title and version info -->
         <StackPanel Grid.Row="0" Margin="16,12,16,0">
             <TextBlock Text="{Binding LatestRelease, StringFormat='Overture Release: {0}'}" Style="{DynamicResource Esri_TextBlockH2}" Foreground="{DynamicResource Esri_TextCaptionActiveBrush}"/>
+            <!-- Manual release entry shown only if online fetch fails -->
+            <Border Visibility="{Binding IsManualReleaseEntryVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
+                    BorderBrush="{DynamicResource Esri_BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="2"
+                    Padding="8"
+                    Margin="0,8,0,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Manual release (offline):" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBox Grid.Column="1" Text="{Binding ManualReleaseText, UpdateSourceTrigger=PropertyChanged}" Style="{DynamicResource Esri_TextBox}"/>
+                    <Button Grid.Column="2" Content="Apply" Command="{Binding ApplyManualReleaseCommand}" Style="{DynamicResource Esri_Button}" Margin="8,0,0,0"/>
+                </Grid>
+            </Border>
         </StackPanel>
         <!-- Main content area with TabControl -->
         <TabControl Grid.Row="1" Margin="0,8,0,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">

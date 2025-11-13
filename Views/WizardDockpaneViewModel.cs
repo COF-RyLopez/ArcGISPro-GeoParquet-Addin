@@ -23,6 +23,7 @@ using System.IO;
 using System.Windows.Forms;
 using System.Threading;
 using ArcGIS.Desktop.Core; // Added for Project.Current
+using System.Net;
 
 namespace DuckDBGeoparquet.Views
 {
@@ -464,6 +465,7 @@ namespace DuckDBGeoparquet.Views
             BrowseCustomDataFolderCommand = new RelayCommand(() => BrowseCustomDataFolder());
             CreateMfcCommand = new RelayCommand(async () => await CreateMfcAsync(), () => (UsePreviouslyLoadedData && !string.IsNullOrEmpty(_lastLoadedDataPath)) || (UseCustomDataFolder && !string.IsNullOrEmpty(CustomDataFolderPath)));
             GoToCreateMfcTabCommand = new RelayCommand(() => ShowCreateMfcTab(), () => true);
+            ApplyManualReleaseCommand = new RelayCommand(() => ApplyManualRelease(), () => !string.IsNullOrWhiteSpace(ManualReleaseText));
             CancelCommand = new RelayCommand(() =>
             {
                 if (_cts != null && !_cts.IsCancellationRequested) { _cts.Cancel(); AddToLog("Operation cancelled by user."); }
@@ -516,10 +518,11 @@ namespace DuckDBGeoparquet.Views
             {
                 AddToLog("Async Initialization: Initializing DuckDB");
                 await _dataProcessor.InitializeDuckDBAsync();
-                AddToLog("Async Initialization: Fetching latest release information");
-                LatestRelease = await GetLatestRelease();
+                AddToLog("Async Initialization: Establishing release value (cached/default)");
+                var cachedRelease = LoadCachedLatestRelease();
+                LatestRelease = !string.IsNullOrWhiteSpace(cachedRelease) ? cachedRelease : (LatestRelease ?? "latest");
                 NotifyPropertyChanged(nameof(LatestRelease));
-                AddToLog($"Async Initialization: Latest release set to: {LatestRelease}");
+                AddToLog($"Async Initialization: Latest release set to: {LatestRelease} (cached or default)");
 
                 InitializeThemes(); // Populate Themes collection
                 AddToLog("Async Initialization: Themes initialized");
@@ -528,6 +531,9 @@ namespace DuckDBGeoparquet.Views
                 DataOutputPath = Path.Combine(defaultBasePath, "Data", LatestRelease ?? "latest");
                 NotifyPropertyChanged(nameof(DataOutputPath));
                 AddToLog($"Async Initialization: DataOutputPath updated to: {DataOutputPath}");
+
+                // Refresh latest release in background without blocking UI
+                _ = RefreshLatestReleaseAsync();
 
                 StatusText = "Ready to load Overture Maps data";
                 AddToLog("Async Initialization: Ready to load Overture Maps data");
@@ -644,6 +650,26 @@ namespace DuckDBGeoparquet.Views
         {
             get => _latestRelease;
             set => SetProperty(ref _latestRelease, value);
+        }
+
+        private bool _isManualReleaseEntryVisible;
+        public bool IsManualReleaseEntryVisible
+        {
+            get => _isManualReleaseEntryVisible;
+            set => SetProperty(ref _isManualReleaseEntryVisible, value);
+        }
+
+        private string _manualReleaseText;
+        public string ManualReleaseText
+        {
+            get => _manualReleaseText;
+            set
+            {
+                if (SetProperty(ref _manualReleaseText, value))
+                {
+                    (ApplyManualReleaseCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                }
+            }
         }
 
         private ObservableCollection<SelectableThemeItem> _themes;
@@ -919,6 +945,107 @@ namespace DuckDBGeoparquet.Views
 
         #endregion
 
+        private string LoadCachedLatestRelease()
+        {
+            try
+            {
+                string cacheFile = GetLatestReleaseCacheFilePath();
+                if (File.Exists(cacheFile))
+                {
+                    var value = File.ReadAllText(cacheFile).Trim();
+                    if (!string.IsNullOrWhiteSpace(value)) return value;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"LoadCachedLatestRelease error: {ex.Message}");
+            }
+            return null;
+        }
+
+        private void SaveCachedLatestRelease(string release)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(release)) return;
+                string cacheFile = GetLatestReleaseCacheFilePath();
+                string? dir = Path.GetDirectoryName(cacheFile);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                File.WriteAllText(cacheFile, release);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"SaveCachedLatestRelease error: {ex.Message}");
+            }
+        }
+
+        private string GetLatestReleaseCacheFilePath()
+        {
+            // Store under <Base>/config/latestRelease.txt
+            var basePath = DeterminedDefaultMfcBasePath;
+            return Path.Combine(basePath, "config", "latestRelease.txt");
+        }
+
+        private void UpdatePathsFromRelease()
+        {
+            var basePath = DeterminedDefaultMfcBasePath;
+            DataOutputPath = Path.Combine(basePath, "Data", LatestRelease ?? "latest");
+            NotifyPropertyChanged(nameof(DataOutputPath));
+            AddToLog($"DataOutputPath updated to: {DataOutputPath}");
+        }
+
+        private async Task RefreshLatestReleaseAsync()
+        {
+            try
+            {
+                // Use system proxy and default credentials; short timeout
+                var handler = new HttpClientHandler
+                {
+                    UseProxy = true,
+                    Proxy = WebRequest.DefaultWebProxy,
+                    DefaultProxyCredentials = CredentialCache.DefaultCredentials
+                };
+                using var client = new HttpClient(handler)
+                {
+                    Timeout = TimeSpan.FromSeconds(3)
+                };
+
+                var url = Environment.GetEnvironmentVariable("OVERTURE_RELEASE_URL") ?? RELEASE_URL;
+                var response = await client.GetStringAsync(url);
+                var releaseInfo = JsonSerializer.Deserialize<ReleaseInfo>(response, _jsonOptions);
+                var latest = releaseInfo?.Latest;
+                if (!string.IsNullOrWhiteSpace(latest) && latest != LatestRelease)
+                {
+                    LatestRelease = latest;
+                    NotifyPropertyChanged(nameof(LatestRelease));
+                    AddToLog($"Latest release refreshed: {LatestRelease}");
+                    UpdatePathsFromRelease();
+                    SaveCachedLatestRelease(LatestRelease);
+                    IsManualReleaseEntryVisible = false; // hide if previously shown
+                }
+            }
+            catch (Exception ex)
+            {
+                // Non-blocking: log and continue
+                AddToLog($"Failed to refresh latest release (non-blocking): {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"RefreshLatestReleaseAsync error: {ex}");
+                // Offer manual entry when fetch fails
+                if (string.IsNullOrWhiteSpace(ManualReleaseText))
+                    ManualReleaseText = LatestRelease ?? string.Empty;
+                IsManualReleaseEntryVisible = true;
+            }
+        }
+
+        private void ApplyManualRelease()
+        {
+            var input = ManualReleaseText?.Trim();
+            if (string.IsNullOrWhiteSpace(input)) return;
+            LatestRelease = input;
+            NotifyPropertyChanged(nameof(LatestRelease));
+            UpdatePathsFromRelease();
+            AddToLog($"Manual release applied: {LatestRelease}");
+        }
+
         #region Commands
         public ICommand LoadDataCommand { get; private set; }
         public ICommand ShowThemeInfoCommand { get; private set; }
@@ -928,6 +1055,7 @@ namespace DuckDBGeoparquet.Views
         public ICommand BrowseCustomDataFolderCommand { get; private set; }
         public ICommand CreateMfcCommand { get; private set; }
         public ICommand GoToCreateMfcTabCommand { get; private set; }
+        public ICommand ApplyManualReleaseCommand { get; private set; }
         public ICommand CancelCommand { get; private set; }
         public ICommand SelectAllCommand { get; private set; }
         #endregion
