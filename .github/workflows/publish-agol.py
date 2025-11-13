@@ -185,17 +185,16 @@ def main():
                         print("[DEBUG] No existing 'Latest Version:' line found")
                 
                 # Try multiple regex patterns to match the version line
-                # Pattern 1: Match entire line from "Latest Version:" to end of line (handles \r\n and \n)
-                # This matches until we hit a newline or end of string
-                pattern1 = r'Latest Version:.*?(?=\n|$)'
-                # Pattern 2: Match with any whitespace variations, more specific
-                pattern2 = r'Latest Version:\s*v[\d.]+\s*.*?(?=\n|$)'
-                # Pattern 3: Match until double newline or next section marker (more robust)
-                pattern3 = r'Latest Version:.*?(?=\n\n|\n🏆|\n📦|\n\n|$)'
+                # Pattern 1: Match from "Latest Version:" until next section marker (handles HTML and plain text)
+                pattern1 = r'Latest Version:.*?(?=\n\n|\n🏆|\n📦|<\/ul>|\n\n|$)'
+                # Pattern 2: Match entire line from "Latest Version:" to end of line (handles \r\n and \n)
+                pattern2 = r'Latest Version:.*?(?=\n|$)'
+                # Pattern 3: Match with HTML content (includes <br>, <ul>, <li> tags)
+                pattern3 = r'Latest Version:.*?(?=<\/ul>|🏆|📦|\n\n|$)'
                 # Pattern 4: Match entire line including newline (DOTALL mode)
                 pattern4 = r'Latest Version:[^\n]*(?:\n|$)'
                 # Pattern 5: Simple match everything from Latest Version to end (fallback)
-                pattern5 = r'Latest Version:.*'
+                pattern5 = r'Latest Version:.*?(?=\n\n|$)'
                 
                 updated_desc = None
                 for i, pattern in enumerate([pattern1, pattern2, pattern3, pattern4, pattern5], 1):
@@ -214,13 +213,26 @@ def main():
                     lines = current_desc.split('\n')
                     updated_lines = []
                     replaced = False
-                    for line in lines:
+                    # Handle HTML content - might span multiple lines
+                    i = 0
+                    while i < len(lines):
+                        line = lines[i]
                         if line.strip().startswith('Latest Version:'):
+                            # Replace this line and any following lines until we hit a section marker or empty line
                             updated_lines.append(args.description.strip())
                             replaced = True
-                            print(f"[DEBUG] Found and replaced line: {line[:80]}...")
+                            print(f"[DEBUG] Found and replacing: {line[:80]}...")
+                            # Skip following lines that are part of the version section (HTML content, list items, etc.)
+                            i += 1
+                            while i < len(lines) and not lines[i].strip().startswith(('🏆', '📦', '🔄', 'Source', 'Ready', 'Terms')) and lines[i].strip() != '':
+                                # Skip HTML content, list items, or continuation of version line
+                                if not (lines[i].strip().startswith('<') or lines[i].strip().startswith('•') or lines[i].strip().startswith('-')):
+                                    break
+                                i += 1
+                            continue
                         else:
                             updated_lines.append(line)
+                            i += 1
                     
                     if replaced:
                         updated_desc = '\n'.join(updated_lines)

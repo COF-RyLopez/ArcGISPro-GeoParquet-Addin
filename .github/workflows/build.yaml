@@ -186,32 +186,37 @@ jobs:
         # Get previous tag (excluding -dev and -test tags)
         PREV_TAG=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | grep -v "$CURRENT_TAG" | head -1 || echo "")
         
-        # Get commits - handle errors gracefully, filter out CI/CD noise
+        # Get commits - handle errors gracefully, filter out CI/CD noise and technical commits
         COMMITS=""
         if [ -z "$PREV_TAG" ]; then
           # If no previous tag, get last 10 commits
           COMMITS=$(git log --oneline --pretty=format:"%s" -10 2>/dev/null || echo "")
         else
           # Get commits since previous release (excluding merge commits, version bumps, debug, and CI/CD commits)
-          # Filter out: version bumps (any format), skip ci, debug, workflow fixes, CI commits
+          # Filter out: version bumps, CI/CD, workflow fixes, technical improvements, regex, metadata, description updates
           COMMITS=$(git log ${PREV_TAG}..HEAD --oneline --pretty=format:"%s" --no-merges 2>/dev/null | \
-            grep -v -iE "(bump version|version to|chore:.*version|debug:|fix:.*workflow|feat:.*workflow|ci:|skip ci|\[skip ci\]|\[ci skip\])" | \
-            head -5 || echo "")
+            grep -v -iE "(bump version|version to|chore:.*version|debug:|fix:.*workflow|feat:.*workflow|ci:|skip ci|\[skip ci\]|\[ci skip\]|regex|metadata|description|AGOL|publish|separate file|improve.*update|update.*reliability)" | \
+            grep -v -iE "(fix:.*description|fix:.*AGOL|improve.*AGOL|improve.*description|separate.*upload)" | \
+            head -3 || echo "")
         fi
         
-        # Build a clean version line with meaningful improvements
+        # Build a clean version line with meaningful, user-facing improvements
         VERSION_LINE="Latest Version: v${VERSION}"
         if [ -n "$COMMITS" ] && [ "$COMMITS" != "" ]; then
-          # Extract meaningful improvements (remove prefixes, make user-friendly)
+          # Extract meaningful improvements (remove prefixes, make user-friendly, filter technical terms)
+          # Capitalize first letter and make it readable
           IMPROVEMENTS=$(echo "$COMMITS" | \
             sed 's/^fix: //' | sed 's/^feat: //' | sed 's/^chore: //' | \
             sed 's/^docs: //' | sed 's/^refactor: //' | \
-            head -3 | \
-            sed 's/^/• /' | \
-            tr '\n' ' ' | sed 's/  */ /g')
+            grep -v -iE "(regex|metadata|description|AGOL|publish|workflow|ci|separate|upload|reliability|improve.*update)" | \
+            head -2 | \
+            sed 's/^\(.\)/\U\1/' | \
+            sed 's/$/./' | \
+            tr '\n' ' ' | sed 's/  */ /g' | sed 's/\. /\. /g')
           
           if [ -n "$IMPROVEMENTS" ] && [ "$IMPROVEMENTS" != "" ]; then
-            VERSION_LINE="${VERSION_LINE} with ${IMPROVEMENTS}"
+            # Format as clean text with proper capitalization
+            VERSION_LINE="${VERSION_LINE} - ${IMPROVEMENTS}"
           fi
         fi
         
