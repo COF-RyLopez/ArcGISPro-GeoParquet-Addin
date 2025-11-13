@@ -1493,10 +1493,10 @@ ExecuteQuery:
 
                 var json = JsonSerializer.Serialize(response, _jsonOptions);
                 
-                // Debug: Log a sample of the response for troubleshooting
+                // Debug: Log a preview of the response structure for troubleshooting (full response is sent)
                 var debugJson = json.Length > 500 ? json.Substring(0, 500) + "..." : json;
-                Debug.WriteLine($"🔍 Layer {layerId} JSON Response Sample: {debugJson}");
-                Debug.WriteLine($"Feature count={features.Count}; fields advertised={string.Join(",", GetFieldDefinitions(theme).Select(f => (string)f.GetType().GetProperty("name")?.GetValue(f))) } ");
+                Debug.WriteLine($"🔍 Layer {layerId} JSON Response Preview (first 500 chars): {debugJson}");
+                Debug.WriteLine($"✅ Returning {features.Count} features; fields advertised={string.Join(",", GetFieldDefinitions(theme).Select(f => (string)f.GetType().GetProperty("name")?.GetValue(f))) } ");
                 
                 await WriteJsonResponse(context, json);
             }
