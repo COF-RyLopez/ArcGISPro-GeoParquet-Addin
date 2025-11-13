@@ -2,11 +2,14 @@ name: Build ArcGIS Pro GeoParquet Add-in
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+      - dev  # Test workflow changes on dev branch
     tags:
-      - 'v*'  # Run workflow on version tags, e.g. v1.0.0
+      - 'v*'  # Production release tags, e.g. v1.0.0
+      - 'v*-dev'  # Dev/test release tags, e.g. v0.1.3-dev
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
   workflow_dispatch:  # Allows manual triggering
 
 permissions:
@@ -19,6 +22,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for proper git operations
       
     - name: Add MSBuild to PATH
       uses: microsoft/setup-msbuild@v2
@@ -28,22 +33,58 @@ jobs:
       with:
         dotnet-version: '8.0.x'
     
-    - name: Install ArcGIS Pro SDK NuGet Package
-      run: |
-        nuget sources add -name nuget.org -source https://api.nuget.org/v3/index.json
-        nuget install Esri.ArcGISPro.Extensions30 -Version 3.5.0.57366 -OutputDirectory packages
-    
-    - name: Update csproj to use NuGet references
+    - name: Update Config.daml version from tag
+      if: startsWith(github.ref, 'refs/tags/v')
       shell: powershell
       run: |
-        pwsh ./.github/workflows/update-csproj.ps1 -ProjectFile "DuckDBGeoparquet.csproj" -NuGetVersion "3.5.0.57366"
-        
+        $version = "${{ github.ref }}".Replace('refs/tags/v', '')
+        Write-Host "Updating Config.daml to version: $version"
+
+        # Remove -dev suffix for version number in Config.daml
+        $cleanVersion = $version -replace '-dev$', ''
+        pwsh ./.github/workflows/update-version.ps1 -Version $cleanVersion -ConfigPath "Config.daml"
+
     - name: Restore NuGet packages
       run: nuget restore DuckDBGeoparquet.sln
       
     - name: Build solution with MSBuild
       run: msbuild DuckDBGeoparquet.sln /p:Configuration=Release /p:Platform="Any CPU"
-      
+
+    - name: Commit version update back to main branch
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
+      shell: bash
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+
+        echo "📝 Committing version $VERSION back to main branch..."
+
+        # Configure git with GitHub Actions bot identity
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+        # Check if Config.daml has changes
+        if git diff --quiet Config.daml; then
+          echo "⚠️  No version changes to commit (Config.daml unchanged)"
+          exit 0
+        fi
+
+        # Fetch the main branch and switch to it
+        git fetch origin main
+        git checkout main
+
+        # Add and commit the version update
+        git add Config.daml
+        git commit -m "chore: bump version to $VERSION [skip ci]
+
+        Automated version update from release tag v$VERSION
+
+        Co-Authored-By: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+
+        # Push to main branch
+        git push origin main
+
+        echo "✅ Version $VERSION committed back to main branch"
+
     - name: Get version from tag
       id: get_version
       shell: bash
@@ -99,11 +140,161 @@ jobs:
         path: "release/*.zip"
         if-no-files-found: error
         
-    # Create GitHub Release when a version tag is pushed
+    # Create GitHub Release when a production version tag is pushed (not -dev tags)
     - name: Create GitHub Release
-      if: startsWith(github.ref, 'refs/tags/v')
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
       uses: softprops/action-gh-release@v2.3.2
       with:
         files: release/*.zip
         name: v${{ steps.get_version.outputs.VERSION }}
         generate_release_notes: true
+
+    # For dev tags, mark as pre-release
+    - name: Create GitHub Pre-Release (Dev)
+      if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-dev')
+      uses: softprops/action-gh-release@v2.3.2
+      with:
+        files: release/*.zip
+        name: v${{ steps.get_version.outputs.VERSION }}
+        generate_release_notes: true
+        prerelease: true
+        draft: false
+
+    # Publish to ArcGIS Online (only for production releases)
+    - name: Setup Python
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install arcgis-python-api
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
+      run: pip install arcgis
+    
+    - name: Generate AGOL description
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
+      id: generate_description
+      shell: bash
+      run: |
+        set +e  # Don't exit on errors for this step
+        VERSION=${GITHUB_REF#refs/tags/v}
+        
+        # Get all tags sorted by version, find the one before current
+        # Get current tag name
+        CURRENT_TAG=$(git describe --tags --exact-match HEAD 2>/dev/null || echo "")
+        
+        # Get previous tag (excluding -dev and -test tags)
+        PREV_TAG=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | grep -v "$CURRENT_TAG" | head -1 || echo "")
+        
+        # Get commits - handle errors gracefully, filter out CI/CD noise and technical commits
+        COMMITS=""
+        if [ -z "$PREV_TAG" ]; then
+          # If no previous tag, get last 10 commits
+          COMMITS=$(git log --oneline --pretty=format:"%s" -10 2>/dev/null || echo "")
+        else
+          # Get commits since previous release (excluding merge commits, version bumps, debug, and CI/CD commits)
+          # Filter out: version bumps, CI/CD, workflow fixes, technical improvements, regex, metadata, description updates
+          COMMITS=$(git log ${PREV_TAG}..HEAD --oneline --pretty=format:"%s" --no-merges 2>/dev/null | \
+            grep -v -iE "(bump version|version to|chore:.*version|debug:|fix:.*workflow|feat:.*workflow|ci:|skip ci|\[skip ci\]|\[ci skip\]|regex|metadata|description|AGOL|publish|separate file|improve.*update|update.*reliability)" | \
+            grep -v -iE "(fix:.*description|fix:.*AGOL|improve.*AGOL|improve.*description|separate.*upload)" | \
+            head -3 || echo "")
+        fi
+        
+        # Build a clean version line with meaningful, user-facing improvements
+        VERSION_LINE="Latest Version: v${VERSION}"
+        if [ -n "$COMMITS" ] && [ "$COMMITS" != "" ]; then
+          # Extract meaningful improvements (remove prefixes, make user-friendly, filter technical terms)
+          # Capitalize first letter and make it readable
+          IMPROVEMENTS=$(echo "$COMMITS" | \
+            sed 's/^fix: //' | sed 's/^feat: //' | sed 's/^chore: //' | \
+            sed 's/^docs: //' | sed 's/^refactor: //' | \
+            grep -v -iE "(regex|metadata|description|AGOL|publish|workflow|ci|separate|upload|reliability|improve.*update)" | \
+            head -2 | \
+            sed 's/^\(.\)/\U\1/' | \
+            sed 's/$/./' | \
+            tr '\n' ' ' | sed 's/  */ /g' | sed 's/\. /\. /g')
+          
+          if [ -n "$IMPROVEMENTS" ] && [ "$IMPROVEMENTS" != "" ]; then
+            # Format as clean text with proper capitalization
+            VERSION_LINE="${VERSION_LINE} - ${IMPROVEMENTS}"
+          fi
+        fi
+        
+        # Build description - only the version line to update existing description
+        {
+          echo 'DESCRIPTION<<EOF'
+          echo "$VERSION_LINE"
+          echo 'EOF'
+        } >> $GITHUB_OUTPUT
+        
+        echo "Generated description for v${VERSION}"
+        set -e  # Re-enable error exit
+    
+    - name: Find add-in file
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
+      id: find_addin
+      shell: powershell
+      run: |
+        $addinFile = Get-ChildItem -Path "bin/Release/net8.0-windows" -Filter "*.esriAddInX" -Recurse | Select-Object -First 1
+        if ($addinFile) {
+          $fullPath = $addinFile.FullName
+          Write-Host "Found add-in file: $fullPath"
+          echo "ADDIN_FILE=$fullPath" >> $env:GITHUB_OUTPUT
+        } else {
+          Write-Host "ERROR: No .esriAddInX file found in bin/Release/net8.0-windows"
+          Get-ChildItem -Path "bin/Release" -Recurse | Select-Object FullName | Format-Table
+          exit 1
+        }
+    
+    - name: Publish to ArcGIS Online
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
+      shell: bash
+      run: |
+        ADDIN_FILE="${{ steps.find_addin.outputs.ADDIN_FILE }}"
+        
+        if [ -z "$ADDIN_FILE" ]; then
+          echo "ERROR: No .esriAddInX file found"
+          exit 1
+        fi
+        
+        echo "Using add-in file: $ADDIN_FILE"
+        
+        # Determine authentication method and build Python command
+        # Note: Description updates disabled - just uploading the file
+        if [ -n "$AGOL_CLIENT_ID" ] && [ -n "$AGOL_CLIENT_SECRET" ]; then
+          echo "✅ Using OAuth2 token authentication"
+          python ./.github/workflows/publish-agol.py \
+            --auth-method token \
+            --client-id "$AGOL_CLIENT_ID" \
+            --client-secret "$AGOL_CLIENT_SECRET" \
+            --addin-file "$ADDIN_FILE" \
+            --item-id "$AGOL_ITEM_ID" \
+            ${AGOL_PORTAL_URL:+--portal-url "$AGOL_PORTAL_URL"} \
+            ${AGOL_TITLE:+--title "$AGOL_TITLE"} \
+            ${AGOL_TAGS:+--tags "$AGOL_TAGS"}
+        elif [ -n "$AGOL_USERNAME" ] && [ -n "$AGOL_PASSWORD" ]; then
+          echo "✅ Using username/password authentication"
+          python ./.github/workflows/publish-agol.py \
+            --auth-method username \
+            --username "$AGOL_USERNAME" \
+            --password "$AGOL_PASSWORD" \
+            --addin-file "$ADDIN_FILE" \
+            --item-id "$AGOL_ITEM_ID" \
+            ${AGOL_PORTAL_URL:+--portal-url "$AGOL_PORTAL_URL"} \
+            ${AGOL_TITLE:+--title "$AGOL_TITLE"} \
+            ${AGOL_TAGS:+--tags "$AGOL_TAGS"}
+        else
+          echo "WARNING: No AGOL credentials found. Skipping AGOL publishing."
+          echo "Please ensure AGOL_CLIENT_ID and AGOL_CLIENT_SECRET are set in GitHub Secrets"
+          exit 0
+        fi
+      env:
+        AGOL_CLIENT_ID: ${{ secrets.AGOL_CLIENT_ID }}
+        AGOL_CLIENT_SECRET: ${{ secrets.AGOL_CLIENT_SECRET }}
+        AGOL_USERNAME: ${{ secrets.AGOL_USERNAME }}
+        AGOL_PASSWORD: ${{ secrets.AGOL_PASSWORD }}
+        AGOL_ITEM_ID: ${{ secrets.AGOL_ITEM_ID }}
+        AGOL_PORTAL_URL: ${{ secrets.AGOL_PORTAL_URL }}
+        AGOL_TITLE: ${{ secrets.AGOL_TITLE }}
+        AGOL_DESCRIPTION: ${{ secrets.AGOL_DESCRIPTION }}
+        AGOL_TAGS: ${{ secrets.AGOL_TAGS }}
