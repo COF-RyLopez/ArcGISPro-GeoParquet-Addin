@@ -186,29 +186,48 @@ def main():
                 
                 # Try multiple regex patterns to match the version line
                 # Pattern 1: Match entire line from "Latest Version:" to end of line (handles \r\n and \n)
+                # This matches until we hit a newline or end of string
                 pattern1 = r'Latest Version:.*?(?=\n|$)'
-                # Pattern 2: Match with any whitespace variations
+                # Pattern 2: Match with any whitespace variations, more specific
                 pattern2 = r'Latest Version:\s*v[\d.]+\s*.*?(?=\n|$)'
-                # Pattern 3: Match with multiline flag
-                pattern3 = r'Latest Version:.*'
+                # Pattern 3: Match until double newline or next section marker (more robust)
+                pattern3 = r'Latest Version:.*?(?=\n\n|\n🏆|\n📦|\n\n|$)'
+                # Pattern 4: Match entire line including newline (DOTALL mode)
+                pattern4 = r'Latest Version:[^\n]*(?:\n|$)'
+                # Pattern 5: Simple match everything from Latest Version to end (fallback)
+                pattern5 = r'Latest Version:.*'
                 
                 updated_desc = None
-                for pattern in [pattern1, pattern2, pattern3]:
-                    if re.search(pattern, current_desc, re.MULTILINE):
-                        updated_desc = re.sub(
-                            pattern,
-                            args.description.strip(),
-                            current_desc,
-                            count=1,
-                            flags=re.MULTILINE
-                        )
-                        print(f"[DEBUG] Matched pattern and replaced version line")
+                for i, pattern in enumerate([pattern1, pattern2, pattern3, pattern4, pattern5], 1):
+                    match = re.search(pattern, current_desc, re.MULTILINE | re.DOTALL)
+                    if match:
+                        # Use a more precise replacement - match the exact text found
+                        matched_text = match.group()
+                        print(f"[DEBUG] Pattern {i} matched: {matched_text[:100]}...")
+                        updated_desc = current_desc.replace(matched_text, args.description.strip(), 1)
+                        print(f"[DEBUG] Replaced version line using pattern {i}")
                         break
                 
                 if updated_desc is None:
-                    # No match found, prepend version line
-                    print("[DEBUG] No match found, prepending version line")
-                    updated_desc = args.description.strip() + "\n\n" + current_desc
+                    # Fallback: Try simple string replacement
+                    print("[DEBUG] Regex patterns didn't match, trying string-based replacement")
+                    lines = current_desc.split('\n')
+                    updated_lines = []
+                    replaced = False
+                    for line in lines:
+                        if line.strip().startswith('Latest Version:'):
+                            updated_lines.append(args.description.strip())
+                            replaced = True
+                            print(f"[DEBUG] Found and replaced line: {line[:80]}...")
+                        else:
+                            updated_lines.append(line)
+                    
+                    if replaced:
+                        updated_desc = '\n'.join(updated_lines)
+                    else:
+                        # No match found, prepend version line
+                        print("[DEBUG] No 'Latest Version:' line found, prepending")
+                        updated_desc = args.description.strip() + "\n\n" + current_desc
                 
                 metadata_updates["description"] = updated_desc
                 print(f"[DEBUG] Updated description length: {len(updated_desc)} chars")

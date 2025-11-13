@@ -167,21 +167,16 @@ The add-in maintains detailed logs that can help diagnose issues:
 
 ## Recent Improvements
 
-### Version 0.1.2 (Latest)
-- **Version Synchronization**: Fixed version mismatch between releases and installed add-in
-- **Automated Versioning**: Implemented CI/CD automation to sync versions from git tags
+📦 **Latest Release**: See [GitHub Releases](https://github.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin/releases) for complete release notes and changelog.
 
-### Version 0.1.1
-- **Enhanced DAML Configuration**: Improved UI integration with ArcGIS Pro standards
-- **Better Accessibility**: Enhanced keytips and standard condition usage
-- **Cleaner Codebase**: Removed unused UI elements and optimized configuration
+Release notes are automatically generated from git commits, ensuring you always have the most up-to-date information about what's new in each version.
 
-### Version 0.1.0
-- **Performance Boost**: 5-15% faster processing through optimized file operations
-- **Smart Dataset Handling**: Automatically skips empty datasets (e.g., bathymetry in inland areas)  
+### Key Recent Features
+- **Automated Releases**: Fully automated CI/CD pipeline for seamless version management
+- **ArcGIS Online Publishing**: Automatic publishing to ArcGIS Marketplace with each release
+- **Performance Optimizations**: 5-15% faster processing through optimized file operations
+- **Smart Dataset Handling**: Automatically skips empty datasets for faster processing
 - **Native GeoParquet**: Fully utilizes ArcGIS Pro 3.5's built-in GeoParquet support
-- **Cleaner Logging**: 70% reduction in debug noise while maintaining essential information
-- **Improved Reliability**: Enhanced error handling and retry logic
 
 ## Contributing
 
