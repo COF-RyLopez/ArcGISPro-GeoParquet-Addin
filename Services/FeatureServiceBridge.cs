@@ -2253,6 +2253,17 @@ ExecuteQuery:
             {
                 using var doc = JsonDocument.Parse(geometryJson);
                 var root = doc.RootElement;
+                
+                // Check if coordinates need conversion
+                bool needsConversion = false;
+                if (root.TryGetProperty("spatialReference", out var srProp))
+                {
+                    if (srProp.TryGetProperty("wkid", out var wkidProp))
+                        needsConversion = (wkidProp.GetInt32() == 3857 || wkidProp.GetInt32() == 102100);
+                    else if (srProp.TryGetProperty("latestWkid", out var latestWkidProp))
+                        needsConversion = (latestWkidProp.GetInt32() == 3857 || latestWkidProp.GetInt32() == 102100);
+                }
+                
                 if (root.TryGetProperty("xmin", out var xminProp) &&
                     root.TryGetProperty("ymin", out var yminProp) &&
                     root.TryGetProperty("xmax", out var xmaxProp) &&
@@ -2262,6 +2273,13 @@ ExecuteQuery:
                     ymin = yminProp.GetDouble();
                     xmax = xmaxProp.GetDouble();
                     ymax = ymaxProp.GetDouble();
+                    
+                    // Convert Web Mercator to WGS84 if needed
+                    if (needsConversion)
+                    {
+                        (xmin, ymin, xmax, ymax) = ConvertWebMercatorToWgs84(xmin, ymin, xmax, ymax);
+                    }
+                    
                     return true;
                 }
 
