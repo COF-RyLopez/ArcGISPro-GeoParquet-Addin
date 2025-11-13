@@ -240,35 +240,22 @@ def main():
             tag_list = [tag.strip() for tag in args.tags.split(",")]
             metadata_updates["tags"] = tag_list
         
-        # Step 4: Update the file and metadata together
+        # Step 4: Update the file first, then metadata separately for better reliability
         print("[UPLOAD] Uploading add-in file...")
         print(f"        File path: {addin_path}")
         print(f"        File exists: {addin_path.exists()}")
         print(f"        File size: {addin_path.stat().st_size / 1024 / 1024:.2f} MB")
-        if metadata_updates:
-            print(f"        Also updating metadata: {', '.join(metadata_updates.keys())}")
-            if args.description:
-                print(f"        Description length: {len(args.description)} characters")
         print()
         
         try:
-            # Update file and metadata together if metadata is provided
-            if metadata_updates:
-                update_result = item.update(
-                    data=str(addin_path),
-                    thumbnail=None,  # Keep existing thumbnail
-                    item_properties=metadata_updates
-                )
-            else:
-                update_result = item.update(
-                    data=str(addin_path),
-                    thumbnail=None  # Keep existing thumbnail
-                )
+            # Upload file first (separate from metadata for better reliability)
+            update_result = item.update(
+                data=str(addin_path),
+                thumbnail=None  # Keep existing thumbnail
+            )
             
             if update_result:
                 print("[OK] File uploaded successfully")
-                if metadata_updates:
-                    print("[OK] Metadata updated successfully")
             else:
                 print("WARNING: Update returned False, but file may have been uploaded")
         except Exception as e:
@@ -310,6 +297,28 @@ def main():
             import traceback
             traceback.print_exc()
             sys.exit(1)
+        
+        # Step 4b: Update metadata separately (more reliable for description updates)
+        if metadata_updates:
+            print()
+            print("[METADATA] Updating item metadata...")
+            print(f"        Updating: {', '.join(metadata_updates.keys())}")
+            if 'description' in metadata_updates:
+                print(f"        Description length: {len(metadata_updates['description'])} characters")
+            
+            try:
+                # Update metadata separately - this is more reliable for description updates
+                metadata_result = item.update(item_properties=metadata_updates)
+                if metadata_result:
+                    print("[OK] Metadata updated successfully")
+                else:
+                    print("WARNING: Metadata update returned False")
+            except Exception as metadata_error:
+                print(f"ERROR: Metadata update failed: {metadata_error}")
+                # Don't fail the entire process if metadata update fails
+                import traceback
+                traceback.print_exc()
+        
         print()
         
         # Step 5: Verify metadata update (if description was provided)
@@ -336,26 +345,33 @@ def main():
                                 print(f"        ⚠️  WARNING: Version line doesn't match expected value")
                                 print(f"        Expected: {expected_line[:100]}")
                                 print(f"        Actual: {current_line[:100]}")
-                                print("        Attempting separate description update...")
+                                print("        Attempting separate description update with string replacement...")
                                 try:
-                                    # Re-fetch item and update description separately
+                                    # Re-fetch item and update description separately using string replacement
                                     item_to_update = gis.content.get(args.item_id)
                                     current_desc = item_to_update.description or ""
-                                    # Try the regex replacement again
-                                    pattern = r'Latest Version:.*?(?=\n|$)'
-                                    if re.search(pattern, current_desc, re.MULTILINE):
-                                        updated_desc = re.sub(
-                                            pattern,
-                                            expected_line,
-                                            current_desc,
-                                            count=1,
-                                            flags=re.MULTILINE
-                                        )
-                                    else:
-                                        updated_desc = expected_line + "\n\n" + current_desc
                                     
-                                    item_to_update.update(item_properties={"description": updated_desc})
-                                    print("        ✅ Description updated via separate call")
+                                    # Use string-based line replacement (most reliable)
+                                    lines = current_desc.split('\n')
+                                    updated_lines = []
+                                    replaced = False
+                                    for line in lines:
+                                        if line.strip().startswith('Latest Version:'):
+                                            updated_lines.append(expected_line)
+                                            replaced = True
+                                            print(f"        Found and replacing: {line[:80]}...")
+                                        else:
+                                            updated_lines.append(line)
+                                    
+                                    if replaced:
+                                        updated_desc = '\n'.join(updated_lines)
+                                        item_to_update.update(item_properties={"description": updated_desc})
+                                        print("        ✅ Description updated via separate call (string replacement)")
+                                    else:
+                                        # Fallback: prepend if not found
+                                        updated_desc = expected_line + "\n\n" + current_desc
+                                        item_to_update.update(item_properties={"description": updated_desc})
+                                        print("        ✅ Description updated via separate call (prepended)")
                                 except Exception as e2:
                                     print(f"        ❌ ERROR: Separate update also failed: {e2}")
                                     import traceback
