@@ -52,8 +52,9 @@ namespace DuckDBGeoparquet.Services
 
         // Cloud output configuration
         private bool _enableCloudOutput = false;
-        private string _cloudConnectionPath = "";
+        private string _cloudConnectionPath = ""; // Kept for backward compatibility with ACS files
         private string _cloudBasePath = "";
+        private CloudStorageService _cloudStorageService = null;
 
         public DataProcessor()
         {
@@ -63,6 +64,7 @@ namespace DuckDBGeoparquet.Services
 
         /// <summary>
         /// Configure cloud output settings for this DataProcessor instance
+        /// Supports both legacy ACS connection files and direct SDK uploads
         /// </summary>
         public void ConfigureCloudOutput(bool enableCloudOutput, string cloudConnectionPath, string cloudBasePath = "")
         {
@@ -71,6 +73,48 @@ namespace DuckDBGeoparquet.Services
             _cloudBasePath = cloudBasePath ?? "";
             
             System.Diagnostics.Debug.WriteLine($"Cloud output configured: Enabled={_enableCloudOutput}, Connection={_cloudConnectionPath}, BasePath={_cloudBasePath}");
+        }
+
+        /// <summary>
+        /// Configure cloud output using direct SDK credentials (recommended)
+        /// </summary>
+        public void ConfigureCloudOutputDirect(
+            bool enableCloudOutput,
+            CloudProvider provider,
+            string bucketName,
+            string region = null,
+            string basePath = null,
+            string accessKey = null,
+            string secretKey = null)
+        {
+            _enableCloudOutput = enableCloudOutput;
+            _cloudBasePath = basePath ?? "";
+
+            if (enableCloudOutput && !string.IsNullOrEmpty(bucketName))
+            {
+                try
+                {
+                    _cloudStorageService = new CloudStorageService(
+                        provider,
+                        bucketName,
+                        region,
+                        basePath,
+                        accessKey,
+                        secretKey);
+                    System.Diagnostics.Debug.WriteLine($"Cloud output configured (direct SDK): Provider={provider}, Bucket={bucketName}, Region={region}, BasePath={basePath}");
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Failed to initialize cloud storage service: {ex.Message}");
+                    _cloudStorageService = null;
+                    _enableCloudOutput = false;
+                }
+            }
+            else
+            {
+                _cloudStorageService?.Dispose();
+                _cloudStorageService = null;
+            }
         }
 
         public async Task InitializeDuckDBAsync()
@@ -899,69 +943,107 @@ namespace DuckDBGeoparquet.Services
                 progress?.Report($"Uploading {layerName} to cloud storage...");
                 System.Diagnostics.Debug.WriteLine($"Starting cloud upload for: {localFilePath}");
 
-                await QueuedTask.Run(async () =>
+                // Use direct SDK upload if CloudStorageService is configured (preferred method)
+                if (_cloudStorageService != null)
                 {
-                    try
-                    {
-                        // Get the relative path structure for cloud storage
-                        var fileName = Path.GetFileName(localFilePath);
-                        var basePath = string.IsNullOrEmpty(_cloudBasePath) ? "overture-data" : _cloudBasePath;
-                        
-                        // Create the cloud destination path using the ACS connection
-                        // For TransferFiles, the ACS file path is followed by the cloud folder structure
-                        var cloudDestination = $"{_cloudConnectionPath}\\{basePath}\\{_currentActualS3Type}";
+                    await UploadUsingDirectSDKAsync(localFilePath, layerName, progress);
+                    return;
+                }
 
-                        System.Diagnostics.Debug.WriteLine($"Cloud upload details:");
-                        System.Diagnostics.Debug.WriteLine($"  Source file: {localFilePath}");
-                        System.Diagnostics.Debug.WriteLine($"  Destination: {cloudDestination}");
-                        System.Diagnostics.Debug.WriteLine($"  File size: {new FileInfo(localFilePath).Length / 1024 / 1024} MB");
+                // Fall back to legacy ACS connection file method
+                if (!string.IsNullOrEmpty(_cloudConnectionPath))
+                {
+                    await UploadUsingACSConnectionAsync(localFilePath, layerName, progress);
+                    return;
+                }
 
-                        // First, let's test if we can access the cloud connection at all
-                        // Try to access the root of the cloud connection
-                        var testParams = Geoprocessing.MakeValueArray(_cloudConnectionPath);
-                        var listResult = await Geoprocessing.ExecuteToolAsync("ListFiles_management", testParams);
-                        
-                        if (listResult.IsFailed)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"Cannot access cloud connection: {string.Join("; ", listResult.Messages.Select(m => m.Text))}");
-                            throw new Exception($"Cloud connection test failed: {string.Join("; ", listResult.Messages.Select(m => m.Text))}");
-                        }
-
-                        System.Diagnostics.Debug.WriteLine("Cloud connection test passed, proceeding with upload...");
-
-                        // Use ArcGIS Pro's Transfer Files geoprocessing tool to upload to cloud storage
-                        var parameters = Geoprocessing.MakeValueArray(
-                            localFilePath,          // in_data
-                            cloudDestination        // out_folder (cloud destination path)
-                        );
-
-                        var result = await Geoprocessing.ExecuteToolAsync("TransferFiles_management", parameters);
-
-                        if (result.IsFailed)
-                        {
-                            var errorMessages = string.Join("; ", result.Messages.Select(m => m.Text));
-                            System.Diagnostics.Debug.WriteLine($"TransferFiles failed: {errorMessages}");
-                            throw new Exception($"Failed to upload to cloud storage: {errorMessages}");
-                        }
-
-                        System.Diagnostics.Debug.WriteLine($"Successfully uploaded {fileName} to cloud storage: {cloudDestination}");
-                        progress?.Report($"Successfully uploaded {layerName} to cloud storage");
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Cloud upload error for {layerName}: {ex.Message}");
-                        progress?.Report($"Warning: Failed to upload {layerName} to cloud storage: {ex.Message}");
-                        progress?.Report($"Continuing with local file processing...");
-                        // Don't throw - continue with local file processing
-                    }
-                });
+                throw new InvalidOperationException("No cloud storage configuration available");
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Cloud upload exception for {layerName}: {ex}");
                 progress?.Report($"Warning: Cloud upload failed for {layerName}: {ex.Message}");
+                progress?.Report($"Continuing with local file processing...");
                 // Don't throw - continue with local file processing
             }
+        }
+
+        private async Task UploadUsingDirectSDKAsync(string localFilePath, string layerName, IProgress<string> progress)
+        {
+            var fileName = Path.GetFileName(localFilePath);
+            var basePath = string.IsNullOrEmpty(_cloudBasePath) ? "overture-data" : _cloudBasePath;
+            
+            // Build remote path: basePath/themeType/filename
+            var remotePath = string.IsNullOrEmpty(_currentActualS3Type)
+                ? $"{basePath}/{fileName}"
+                : $"{basePath}/{_currentActualS3Type}/{fileName}";
+
+            System.Diagnostics.Debug.WriteLine($"Direct SDK upload:");
+            System.Diagnostics.Debug.WriteLine($"  Source: {localFilePath}");
+            System.Diagnostics.Debug.WriteLine($"  Remote path: {remotePath}");
+            System.Diagnostics.Debug.WriteLine($"  File size: {new FileInfo(localFilePath).Length / 1024 / 1024} MB");
+
+            var remoteUrl = await _cloudStorageService.UploadFileAsync(localFilePath, remotePath, progress);
+            System.Diagnostics.Debug.WriteLine($"✅ Successfully uploaded to cloud: {remoteUrl}");
+            progress?.Report($"✅ Successfully uploaded {layerName} to cloud storage");
+        }
+
+        private async Task UploadUsingACSConnectionAsync(string localFilePath, string layerName, IProgress<string> progress)
+        {
+            await QueuedTask.Run(async () =>
+            {
+                try
+                {
+                    // Get the relative path structure for cloud storage
+                    var fileName = Path.GetFileName(localFilePath);
+                    var basePath = string.IsNullOrEmpty(_cloudBasePath) ? "overture-data" : _cloudBasePath;
+                    
+                    // Create the cloud destination path using the ACS connection
+                    // For TransferFiles, the ACS file path is followed by the cloud folder structure
+                    var cloudDestination = $"{_cloudConnectionPath}\\{basePath}\\{_currentActualS3Type}";
+
+                    System.Diagnostics.Debug.WriteLine($"Legacy ACS upload:");
+                    System.Diagnostics.Debug.WriteLine($"  Source file: {localFilePath}");
+                    System.Diagnostics.Debug.WriteLine($"  Destination: {cloudDestination}");
+                    System.Diagnostics.Debug.WriteLine($"  File size: {new FileInfo(localFilePath).Length / 1024 / 1024} MB");
+
+                    // First, let's test if we can access the cloud connection at all
+                    // Try to access the root of the cloud connection
+                    var testParams = Geoprocessing.MakeValueArray(_cloudConnectionPath);
+                    var listResult = await Geoprocessing.ExecuteToolAsync("ListFiles_management", testParams);
+                    
+                    if (listResult.IsFailed)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Cannot access cloud connection: {string.Join("; ", listResult.Messages.Select(m => m.Text))}");
+                        throw new Exception($"Cloud connection test failed: {string.Join("; ", listResult.Messages.Select(m => m.Text))}");
+                    }
+
+                    System.Diagnostics.Debug.WriteLine("Cloud connection test passed, proceeding with upload...");
+
+                    // Use ArcGIS Pro's Transfer Files geoprocessing tool to upload to cloud storage
+                    var parameters = Geoprocessing.MakeValueArray(
+                        localFilePath,          // in_data
+                        cloudDestination        // out_folder (cloud destination path)
+                    );
+
+                    var result = await Geoprocessing.ExecuteToolAsync("TransferFiles_management", parameters);
+
+                    if (result.IsFailed)
+                    {
+                        var errorMessages = string.Join("; ", result.Messages.Select(m => m.Text));
+                        System.Diagnostics.Debug.WriteLine($"TransferFiles failed: {errorMessages}");
+                        throw new Exception($"Failed to upload to cloud storage: {errorMessages}");
+                    }
+
+                    System.Diagnostics.Debug.WriteLine($"Successfully uploaded {fileName} to cloud storage: {cloudDestination}");
+                    progress?.Report($"Successfully uploaded {layerName} to cloud storage");
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Cloud upload error for {layerName}: {ex.Message}");
+                    throw; // Re-throw to be caught by outer handler
+                }
+            });
         }
 
         // Helper method to get a more descriptive geometry type name
@@ -1194,6 +1276,7 @@ namespace DuckDBGeoparquet.Services
 
         public void Dispose()
         {
+            _cloudStorageService?.Dispose();
             _connection?.Dispose();
             _pendingLayers?.Clear();
             GC.SuppressFinalize(this);

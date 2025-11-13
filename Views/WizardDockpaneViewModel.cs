@@ -2769,15 +2769,45 @@ namespace DuckDBGeoparquet.Views
         {
             if (_dataProcessor != null)
             {
-                bool enableCloud = EnableCloudOutput && WriteDirectlyToCloud && !string.IsNullOrEmpty(CloudConnectionPath);
-                _dataProcessor.ConfigureCloudOutput(enableCloud, CloudConnectionPath, CloudBasePath);
+                bool enableCloud = EnableCloudOutput && WriteDirectlyToCloud;
                 
-                if (enableCloud)
+                // Prefer direct SDK upload if credentials are provided (easier for users)
+                if (enableCloud && !string.IsNullOrEmpty(BucketName))
                 {
-                    AddToLog($"🌐 Cloud output configured: {CloudConnectionPath}");
+                    try
+                    {
+                        // Use direct SDK method with credentials
+                        _dataProcessor.ConfigureCloudOutputDirect(
+                            enableCloud: true,
+                            provider: SelectedCloudProvider,
+                            bucketName: BucketName,
+                            region: SelectedCloudProvider == CloudProvider.AwsS3 ? Region : null,
+                            basePath: CloudBasePath,
+                            accessKey: CloudAccessKey,
+                            secretKey: CloudSecretKey);
+                        
+                        AddToLog($"🌐 Cloud output configured (direct SDK): {SelectedCloudProvider} → {BucketName}");
+                        if (!string.IsNullOrEmpty(CloudBasePath))
+                        {
+                            AddToLog($"📂 Base path: {CloudBasePath}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AddToLog($"⚠️ Failed to configure direct cloud upload: {ex.Message}");
+                        AddToLog("📁 Falling back to local file output");
+                        _dataProcessor.ConfigureCloudOutput(false, null, CloudBasePath);
+                    }
+                }
+                // Fall back to ACS connection file method if connection path is provided
+                else if (enableCloud && !string.IsNullOrEmpty(CloudConnectionPath))
+                {
+                    _dataProcessor.ConfigureCloudOutput(enableCloud, CloudConnectionPath, CloudBasePath);
+                    AddToLog($"🌐 Cloud output configured (ACS connection): {CloudConnectionPath}");
                 }
                 else
                 {
+                    _dataProcessor.ConfigureCloudOutput(false, null, CloudBasePath);
                     AddToLog("📁 Using local file output");
                 }
             }

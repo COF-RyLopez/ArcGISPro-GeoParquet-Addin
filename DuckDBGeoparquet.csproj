@@ -29,6 +29,10 @@
 		<PackageReference Include="Esri.ArcGISRuntime" Version="200.6.0" />
 		<!-- Use NuGet package when ArcGIS Pro is not installed locally (e.g., CI/CD environments) -->
 		<PackageReference Include="Esri.ArcGISPro.Extensions30" Version="3.5.0.57366" Condition="!Exists('C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Core.dll')" />
+		<!-- Cloud Storage SDKs for direct uploads -->
+		<PackageReference Include="AWSSDK.S3" Version="3.7.400.50" />
+		<PackageReference Include="Azure.Storage.Blobs" Version="12.19.1" />
+		<PackageReference Include="Google.Cloud.Storage.V1" Version="4.7.0" />
 	</ItemGroup>
 	<!-- Use local file references when ArcGIS Pro is installed (for local development) -->
 	<ItemGroup Condition="Exists('C:\Program Files\ArcGIS\Pro\bin\ArcGIS.Core.dll')">
