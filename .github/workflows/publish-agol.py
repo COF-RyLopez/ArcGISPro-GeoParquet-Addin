@@ -316,24 +316,59 @@ def main():
             print("[METADATA] Updating item metadata...")
             print(f"        Updating: {', '.join(metadata_updates.keys())}")
             if 'description' in metadata_updates:
+                desc_preview = metadata_updates['description'][:200] if len(metadata_updates['description']) > 200 else metadata_updates['description']
                 print(f"        Description length: {len(metadata_updates['description'])} characters")
+                print(f"        Description preview: {desc_preview}...")
             
             try:
+                # Refresh the item to get latest state after file upload
+                print("        Refreshing item before metadata update...")
+                item = gis.content.get(args.item_id)
+                
                 # Update metadata separately - this is more reliable for description updates
+                print("        Calling item.update() with metadata...")
                 metadata_result = item.update(item_properties=metadata_updates)
+                
                 if metadata_result:
-                    print("[OK] Metadata updated successfully")
+                    print("[OK] Metadata update returned True")
+                    # Verify immediately
+                    updated_item_check = gis.content.get(args.item_id)
+                    if 'description' in metadata_updates:
+                        if updated_item_check.description:
+                            print(f"        Verified: Description exists ({len(updated_item_check.description)} chars)")
+                            if metadata_updates['description'] in updated_item_check.description or updated_item_check.description.startswith('Latest Version:'):
+                                print("        ✅ Description update verified")
+                            else:
+                                print(f"        ⚠️  WARNING: Description may not have updated correctly")
+                                print(f"        Expected to contain: {metadata_updates['description'][:100]}...")
+                        else:
+                            print("        ⚠️  WARNING: Description appears empty after update")
                 else:
-                    print("WARNING: Metadata update returned False")
+                    print("        ⚠️  WARNING: Metadata update returned False - update may have failed")
+                    print("        Attempting direct update via item_properties...")
+                    # Try alternative approach
+                    try:
+                        item.update(item_properties=metadata_updates)
+                        print("        ✅ Retry successful")
+                    except Exception as retry_error:
+                        print(f"        ❌ Retry also failed: {retry_error}")
             except Exception as metadata_error:
-                print(f"ERROR: Metadata update failed: {metadata_error}")
-                # Don't fail the entire process if metadata update fails
+                print(f"        ❌ ERROR: Metadata update failed: {metadata_error}")
                 import traceback
                 traceback.print_exc()
+                # Try one more time with a fresh item fetch
+                print("        Attempting final retry with fresh item fetch...")
+                try:
+                    fresh_item = gis.content.get(args.item_id)
+                    fresh_item.update(item_properties=metadata_updates)
+                    print("        ✅ Final retry successful")
+                except Exception as final_error:
+                    print(f"        ❌ Final retry also failed: {final_error}")
+                    print("        Continuing despite metadata update failure...")
         
         print()
         
-        # Step 5: Verify metadata update (if description was provided)
+        # Step 5: Verify metadata update (if description was provided) and force update if needed
         if args.description:
             print("[VERIFY] Verifying description update...")
             try:
