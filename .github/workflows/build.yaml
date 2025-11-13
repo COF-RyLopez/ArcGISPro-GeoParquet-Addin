@@ -193,8 +193,9 @@ jobs:
           COMMITS=$(git log --oneline --pretty=format:"%s" -10 2>/dev/null || echo "")
         else
           # Get commits since previous release (excluding merge commits, version bumps, debug, and CI/CD commits)
+          # Filter out: version bumps (any format), skip ci, debug, workflow fixes, CI commits
           COMMITS=$(git log ${PREV_TAG}..HEAD --oneline --pretty=format:"%s" --no-merges 2>/dev/null | \
-            grep -v -E "(chore: bump version|debug:|fix:.*workflow|feat:.*workflow|ci:|skip ci)" | \
+            grep -v -iE "(bump version|version to|chore:.*version|debug:|fix:.*workflow|feat:.*workflow|ci:|skip ci|\[skip ci\]|\[ci skip\])" | \
             head -5 || echo "")
         fi
         

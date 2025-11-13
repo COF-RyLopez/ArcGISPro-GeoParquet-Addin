@@ -172,20 +172,47 @@ def main():
             if args.description.startswith("Latest Version:"):
                 # Get current description and update just the version line
                 current_desc = item.description or ""
-                # Replace the "Latest Version:" line if it exists, otherwise prepend
                 import re
-                if re.search(r'Latest Version:\s*v[\d.]+', current_desc):
-                    # Replace existing version line
-                    updated_desc = re.sub(
-                        r'Latest Version:\s*v[\d.]+[^\n]*',
-                        args.description.strip(),
-                        current_desc,
-                        count=1
-                    )
-                else:
-                    # Prepend version line to existing description
+                
+                # Debug: Print current description snippet
+                print(f"[DEBUG] Current description length: {len(current_desc)} chars")
+                if current_desc:
+                    # Find the Latest Version line
+                    version_match = re.search(r'Latest Version:.*', current_desc, re.MULTILINE)
+                    if version_match:
+                        print(f"[DEBUG] Found existing version line: {version_match.group()[:100]}")
+                    else:
+                        print("[DEBUG] No existing 'Latest Version:' line found")
+                
+                # Try multiple regex patterns to match the version line
+                # Pattern 1: Match entire line from "Latest Version:" to end of line (handles \r\n and \n)
+                pattern1 = r'Latest Version:.*?(?=\n|$)'
+                # Pattern 2: Match with any whitespace variations
+                pattern2 = r'Latest Version:\s*v[\d.]+\s*.*?(?=\n|$)'
+                # Pattern 3: Match with multiline flag
+                pattern3 = r'Latest Version:.*'
+                
+                updated_desc = None
+                for pattern in [pattern1, pattern2, pattern3]:
+                    if re.search(pattern, current_desc, re.MULTILINE):
+                        updated_desc = re.sub(
+                            pattern,
+                            args.description.strip(),
+                            current_desc,
+                            count=1,
+                            flags=re.MULTILINE
+                        )
+                        print(f"[DEBUG] Matched pattern and replaced version line")
+                        break
+                
+                if updated_desc is None:
+                    # No match found, prepend version line
+                    print("[DEBUG] No match found, prepending version line")
                     updated_desc = args.description.strip() + "\n\n" + current_desc
+                
                 metadata_updates["description"] = updated_desc
+                print(f"[DEBUG] Updated description length: {len(updated_desc)} chars")
+                print(f"[DEBUG] New version line: {args.description.strip()[:100]}")
             else:
                 # Full description replacement
                 metadata_updates["description"] = args.description
@@ -273,19 +300,66 @@ def main():
                 # Refresh the item to get latest data
                 updated_item = gis.content.get(args.item_id)
                 if updated_item.description:
-                    print(f"        Verified: Description updated ({len(updated_item.description)} chars)")
-                    print(f"        Preview: {updated_item.description[:200]}...")
+                    # Check if the version line was actually updated
+                    import re
+                    expected_version = args.description.strip()
+                    if expected_version.startswith("Latest Version:"):
+                        # Check if the version line matches what we sent
+                        current_version_line = re.search(r'Latest Version:.*', updated_item.description, re.MULTILINE)
+                        if current_version_line:
+                            current_line = current_version_line.group().strip()
+                            expected_line = expected_version.strip()
+                            if current_line == expected_line:
+                                print(f"        ✅ Verified: Version line updated correctly")
+                                print(f"        Verified: Description updated ({len(updated_item.description)} chars)")
+                                print(f"        Preview: {updated_item.description[:200]}...")
+                            else:
+                                print(f"        ⚠️  WARNING: Version line doesn't match expected value")
+                                print(f"        Expected: {expected_line[:100]}")
+                                print(f"        Actual: {current_line[:100]}")
+                                print("        Attempting separate description update...")
+                                try:
+                                    # Re-fetch item and update description separately
+                                    item_to_update = gis.content.get(args.item_id)
+                                    current_desc = item_to_update.description or ""
+                                    # Try the regex replacement again
+                                    pattern = r'Latest Version:.*?(?=\n|$)'
+                                    if re.search(pattern, current_desc, re.MULTILINE):
+                                        updated_desc = re.sub(
+                                            pattern,
+                                            expected_line,
+                                            current_desc,
+                                            count=1,
+                                            flags=re.MULTILINE
+                                        )
+                                    else:
+                                        updated_desc = expected_line + "\n\n" + current_desc
+                                    
+                                    item_to_update.update(item_properties={"description": updated_desc})
+                                    print("        ✅ Description updated via separate call")
+                                except Exception as e2:
+                                    print(f"        ❌ ERROR: Separate update also failed: {e2}")
+                                    import traceback
+                                    traceback.print_exc()
+                        else:
+                            print("        ⚠️  WARNING: No 'Latest Version:' line found in description")
+                            print(f"        Description preview: {updated_item.description[:200]}...")
+                    else:
+                        print(f"        Verified: Description updated ({len(updated_item.description)} chars)")
+                        print(f"        Preview: {updated_item.description[:200]}...")
                 else:
                     print("        WARNING: Description appears empty after update")
                     # Try updating description separately as fallback
                     print("        Attempting separate description update...")
                     try:
                         item.update(item_properties={"description": args.description})
-                        print("        [OK] Description updated via separate call")
+                        print("        ✅ Description updated via separate call")
                     except Exception as e2:
-                        print(f"        ERROR: Separate update also failed: {e2}")
+                        print(f"        ❌ ERROR: Separate update also failed: {e2}")
             except Exception as e:
                 print(f"        WARNING: Verification failed: {e}")
+                import traceback
+                traceback.print_exc()
             print()
         
         # Step 6: Final verification
