@@ -1821,16 +1821,38 @@ ExecuteQuery:
                 {
                     using var doc = JsonDocument.Parse(geometryParam);
                     var root = doc.RootElement;
+                    
+                    // Check if coordinates need conversion
+                    bool needsConversion = false;
+                    if (root.TryGetProperty("spatialReference", out var srProp))
+                    {
+                        if (srProp.TryGetProperty("wkid", out var wkidProp))
+                            needsConversion = (wkidProp.GetInt32() == 3857 || wkidProp.GetInt32() == 102100);
+                        else if (srProp.TryGetProperty("latestWkid", out var latestWkidProp))
+                            needsConversion = (latestWkidProp.GetInt32() == 3857 || latestWkidProp.GetInt32() == 102100);
+                    }
+                    
                     if (root.TryGetProperty("xmin", out var xminProp) &&
                         root.TryGetProperty("ymin", out var yminProp) &&
                         root.TryGetProperty("xmax", out var xmaxProp) &&
                         root.TryGetProperty("ymax", out var ymaxProp))
                     {
-                        var xmin = xminProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
-                        var ymin = yminProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
-                        var xmax = xmaxProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
-                        var ymax = ymaxProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
-                        conditions.Add($"ST_Intersects(geometry, ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax}))");
+                        double xmin = xminProp.GetDouble();
+                        double ymin = yminProp.GetDouble();
+                        double xmax = xmaxProp.GetDouble();
+                        double ymax = ymaxProp.GetDouble();
+                        
+                        // Convert Web Mercator to WGS84 if needed
+                        if (needsConversion)
+                        {
+                            (xmin, ymin, xmax, ymax) = ConvertWebMercatorToWgs84(xmin, ymin, xmax, ymax);
+                        }
+                        
+                        var xminStr = xmin.ToString("G", CultureInfo.InvariantCulture);
+                        var yminStr = ymin.ToString("G", CultureInfo.InvariantCulture);
+                        var xmaxStr = xmax.ToString("G", CultureInfo.InvariantCulture);
+                        var ymaxStr = ymax.ToString("G", CultureInfo.InvariantCulture);
+                        conditions.Add($"ST_Intersects(geometry, ST_MakeEnvelope({xminStr}, {yminStr}, {xmaxStr}, {ymaxStr}))");
                     }
                 }
                 catch { }
@@ -1962,16 +1984,38 @@ ExecuteQuery:
                 {
                     using var doc = JsonDocument.Parse(geometryParam);
                     var root = doc.RootElement;
+                    
+                    // Check if coordinates need conversion
+                    bool needsConversion = false;
+                    if (root.TryGetProperty("spatialReference", out var srProp))
+                    {
+                        if (srProp.TryGetProperty("wkid", out var wkidProp))
+                            needsConversion = (wkidProp.GetInt32() == 3857 || wkidProp.GetInt32() == 102100);
+                        else if (srProp.TryGetProperty("latestWkid", out var latestWkidProp))
+                            needsConversion = (latestWkidProp.GetInt32() == 3857 || latestWkidProp.GetInt32() == 102100);
+                    }
+                    
                     if (root.TryGetProperty("xmin", out var xminProp) &&
                         root.TryGetProperty("ymin", out var yminProp) &&
                         root.TryGetProperty("xmax", out var xmaxProp) &&
                         root.TryGetProperty("ymax", out var ymaxProp))
                     {
-                        var xmin = xminProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
-                        var ymin = yminProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
-                        var xmax = xmaxProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
-                        var ymax = ymaxProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
-                        conditions.Add($"ST_Intersects(geometry, ST_MakeEnvelope({xmin}, {ymin}, {xmax}, {ymax}))");
+                        double xmin = xminProp.GetDouble();
+                        double ymin = yminProp.GetDouble();
+                        double xmax = xmaxProp.GetDouble();
+                        double ymax = ymaxProp.GetDouble();
+                        
+                        // Convert Web Mercator to WGS84 if needed
+                        if (needsConversion)
+                        {
+                            (xmin, ymin, xmax, ymax) = ConvertWebMercatorToWgs84(xmin, ymin, xmax, ymax);
+                        }
+                        
+                        var xminStr = xmin.ToString("G", CultureInfo.InvariantCulture);
+                        var yminStr = ymin.ToString("G", CultureInfo.InvariantCulture);
+                        var xmaxStr = xmax.ToString("G", CultureInfo.InvariantCulture);
+                        var ymaxStr = ymax.ToString("G", CultureInfo.InvariantCulture);
+                        conditions.Add($"ST_Intersects(geometry, ST_MakeEnvelope({xminStr}, {yminStr}, {xmaxStr}, {ymaxStr}))");
                     }
                 }
                 catch { }
@@ -2061,6 +2105,34 @@ ExecuteQuery:
         }
 
         /// <summary>
+        /// Convert Web Mercator coordinates to WGS84 (degrees)
+        /// </summary>
+        private (double xmin, double ymin, double xmax, double ymax) ConvertWebMercatorToWgs84(double xmin, double ymin, double xmax, double ymax)
+        {
+            // Web Mercator (EPSG:3857) to WGS84 (EPSG:4326) conversion
+            const double earthRadius = 6378137.0; // meters
+            
+            // Convert longitude (x): divide by earth radius and convert to degrees
+            var lonMin = xmin / earthRadius * 180.0 / Math.PI;
+            var lonMax = xmax / earthRadius * 180.0 / Math.PI;
+            
+            // Convert latitude (y): inverse Mercator projection
+            // lat = atan(sinh(y/R)) * 180 / PI
+            var latMinDeg = Math.Atan(Math.Sinh(ymin / earthRadius)) * 180.0 / Math.PI;
+            var latMaxDeg = Math.Atan(Math.Sinh(ymax / earthRadius)) * 180.0 / Math.PI;
+            
+            // Ensure min < max
+            if (latMinDeg > latMaxDeg)
+            {
+                var temp = latMinDeg;
+                latMinDeg = latMaxDeg;
+                latMaxDeg = temp;
+            }
+            
+            return (lonMin, latMinDeg, lonMax, latMaxDeg);
+        }
+
+        /// <summary>
         /// Convert ArcGIS geometry to DuckDB spatial SQL
         /// </summary>
         private string ConvertArcGISGeometryToSql(string geometryJson, string spatialRel)
@@ -2071,26 +2143,55 @@ ExecuteQuery:
                 {
                     var root = doc.RootElement;
 
+                    // Check spatial reference - convert Web Mercator to WGS84 if needed
+                    bool needsConversion = false;
+                    if (root.TryGetProperty("spatialReference", out var srProp))
+                    {
+                        if (srProp.TryGetProperty("wkid", out var wkidProp))
+                        {
+                            var wkid = wkidProp.GetInt32();
+                            // Web Mercator: 3857 or 102100
+                            needsConversion = (wkid == 3857 || wkid == 102100);
+                        }
+                        else if (srProp.TryGetProperty("latestWkid", out var latestWkidProp))
+                        {
+                            var latestWkid = latestWkidProp.GetInt32();
+                            needsConversion = (latestWkid == 3857 || latestWkid == 102100);
+                        }
+                    }
+
                     if (root.TryGetProperty("xmin", out var xminProp) &&
                         root.TryGetProperty("ymin", out var yminProp) &&
                         root.TryGetProperty("xmax", out var xmaxProp) &&
                         root.TryGetProperty("ymax", out var ymaxProp))
                     {
                         // Envelope geometry - Updated for Overture Maps bbox struct
-                        var xmin = xminProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
-                        var ymin = yminProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
-                        var xmax = xmaxProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
-                        var ymax = ymaxProp.GetDouble().ToString("G", CultureInfo.InvariantCulture);
+                        double xmin = xminProp.GetDouble();
+                        double ymin = yminProp.GetDouble();
+                        double xmax = xmaxProp.GetDouble();
+                        double ymax = ymaxProp.GetDouble();
+
+                        // Convert Web Mercator to WGS84 if needed (bbox fields are in WGS84)
+                        if (needsConversion)
+                        {
+                            (xmin, ymin, xmax, ymax) = ConvertWebMercatorToWgs84(xmin, ymin, xmax, ymax);
+                            Debug.WriteLine($"🔄 Converted Web Mercator envelope to WGS84: ({xmin:G6}, {ymin:G6})–({xmax:G6}, {ymax:G6})");
+                        }
+
+                        var xminStr = xmin.ToString("G", CultureInfo.InvariantCulture);
+                        var yminStr = ymin.ToString("G", CultureInfo.InvariantCulture);
+                        var xmaxStr = xmax.ToString("G", CultureInfo.InvariantCulture);
+                        var ymaxStr = ymax.ToString("G", CultureInfo.InvariantCulture);
 
                         return spatialRel.ToLowerInvariant() switch
                         {
                             "esrispatialrelintersects" or "esrispatialrelenvelopeintersects" =>
-                                $"(bbox.xmin <= {xmax} AND bbox.xmax >= {xmin} AND bbox.ymin <= {ymax} AND bbox.ymax >= {ymin})",
+                                $"(bbox.xmin <= {xmaxStr} AND bbox.xmax >= {xminStr} AND bbox.ymin <= {ymaxStr} AND bbox.ymax >= {yminStr})",
                             "esrispatialrelcontains" =>
-                                $"(bbox.xmin >= {xmin} AND bbox.xmax <= {xmax} AND bbox.ymin >= {ymin} AND bbox.ymax <= {ymax})",
+                                $"(bbox.xmin >= {xminStr} AND bbox.xmax <= {xmaxStr} AND bbox.ymin >= {yminStr} AND bbox.ymax <= {ymaxStr})",
                             "esrispatialrelwithin" =>
-                                $"(bbox.xmin <= {xmin} AND bbox.xmax >= {xmax} AND bbox.ymin <= {ymin} AND bbox.ymax >= {ymax})",
-                            _ => $"(bbox.xmin <= {xmax} AND bbox.xmax >= {xmin} AND bbox.ymin <= {ymax} AND bbox.ymax >= {ymin})"
+                                $"(bbox.xmin <= {xminStr} AND bbox.xmax >= {xmaxStr} AND bbox.ymin <= {yminStr} AND bbox.ymax >= {ymaxStr})",
+                            _ => $"(bbox.xmin <= {xmaxStr} AND bbox.xmax >= {xminStr} AND bbox.ymin <= {ymaxStr} AND bbox.ymax >= {yminStr})"
                         };
                     }
 
