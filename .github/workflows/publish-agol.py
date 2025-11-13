@@ -184,17 +184,18 @@ def main():
                     else:
                         print("[DEBUG] No existing 'Latest Version:' line found")
                 
-                # Try multiple regex patterns to match the version line
-                # Pattern 1: Match from "Latest Version:" until next section marker (handles HTML and plain text)
-                pattern1 = r'Latest Version:.*?(?=\n\n|\n🏆|\n📦|<\/ul>|\n\n|$)'
-                # Pattern 2: Match entire line from "Latest Version:" to end of line (handles \r\n and \n)
-                pattern2 = r'Latest Version:.*?(?=\n|$)'
-                # Pattern 3: Match with HTML content (includes <br>, <ul>, <li> tags)
-                pattern3 = r'Latest Version:.*?(?=<\/ul>|🏆|📦|\n\n|$)'
-                # Pattern 4: Match entire line including newline (DOTALL mode)
-                pattern4 = r'Latest Version:[^\n]*(?:\n|$)'
-                # Pattern 5: Simple match everything from Latest Version to end (fallback)
-                pattern5 = r'Latest Version:.*?(?=\n\n|$)'
+                # Try multiple regex patterns to match the version line and ALL following content until next section
+                # Pattern 1: Match from "Latest Version:" until next section marker (🏆, 📦, 🔄) or section header
+                # This should match everything including "with the following improvements" and bullet points
+                pattern1 = r'Latest Version:.*?(?=\n\n|\n🏆|\n📦|\n🔄|🏆|📦|🔄|$)'
+                # Pattern 2: Match from "Latest Version:" until we hit a line starting with emoji or section header
+                pattern2 = r'Latest Version:.*?(?=\n[🏆📦🔄]|\nSource|\nReady|\nTerms|🏆|📦|🔄|$)'
+                # Pattern 3: Match everything from Latest Version until double newline (more aggressive)
+                pattern3 = r'Latest Version:.*?(?=\n\n|$)'
+                # Pattern 4: Match entire line from "Latest Version:" to end of line (handles \r\n and \n)
+                pattern4 = r'Latest Version:.*?(?=\n|$)'
+                # Pattern 5: Match everything from Latest Version until we hit a line starting with certain markers (DOTALL)
+                pattern5 = r'Latest Version:.*?(?=\n(?:🏆|📦|🔄|Source|Ready|Terms)|$)'
                 
                 updated_desc = None
                 for i, pattern in enumerate([pattern1, pattern2, pattern3, pattern4, pattern5], 1):
@@ -202,9 +203,11 @@ def main():
                     if match:
                         # Use a more precise replacement - match the exact text found
                         matched_text = match.group()
-                        print(f"[DEBUG] Pattern {i} matched: {matched_text[:100]}...")
+                        print(f"[DEBUG] Pattern {i} matched: {matched_text[:150]}...")
+                        # Replace the matched text with just the new version line
                         updated_desc = current_desc.replace(matched_text, args.description.strip(), 1)
-                        print(f"[DEBUG] Replaced version line using pattern {i}")
+                        print(f"[DEBUG] Replaced version section using pattern {i}")
+                        print(f"[DEBUG] Matched length: {len(matched_text)} chars, Replacement length: {len(args.description.strip())} chars")
                         break
                 
                 if updated_desc is None:
@@ -224,10 +227,21 @@ def main():
                             print(f"[DEBUG] Found and replacing: {line[:80]}...")
                             # Skip following lines that are part of the version section (HTML content, list items, etc.)
                             i += 1
-                            while i < len(lines) and not lines[i].strip().startswith(('🏆', '📦', '🔄', 'Source', 'Ready', 'Terms')) and lines[i].strip() != '':
-                                # Skip HTML content, list items, or continuation of version line
-                                if not (lines[i].strip().startswith('<') or lines[i].strip().startswith('•') or lines[i].strip().startswith('-')):
+                            # Skip all lines until we hit a section marker or empty line followed by section marker
+                            while i < len(lines):
+                                line_stripped = lines[i].strip()
+                                # Stop if we hit a section marker
+                                if line_stripped.startswith(('🏆', '📦', '🔄', 'Source', 'Ready', 'Terms')):
                                     break
+                                # Stop if we hit an empty line (might be end of version section)
+                                if line_stripped == '':
+                                    # Check if next non-empty line is a section marker
+                                    j = i + 1
+                                    while j < len(lines) and lines[j].strip() == '':
+                                        j += 1
+                                    if j < len(lines) and lines[j].strip().startswith(('🏆', '📦', '🔄', 'Source', 'Ready', 'Terms')):
+                                        break
+                                # Skip this line (it's part of the version section)
                                 i += 1
                             continue
                         else:
