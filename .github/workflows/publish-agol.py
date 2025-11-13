@@ -325,22 +325,68 @@ def main():
                 print("        Refreshing item before metadata update...")
                 item = gis.content.get(args.item_id)
                 
+                # Log current state
+                print(f"        Current description length: {len(item.description or '')} chars")
+                if 'description' in metadata_updates:
+                    print(f"        New description length: {len(metadata_updates['description'])} chars")
+                    print(f"        New description preview: {metadata_updates['description'][:150]}...")
+                
                 # Update metadata separately - this is more reliable for description updates
                 print("        Calling item.update() with metadata...")
+                print(f"        Metadata keys to update: {list(metadata_updates.keys())}")
                 metadata_result = item.update(item_properties=metadata_updates)
                 
                 if metadata_result:
                     print("[OK] Metadata update returned True")
+                    # Wait a moment for AGOL to process the update
+                    import time
+                    time.sleep(2)
+                    
                     # Verify immediately
+                    print("        Verifying update...")
                     updated_item_check = gis.content.get(args.item_id)
                     if 'description' in metadata_updates:
                         if updated_item_check.description:
                             print(f"        Verified: Description exists ({len(updated_item_check.description)} chars)")
-                            if metadata_updates['description'] in updated_item_check.description or updated_item_check.description.startswith('Latest Version:'):
-                                print("        ✅ Description update verified")
+                            # Check if the version line was actually updated
+                            import re
+                            current_version_match = re.search(r'Latest Version:.*', updated_item_check.description, re.MULTILINE)
+                            expected_version_match = re.search(r'Latest Version:.*', metadata_updates['description'], re.MULTILINE)
+                            
+                            if current_version_match and expected_version_match:
+                                current_line = current_version_match.group().strip()
+                                expected_line = expected_version_match.group().strip()
+                                print(f"        Current version line: {current_line[:100]}...")
+                                print(f"        Expected version line: {expected_line[:100]}...")
+                                
+                                if current_line == expected_line:
+                                    print("        ✅ Description update verified - version line matches!")
+                                else:
+                                    print(f"        ⚠️  WARNING: Version line doesn't match - forcing update...")
+                                    # Force update the description
+                                    item.update(item_properties={"description": metadata_updates['description']})
+                                    print("        ✅ Forced update completed")
+                            elif current_version_match:
+                                print(f"        ⚠️  WARNING: Found version line but expected format not found")
+                                print(f"        Current: {current_version_match.group()[:100]}...")
+                                # Try to update just the version line
+                                current_desc = updated_item_check.description
+                                lines = current_desc.split('\n')
+                                updated_lines = []
+                                replaced = False
+                                for line in lines:
+                                    if line.strip().startswith('Latest Version:'):
+                                        updated_lines.append(expected_version_match.group().strip() if expected_version_match else metadata_updates['description'])
+                                        replaced = True
+                                    else:
+                                        updated_lines.append(line)
+                                if replaced:
+                                    final_desc = '\n'.join(updated_lines)
+                                    item.update(item_properties={"description": final_desc})
+                                    print("        ✅ Version line updated")
                             else:
-                                print(f"        ⚠️  WARNING: Description may not have updated correctly")
-                                print(f"        Expected to contain: {metadata_updates['description'][:100]}...")
+                                print(f"        ⚠️  WARNING: No version line found in description")
+                                print(f"        Description preview: {updated_item_check.description[:200]}...")
                         else:
                             print("        ⚠️  WARNING: Description appears empty after update")
                 else:
