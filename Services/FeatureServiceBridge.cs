@@ -43,6 +43,7 @@ namespace DuckDBGeoparquet.Services
         private readonly int _port;
         private bool _isRunning;
         private Task _listenerTask;
+        private readonly string _releaseVersion;
 
         // ArcGIS Feature Service constants
         private const int _maxRecordCount = 10000;
@@ -59,36 +60,48 @@ namespace DuckDBGeoparquet.Services
             WriteIndented = false
         };
 
+        // S3 base path for Overture Maps
+        private const string S3_BASE_PATH = "s3://overturemaps-us-west-2/release";
+
         // Multi-layer service: add key Overture themes (kept lean; attributes discovered on-demand)
         // Rendering order: configured to ensure polygons at bottom, lines in middle, points on top in ArcGIS Pro
         // Order chosen: Places (points) [Layer 0], Roads (lines) [Layer 1], Buildings (polygons) [Layer 2]
-        private readonly List<ThemeDefinition> _themes = new List<ThemeDefinition>
+        private List<ThemeDefinition> _themes;
+
+        /// <summary>
+        /// Builds the theme definitions list dynamically using the current release version
+        /// </summary>
+        private List<ThemeDefinition> BuildThemes()
         {
-            new ThemeDefinition 
-            { 
-                Id = 0, // Places will be Layer 0 (topmost in Pro rendering observed)
-                Name = "Places - Points",
-                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=places/type=place/*.parquet",
-                GeometryType = "esriGeometryPoint",
-                Fields = new[] { "id" }
-            },
-            new ThemeDefinition 
-            { 
-                Id = 1, // Roads will be Layer 1
-                Name = "Transportation - Roads", 
-                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=transportation/type=segment/*.parquet",
-                GeometryType = "esriGeometryPolyline",
-                Fields = new[] { "id" }
-            },
-            new ThemeDefinition 
-            { 
-                Id = 2, // Buildings will be Layer 2 (bottom)
-                Name = "Buildings - Footprints",
-                S3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=buildings/type=building/*.parquet",
-                GeometryType = "esriGeometryPolygon",
-                Fields = new[] { "id" }
-            }
-        };
+            var release = string.IsNullOrWhiteSpace(_releaseVersion) ? "latest" : _releaseVersion.Trim();
+            return new List<ThemeDefinition>
+            {
+                new ThemeDefinition 
+                { 
+                    Id = 0, // Places will be Layer 0 (topmost in Pro rendering observed)
+                    Name = "Places - Points",
+                    S3Path = $"{S3_BASE_PATH}/{release}/theme=places/type=place/*.parquet",
+                    GeometryType = "esriGeometryPoint",
+                    Fields = new[] { "id" }
+                },
+                new ThemeDefinition 
+                { 
+                    Id = 1, // Roads will be Layer 1
+                    Name = "Transportation - Roads", 
+                    S3Path = $"{S3_BASE_PATH}/{release}/theme=transportation/type=segment/*.parquet",
+                    GeometryType = "esriGeometryPolyline",
+                    Fields = new[] { "id" }
+                },
+                new ThemeDefinition 
+                { 
+                    Id = 2, // Buildings will be Layer 2 (bottom)
+                    Name = "Buildings - Footprints",
+                    S3Path = $"{S3_BASE_PATH}/{release}/theme=buildings/type=building/*.parquet",
+                    GeometryType = "esriGeometryPolygon",
+                    Fields = new[] { "id" }
+                }
+            };
+        }
 
         // In-memory cache status - Thread-safe async synchronization
         private bool _dataLoaded = false;
@@ -100,14 +113,17 @@ namespace DuckDBGeoparquet.Services
         // Not const to avoid CS0162 unreachable code warnings in logging branches
         private static readonly bool _verboseSqlLogging = false; // set true to log full SQL
 
-        public FeatureServiceBridge(DataProcessor dataProcessor, int port = 8080)
+        public FeatureServiceBridge(DataProcessor dataProcessor, int port = 8080, string releaseVersion = null)
         {
             _dataProcessor = dataProcessor ?? throw new ArgumentNullException(nameof(dataProcessor));
             _port = port;
+            _releaseVersion = releaseVersion;
             _cancellationTokenSource = new CancellationTokenSource();
             _discoveredFields = new Dictionary<int, HashSet<string>>();
             _discoveredFieldSql = new Dictionary<int, Dictionary<string, string>>();
             _structColumns = new Dictionary<int, HashSet<string>>();
+            _themes = BuildThemes();
+            Debug.WriteLine($"FeatureServiceBridge initialized with release: {_releaseVersion ?? "latest"}");
         }
 
         private async Task MaterializeAoiForThemeAsync(ThemeDefinition theme)
@@ -151,8 +167,9 @@ namespace DuckDBGeoparquet.Services
         private string _aoiWkt = null;
         private readonly Dictionary<int, string> _aoiTables = new Dictionary<int, string>();
         private readonly SemaphoreSlim _aoiLock = new SemaphoreSlim(1, 1);
-        private const string _divisionAreasS3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=divisions/type=division_area/*.parquet";
-        private const string _divisionsS3Path = "s3://overturemaps-us-west-2/release/2025-07-23.0/theme=divisions/type=division/*.parquet";
+        // Division paths - built dynamically from release version
+        private string DivisionAreasS3Path => $"{S3_BASE_PATH}/{(_releaseVersion ?? "latest").Trim()}/theme=divisions/type=division_area/*.parquet";
+        private string DivisionsS3Path => $"{S3_BASE_PATH}/{(_releaseVersion ?? "latest").Trim()}/theme=divisions/type=division/*.parquet";
 
         /// <summary>
         /// Ensure a materialized export table exists for the given theme and geometry key.
@@ -892,7 +909,7 @@ namespace DuckDBGeoparquet.Services
                                      struct_extract(names, 'primary') AS name,
                                      subtype AS adminLevel,
                                      id AS division_id
-                              FROM read_parquet('{_divisionsS3Path}', filename=true, hive_partitioning=1)
+                              FROM read_parquet('{DivisionsS3Path}', filename=true, hive_partitioning=1)
                               WHERE LOWER(struct_extract(names, 'primary')) LIKE LOWER('%{like}%')
                               ORDER BY LENGTH(struct_extract(names, 'primary')) ASC
                               LIMIT {limit}";
@@ -931,7 +948,7 @@ namespace DuckDBGeoparquet.Services
                 {
                     var didSafe = divisionId.Replace("'", "''");
                     var sql = $@"SELECT ST_AsText(ST_UnaryUnion(ST_Collect(geometry))) AS wkt
-                                  FROM read_parquet('{_divisionAreasS3Path}', filename=true, hive_partitioning=1)
+                                  FROM read_parquet('{DivisionAreasS3Path}', filename=true, hive_partitioning=1)
                                   WHERE division_id = '{didSafe}'";
                     var res = await _dataProcessor.ExecuteQueryAsync(sql);
                     var rw = res.FirstOrDefault();

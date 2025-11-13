@@ -452,8 +452,8 @@ namespace DuckDBGeoparquet.Views
             _dataProcessor = new DataProcessor();
             _showingFeatureServiceOnly = false;
             
-            // Initialize Feature Service Manager
-            _featureServiceManager = new FeatureServiceManager(_dataProcessor);
+            // Initialize Feature Service Manager with current release version
+            _featureServiceManager = new FeatureServiceManager(_dataProcessor, LatestRelease);
 
             LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => GetSelectedLeafItems().Count > 0);
             ToggleFeatureServiceCommand = new RelayCommand(async () => await ToggleFeatureServiceAsync(), () => CanToggleFeatureService);
@@ -560,7 +560,7 @@ namespace DuckDBGeoparquet.Views
                 if (RequireAoiBeforeStart && !IsFeatureServiceRunning)
                 {
                     AddToLog("Starting Feature Service for AOI search...");
-                    await _featureServiceManager.StartServiceAsync(8080, requireAoiBeforeStart: true);
+                    await _featureServiceManager.StartServiceAsync(8080, requireAoiBeforeStart: true, releaseVersion: LatestRelease);
                     var status = _featureServiceManager.GetServiceStatus();
                     IsFeatureServiceRunning = status.IsRunning;
                     FeatureServiceUrl = status.ServiceUrl ?? "";
@@ -598,7 +598,7 @@ namespace DuckDBGeoparquet.Views
                 if (!IsFeatureServiceRunning)
                 {
                     AddToLog("Starting Feature Service for AOI materialization...");
-                    await _featureServiceManager.StartServiceAsync(8080, requireAoiBeforeStart: true);
+                    await _featureServiceManager.StartServiceAsync(8080, requireAoiBeforeStart: true, releaseVersion: LatestRelease);
                     var status = _featureServiceManager.GetServiceStatus();
                     IsFeatureServiceRunning = status.IsRunning;
                     FeatureServiceUrl = status.ServiceUrl ?? "";
@@ -1021,6 +1021,11 @@ namespace DuckDBGeoparquet.Views
                     AddToLog($"Latest release refreshed: {LatestRelease}");
                     UpdatePathsFromRelease();
                     SaveCachedLatestRelease(LatestRelease);
+                    // Update feature service manager with new release version (will take effect on next start)
+                    if (_featureServiceManager != null)
+                    {
+                        _featureServiceManager.SetReleaseVersion(LatestRelease);
+                    }
                     IsManualReleaseEntryVisible = false; // hide if previously shown
                 }
             }
@@ -1043,6 +1048,11 @@ namespace DuckDBGeoparquet.Views
             LatestRelease = input;
             NotifyPropertyChanged(nameof(LatestRelease));
             UpdatePathsFromRelease();
+            // Update feature service manager with new release version (will take effect on next start)
+            if (_featureServiceManager != null)
+            {
+                _featureServiceManager.SetReleaseVersion(LatestRelease);
+            }
             AddToLog($"Manual release applied: {LatestRelease}");
         }
 
@@ -2710,7 +2720,7 @@ namespace DuckDBGeoparquet.Views
 
                 AddToLog($"Toggling Multi-Layer Feature Service (currently {(IsFeatureServiceRunning ? "running" : "stopped")})...");
 
-                bool success = await _featureServiceManager.ToggleServiceAsync();
+                bool success = await _featureServiceManager.ToggleServiceAsync(releaseVersion: LatestRelease);
                 
                 if (success)
                 {

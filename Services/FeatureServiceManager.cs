@@ -15,10 +15,12 @@ namespace DuckDBGeoparquet.Services
         private readonly DataProcessor _dataProcessor;
         private FeatureServiceBridge _featureServiceBridge;
         private bool _isRunning;
+        private string _releaseVersion;
 
-        public FeatureServiceManager(DataProcessor dataProcessor)
+        public FeatureServiceManager(DataProcessor dataProcessor, string releaseVersion = null)
         {
             _dataProcessor = dataProcessor ?? throw new ArgumentNullException(nameof(dataProcessor));
+            _releaseVersion = releaseVersion;
         }
 
         /// <summary>
@@ -34,7 +36,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Starts the DuckDB Feature Service Bridge
         /// </summary>
-        public async Task<bool> StartServiceAsync(int port = 8080, bool requireAoiBeforeStart = false)
+        public async Task<bool> StartServiceAsync(int port = 8080, bool requireAoiBeforeStart = false, string releaseVersion = null)
         {
             try
             {
@@ -44,9 +46,12 @@ namespace DuckDBGeoparquet.Services
                     return true;
                 }
 
-                Debug.WriteLine("Starting DuckDB Multi-Layer Feature Service Bridge...");
+                // Use provided release version, or fall back to stored version, or null (which will use "latest")
+                var effectiveReleaseVersion = releaseVersion ?? _releaseVersion;
 
-                _featureServiceBridge = new FeatureServiceBridge(_dataProcessor, port);
+                Debug.WriteLine($"Starting DuckDB Multi-Layer Feature Service Bridge with release: {effectiveReleaseVersion ?? "latest"}...");
+
+                _featureServiceBridge = new FeatureServiceBridge(_dataProcessor, port, effectiveReleaseVersion);
                 _featureServiceBridge.RequireAoiBeforeStart = requireAoiBeforeStart;
                 await _featureServiceBridge.StartAsync(); // May throw exceptions if startup fails
 
@@ -112,7 +117,7 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Toggles the service on/off
         /// </summary>
-        public async Task<bool> ToggleServiceAsync(int port = 8080)
+        public async Task<bool> ToggleServiceAsync(int port = 8080, string releaseVersion = null)
         {
             if (_isRunning)
             {
@@ -120,8 +125,16 @@ namespace DuckDBGeoparquet.Services
             }
             else
             {
-                return await StartServiceAsync(port);
+                return await StartServiceAsync(port, requireAoiBeforeStart: false, releaseVersion: releaseVersion);
             }
+        }
+
+        /// <summary>
+        /// Updates the release version (requires restart of service to take effect)
+        /// </summary>
+        public void SetReleaseVersion(string releaseVersion)
+        {
+            _releaseVersion = releaseVersion;
         }
 
         /// <summary>
