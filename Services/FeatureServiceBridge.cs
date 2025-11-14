@@ -1676,9 +1676,9 @@ ExecuteQuery:
                         : simplified;
                     // Optionally drop tiny segments when zoomed out (for lines)
                     var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN {snapped} IS NOT NULL AND ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
-                    // Check for valid geometries with points before converting to GeoJSON - ensure we never get empty strings
-                    // Add ST_IsValid check to prevent invalid geometries from causing JSON parsing errors
-                    fieldList.Add($"CASE WHEN {filtered} IS NOT NULL AND ST_NPoints({filtered}) > 0 AND ST_IsValid({filtered}) THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson");
+                    // Check for geometries with points before converting to GeoJSON
+                    // Empty strings from ST_AsGeoJSON will be handled in C# code after query execution
+                    fieldList.Add($"CASE WHEN {filtered} IS NOT NULL AND ST_NPoints({filtered}) > 0 THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson");
                 }
                 
                 query.Append(string.Join(", ", fieldList));
@@ -1706,9 +1706,9 @@ ExecuteQuery:
                         ? $"CASE WHEN {simplified} IS NOT NULL THEN CASE WHEN ST_NPoints(ST_SnapToGrid({simplified}, {snapGrid})) > 0 THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE {simplified} END ELSE NULL END" 
                         : simplified;
                     var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN {snapped} IS NOT NULL AND ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
-                    // Check for valid geometries with points before converting to GeoJSON - ensure we never get empty strings
-                    // Add ST_IsValid check to prevent invalid geometries from causing JSON parsing errors
-                    query.Append($"id, CASE WHEN {filtered} IS NOT NULL AND ST_NPoints({filtered}) > 0 AND ST_IsValid({filtered}) THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson");
+                    // Check for geometries with points before converting to GeoJSON
+                    // Empty strings from ST_AsGeoJSON will be handled in C# code after query execution
+                    query.Append($"id, CASE WHEN {filtered} IS NOT NULL AND ST_NPoints({filtered}) > 0 THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson");
                 }
             }
             else
@@ -1800,9 +1800,9 @@ ExecuteQuery:
                         ? $"CASE WHEN {simplified} IS NOT NULL THEN CASE WHEN ST_NPoints(ST_SnapToGrid({simplified}, {snapGrid})) > 0 THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE {simplified} END ELSE NULL END" 
                         : simplified;
                     var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN {snapped} IS NOT NULL AND ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
-                    // Check for valid geometries with points before converting to GeoJSON - ensure we never get empty strings
-                    // Add ST_IsValid check to prevent invalid geometries from causing JSON parsing errors
-                    var geomJsonExpr = $"CASE WHEN {filtered} IS NOT NULL AND ST_NPoints({filtered}) > 0 AND ST_IsValid({filtered}) THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson";
+                    // Check for geometries with points before converting to GeoJSON
+                    // Empty strings from ST_AsGeoJSON will be handled in C# code after query execution
+                    var geomJsonExpr = $"CASE WHEN {filtered} IS NOT NULL AND ST_NPoints({filtered}) > 0 THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson";
 
                     bool requestedGeometry = fieldParts.Any(p => p.Trim().Equals("geometry", StringComparison.OrdinalIgnoreCase));
                     if (requestedGeometry)
