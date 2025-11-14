@@ -1671,9 +1671,14 @@ ExecuteQuery:
                     var geomExpr = outWkid.HasValue 
                         ? $"CASE WHEN geometry IS NOT NULL THEN ST_Transform({baseGeom}, 'EPSG:4326', {WkidToEpsgString(outWkid)}) ELSE NULL END"
                         : baseGeom;
-                    // Simplify → SnapToGrid
-                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"CASE WHEN {geomExpr} IS NOT NULL THEN ST_Simplify({geomExpr}, {simplifyTolerance}) ELSE NULL END" : geomExpr;
-                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"CASE WHEN {simplified} IS NOT NULL THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE NULL END" : simplified;
+                    // Simplify → SnapToGrid (but ensure we don't produce empty geometries)
+                    // If simplification produces empty geometry, fall back to original
+                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) 
+                        ? $"CASE WHEN {geomExpr} IS NOT NULL THEN CASE WHEN ST_NPoints(ST_Simplify({geomExpr}, {simplifyTolerance})) > 0 THEN ST_Simplify({geomExpr}, {simplifyTolerance}) ELSE {geomExpr} END ELSE NULL END" 
+                        : geomExpr;
+                    var snapped = !string.IsNullOrEmpty(snapGrid) 
+                        ? $"CASE WHEN {simplified} IS NOT NULL THEN CASE WHEN ST_NPoints(ST_SnapToGrid({simplified}, {snapGrid})) > 0 THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE {simplified} END ELSE NULL END" 
+                        : simplified;
                     // Optionally drop tiny segments when zoomed out (for lines)
                     var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN {snapped} IS NOT NULL AND ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
                     fieldList.Add($"CASE WHEN {filtered} IS NOT NULL THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson");
@@ -1696,8 +1701,13 @@ ExecuteQuery:
                     var geomExpr = outWkid.HasValue 
                         ? $"CASE WHEN geometry IS NOT NULL THEN ST_Transform({baseGeom}, 'EPSG:4326', {WkidToEpsgString(outWkid)}) ELSE NULL END"
                         : baseGeom;
-                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"CASE WHEN {geomExpr} IS NOT NULL THEN ST_Simplify({geomExpr}, {simplifyTolerance}) ELSE NULL END" : geomExpr;
-                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"CASE WHEN {simplified} IS NOT NULL THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE NULL END" : simplified;
+                    // If simplification produces empty geometry, fall back to original
+                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) 
+                        ? $"CASE WHEN {geomExpr} IS NOT NULL THEN CASE WHEN ST_NPoints(ST_Simplify({geomExpr}, {simplifyTolerance})) > 0 THEN ST_Simplify({geomExpr}, {simplifyTolerance}) ELSE {geomExpr} END ELSE NULL END" 
+                        : geomExpr;
+                    var snapped = !string.IsNullOrEmpty(snapGrid) 
+                        ? $"CASE WHEN {simplified} IS NOT NULL THEN CASE WHEN ST_NPoints(ST_SnapToGrid({simplified}, {snapGrid})) > 0 THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE {simplified} END ELSE NULL END" 
+                        : simplified;
                     var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN {snapped} IS NOT NULL AND ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
                     query.Append($"id, CASE WHEN {filtered} IS NOT NULL THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson");
                 }
@@ -1783,8 +1793,13 @@ ExecuteQuery:
                     var geomExpr = outWkid.HasValue 
                         ? $"CASE WHEN geometry IS NOT NULL THEN ST_Transform({baseGeom}, 'EPSG:4326', {WkidToEpsgString(outWkid)}) ELSE NULL END"
                         : baseGeom;
-                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"CASE WHEN {geomExpr} IS NOT NULL THEN ST_Simplify({geomExpr}, {simplifyTolerance}) ELSE NULL END" : geomExpr;
-                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"CASE WHEN {simplified} IS NOT NULL THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE NULL END" : simplified;
+                    // If simplification produces empty geometry, fall back to original
+                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) 
+                        ? $"CASE WHEN {geomExpr} IS NOT NULL THEN CASE WHEN ST_NPoints(ST_Simplify({geomExpr}, {simplifyTolerance})) > 0 THEN ST_Simplify({geomExpr}, {simplifyTolerance}) ELSE {geomExpr} END ELSE NULL END" 
+                        : geomExpr;
+                    var snapped = !string.IsNullOrEmpty(snapGrid) 
+                        ? $"CASE WHEN {simplified} IS NOT NULL THEN CASE WHEN ST_NPoints(ST_SnapToGrid({simplified}, {snapGrid})) > 0 THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE {simplified} END ELSE NULL END" 
+                        : simplified;
                     var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN {snapped} IS NOT NULL AND ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
                     var geomJsonExpr = $"CASE WHEN {filtered} IS NOT NULL THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson";
 
@@ -2859,83 +2874,64 @@ ExecuteQuery:
                 if (string.Equals(type, "Point", StringComparison.OrdinalIgnoreCase))
                 {
                     var coords = root.GetProperty("coordinates");
-                    if (coords.GetArrayLength() < 2) return null; // Invalid point
                     return new { x = coords[0].GetDouble(), y = coords[1].GetDouble(), spatialReference = spatialRef };
                 }
                 if (string.Equals(type, "LineString", StringComparison.OrdinalIgnoreCase))
                 {
                     var coords = root.GetProperty("coordinates");
-                    if (coords.GetArrayLength() == 0) return null; // Empty coordinates
                     var path = new List<double[]>();
                     foreach (var c in coords.EnumerateArray()) path.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
-                    if (path.Count == 0) return null; // No valid coordinates
                     return new { paths = new[] { path.ToArray() }, spatialReference = spatialRef };
                 }
                 if (string.Equals(type, "Polygon", StringComparison.OrdinalIgnoreCase))
                 {
-                    var coords = root.GetProperty("coordinates");
-                    if (coords.GetArrayLength() == 0) return null; // Empty coordinates
                     var rings = new List<List<double[]>>();
-                    foreach (var ring in coords.EnumerateArray())
+                    foreach (var ring in root.GetProperty("coordinates").EnumerateArray())
                     {
-                        if (ring.GetArrayLength() == 0) continue; // Skip empty rings
                         var r = new List<double[]>();
                         foreach (var c in ring.EnumerateArray()) r.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
-                        if (r.Count > 0) rings.Add(r);
+                        rings.Add(r);
                     }
-                    if (rings.Count == 0) return null; // No valid rings
                     return new { rings = rings, spatialReference = spatialRef };
                 }
                 if (string.Equals(type, "MultiPoint", StringComparison.OrdinalIgnoreCase))
                 {
                     var coords = root.GetProperty("coordinates");
-                    if (coords.GetArrayLength() == 0) return null; // Empty coordinates
                     var enumerator = coords.EnumerateArray();
                     if (enumerator.MoveNext())
                     {
                         var p = enumerator.Current;
-                        if (p.GetArrayLength() < 2) return null; // Invalid point
                         return new { x = p[0].GetDouble(), y = p[1].GetDouble(), spatialReference = spatialRef };
                     }
-                    return null; // No points
                 }
                 if (string.Equals(type, "MultiLineString", StringComparison.OrdinalIgnoreCase))
                 {
                     var lines = root.GetProperty("coordinates");
-                    if (lines.GetArrayLength() == 0) return null; // Empty coordinates
                     var lineEnumerator = lines.EnumerateArray();
                     if (lineEnumerator.MoveNext())
                     {
                         var coords = lineEnumerator.Current;
-                        if (coords.GetArrayLength() == 0) return null; // Empty line coordinates
                         var path = new List<double[]>();
                         foreach (var c in coords.EnumerateArray()) path.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
-                        if (path.Count == 0) return null; // No valid coordinates
                         return new { paths = new[] { path.ToArray() }, spatialReference = spatialRef };
                     }
-                    return null; // No lines
                 }
                 if (string.Equals(type, "MultiPolygon", StringComparison.OrdinalIgnoreCase))
                 {
                     var polys = root.GetProperty("coordinates");
-                    if (polys.GetArrayLength() == 0) return null; // Empty coordinates
                     var polyEnumerator = polys.EnumerateArray();
                     if (polyEnumerator.MoveNext())
                     {
                         var firstPoly = polyEnumerator.Current;
-                        if (firstPoly.GetArrayLength() == 0) return null; // Empty polygon coordinates
                         var rings = new List<List<double[]>>();
                         foreach (var ring in firstPoly.EnumerateArray())
                         {
-                            if (ring.GetArrayLength() == 0) continue; // Skip empty rings
                             var r = new List<double[]>();
                             foreach (var c in ring.EnumerateArray()) r.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
-                            if (r.Count > 0) rings.Add(r);
+                            rings.Add(r);
                         }
-                        if (rings.Count == 0) return null; // No valid rings
                         return new { rings = rings, spatialReference = spatialRef };
                     }
-                    return null; // No polygons
                 }
             }
             catch { }
