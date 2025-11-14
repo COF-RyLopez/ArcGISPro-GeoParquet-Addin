@@ -478,9 +478,10 @@ namespace DuckDBGeoparquet.Services
                     try
                     {
                         // Create in-memory table with VIEWPORT BOUNDS - same pattern as existing data loader
+                        // Explicitly cast geometry to GEOMETRY type to ensure spatial functions work correctly
                         var createTableQuery = $@"
                             CREATE OR REPLACE TABLE {tableName} AS 
-                            SELECT id, bbox, geometry
+                            SELECT id, bbox, CAST(geometry AS GEOMETRY) as geometry
                             FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1)
                             WHERE bbox.xmin IS NOT NULL AND bbox.ymin IS NOT NULL 
                               AND bbox.xmax IS NOT NULL AND bbox.ymax IS NOT NULL
@@ -549,9 +550,10 @@ namespace DuckDBGeoparquet.Services
                     var tableName = GetTableName(theme);
                     try
                     {
+                        // Explicitly cast geometry to GEOMETRY type to ensure spatial functions work correctly
                         var createTableQuery = $@"
                             CREATE OR REPLACE TABLE {tableName} AS 
-                            SELECT id, bbox, geometry
+                            SELECT id, bbox, CAST(geometry AS GEOMETRY) as geometry
                             FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1)
                             WHERE bbox.xmin IS NOT NULL AND bbox.ymin IS NOT NULL 
                               AND bbox.xmax IS NOT NULL AND bbox.ymax IS NOT NULL
@@ -1664,9 +1666,10 @@ ExecuteQuery:
                 {
                     // Use GeoJSON to ensure robust geometry encoding; apply simplification when appropriate
                     // Handle NULL geometry and wrap ST_Transform to prevent NULL results
-                    var baseGeom = "geometry";
+                    // Explicitly cast to GEOMETRY type to ensure spatial functions work correctly
+                    var baseGeom = "CAST(geometry AS GEOMETRY)";
                     var geomExpr = outWkid.HasValue 
-                        ? $"CASE WHEN geometry IS NOT NULL THEN ST_Transform(geometry, 'EPSG:4326', {WkidToEpsgString(outWkid)}) ELSE NULL END"
+                        ? $"CASE WHEN geometry IS NOT NULL THEN ST_Transform({baseGeom}, 'EPSG:4326', {WkidToEpsgString(outWkid)}) ELSE NULL END"
                         : baseGeom;
                     // Simplify → SnapToGrid
                     var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"CASE WHEN {geomExpr} IS NOT NULL THEN ST_Simplify({geomExpr}, {simplifyTolerance}) ELSE NULL END" : geomExpr;
@@ -1688,9 +1691,10 @@ ExecuteQuery:
                 else
                 {
                     // Handle NULL geometry and wrap ST_Transform to prevent NULL results
-                    var baseGeom = "geometry";
+                    // Explicitly cast to GEOMETRY type to ensure spatial functions work correctly
+                    var baseGeom = "CAST(geometry AS GEOMETRY)";
                     var geomExpr = outWkid.HasValue 
-                        ? $"CASE WHEN geometry IS NOT NULL THEN ST_Transform(geometry, 'EPSG:4326', {WkidToEpsgString(outWkid)}) ELSE NULL END"
+                        ? $"CASE WHEN geometry IS NOT NULL THEN ST_Transform({baseGeom}, 'EPSG:4326', {WkidToEpsgString(outWkid)}) ELSE NULL END"
                         : baseGeom;
                     var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"CASE WHEN {geomExpr} IS NOT NULL THEN ST_Simplify({geomExpr}, {simplifyTolerance}) ELSE NULL END" : geomExpr;
                     var snapped = !string.IsNullOrEmpty(snapGrid) ? $"CASE WHEN {simplified} IS NOT NULL THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE NULL END" : simplified;
@@ -1774,9 +1778,10 @@ ExecuteQuery:
                 if (returnGeometry)
                 {
                     // Handle NULL geometry and wrap ST_Transform to prevent NULL results
-                    var baseGeom = "geometry";
+                    // Explicitly cast to GEOMETRY type to ensure spatial functions work correctly
+                    var baseGeom = "CAST(geometry AS GEOMETRY)";
                     var geomExpr = outWkid.HasValue 
-                        ? $"CASE WHEN geometry IS NOT NULL THEN ST_Transform(geometry, 'EPSG:4326', {WkidToEpsgString(outWkid)}) ELSE NULL END"
+                        ? $"CASE WHEN geometry IS NOT NULL THEN ST_Transform({baseGeom}, 'EPSG:4326', {WkidToEpsgString(outWkid)}) ELSE NULL END"
                         : baseGeom;
                     var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"CASE WHEN {geomExpr} IS NOT NULL THEN ST_Simplify({geomExpr}, {simplifyTolerance}) ELSE NULL END" : geomExpr;
                     var snapped = !string.IsNullOrEmpty(snapGrid) ? $"CASE WHEN {simplified} IS NOT NULL THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE NULL END" : simplified;
@@ -2451,7 +2456,28 @@ ExecuteQuery:
                     }
                 } while (lastEx != null);
                 
+                // Debug: Check if geometry_geojson column exists in results
+                if (queryResults.Count > 0)
+                {
+                    var firstRow = queryResults[0];
+                    bool hasGeometryGeojson = firstRow.ContainsKey("geometry_geojson");
+                    var allColumns = string.Join(", ", firstRow.Keys);
+                    Debug.WriteLine($"🔍 Query result columns: {allColumns}");
+                    Debug.WriteLine($"🔍 geometry_geojson column present: {hasGeometryGeojson}");
+                    
+                    if (hasGeometryGeojson)
+                    {
+                        var geomValue = firstRow["geometry_geojson"];
+                        Debug.WriteLine($"🔍 First geometry_geojson value type: {geomValue?.GetType().Name ?? "NULL"}, value: {(geomValue is string s ? (s.Length > 100 ? s.Substring(0, 100) + "..." : s) : geomValue?.ToString() ?? "NULL")}");
+                    }
+                    else
+                    {
+                        Debug.WriteLine($"⚠️ WARNING: geometry_geojson column is missing from query results! Query may not be selecting geometry.");
+                    }
+                }
+
                 var objectId = 1;
+                int nullGeometryCount = 0;
                 foreach (var row in queryResults)
                 {
                     var attributes = new Dictionary<string, object>
@@ -2468,11 +2494,33 @@ ExecuteQuery:
                         {
                             if (kvp.Value is string gj && !string.IsNullOrWhiteSpace(gj))
                             {
-                                geometry = ParseGeoJsonToArcGISGeometry(gj, outWkid);
+                                try
+                                {
+                                    geometry = ParseGeoJsonToArcGISGeometry(gj, outWkid);
+                                    if (geometry == null && objectId <= 3)
+                                    {
+                                        Debug.WriteLine($"⚠️ ParseGeoJsonToArcGISGeometry returned NULL for GeoJSON: {gj.Substring(0, Math.Min(100, gj.Length))}...");
+                                    }
+                                }
+                                catch (Exception parseEx)
+                                {
+                                    Debug.WriteLine($"⚠️ Error parsing GeoJSON: {parseEx.Message}. GeoJSON: {gj.Substring(0, Math.Min(100, gj.Length))}...");
+                                }
                             }
-                            else if (kvp.Value != null && kvp.Value != DBNull.Value)
+                            else
                             {
-                                Debug.WriteLine($"⚠️ geometry_geojson is not a string: {kvp.Value?.GetType().Name} = {kvp.Value}");
+                                nullGeometryCount++;
+                                if (objectId <= 3)
+                                {
+                                    if (kvp.Value == null || kvp.Value == DBNull.Value)
+                                    {
+                                        Debug.WriteLine($"⚠️ geometry_geojson is NULL for feature {objectId}");
+                                    }
+                                    else
+                                    {
+                                        Debug.WriteLine($"⚠️ geometry_geojson is not a string for feature {objectId}: {kvp.Value?.GetType().Name} = {kvp.Value}");
+                                    }
+                                }
                             }
                             continue; // skip adding to attributes
                         }
@@ -2531,7 +2579,7 @@ ExecuteQuery:
                         featuresWithGeometry++;
                     }
                 }
-                Debug.WriteLine($"📦 Returned={features.Count} features (sampled {checkCount}, {featuresWithGeometry} have geometry)");
+                Debug.WriteLine($"📦 Returned={features.Count} features (sampled {checkCount}, {featuresWithGeometry} have geometry). NULL geometry count: {nullGeometryCount}");
             }
             catch (Exception ex)
             {
