@@ -1680,8 +1680,8 @@ ExecuteQuery:
                         : simplified;
                     // Optionally drop tiny segments when zoomed out (for lines)
                     var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN {snapped} IS NOT NULL AND ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
-                    // Check for empty geometries before converting to GeoJSON (ST_AsGeoJSON can return empty string for empty geometries)
-                    fieldList.Add($"CASE WHEN {filtered} IS NOT NULL AND ST_NPoints({filtered}) > 0 THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson");
+                    // Check for empty geometries before converting to GeoJSON and also handle empty string results from ST_AsGeoJSON
+                    fieldList.Add($"NULLIF(CASE WHEN {filtered} IS NOT NULL AND ST_NPoints({filtered}) > 0 THEN ST_AsGeoJSON({filtered}) ELSE NULL END, '') as geometry_geojson");
                 }
                 
                 query.Append(string.Join(", ", fieldList));
@@ -1709,8 +1709,8 @@ ExecuteQuery:
                         ? $"CASE WHEN {simplified} IS NOT NULL THEN CASE WHEN ST_NPoints(ST_SnapToGrid({simplified}, {snapGrid})) > 0 THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE {simplified} END ELSE NULL END" 
                         : simplified;
                     var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN {snapped} IS NOT NULL AND ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
-                    // Check for empty geometries before converting to GeoJSON (ST_AsGeoJSON can return empty string for empty geometries)
-                    query.Append($"id, CASE WHEN {filtered} IS NOT NULL AND ST_NPoints({filtered}) > 0 THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson");
+                    // Check for empty geometries before converting to GeoJSON and also handle empty string results from ST_AsGeoJSON
+                    query.Append($"id, NULLIF(CASE WHEN {filtered} IS NOT NULL AND ST_NPoints({filtered}) > 0 THEN ST_AsGeoJSON({filtered}) ELSE NULL END, '') as geometry_geojson");
                 }
             }
             else
@@ -1802,8 +1802,8 @@ ExecuteQuery:
                         ? $"CASE WHEN {simplified} IS NOT NULL THEN CASE WHEN ST_NPoints(ST_SnapToGrid({simplified}, {snapGrid})) > 0 THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE {simplified} END ELSE NULL END" 
                         : simplified;
                     var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN {snapped} IS NOT NULL AND ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
-                    // Check for empty geometries before converting to GeoJSON (ST_AsGeoJSON can return empty string for empty geometries)
-                    var geomJsonExpr = $"CASE WHEN {filtered} IS NOT NULL AND ST_NPoints({filtered}) > 0 THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson";
+                    // Check for empty geometries before converting to GeoJSON and also handle empty string results from ST_AsGeoJSON
+                    var geomJsonExpr = $"NULLIF(CASE WHEN {filtered} IS NOT NULL AND ST_NPoints({filtered}) > 0 THEN ST_AsGeoJSON({filtered}) ELSE NULL END, '') as geometry_geojson";
 
                     bool requestedGeometry = fieldParts.Any(p => p.Trim().Equals("geometry", StringComparison.OrdinalIgnoreCase));
                     if (requestedGeometry)
