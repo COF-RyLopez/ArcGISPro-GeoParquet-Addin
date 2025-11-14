@@ -1465,7 +1465,7 @@ ExecuteQuery:
                     return;
                 }
 
-                var features = await ExecuteDuckDbQuery(duckDbQuery);
+                var features = await ExecuteDuckDbQuery(duckDbQuery, outWkid);
 
                 // If cache is loaded but query returned nothing for a new extent, reload cache for current view and retry once
                 if (_dataLoaded && (features == null || features.Count == 0) && !string.IsNullOrEmpty(geometryParam))
@@ -1491,7 +1491,9 @@ ExecuteQuery:
                     uniqueIdField = new { name = "OBJECTID", isSystemMaintained = true },
                     globalIdFieldName = "",
                     geometryType = theme.GeometryType,
-                    spatialReference = _spatialReference,
+                    spatialReference = outWkid.HasValue && (outWkid.Value == 3857 || outWkid.Value == 102100) 
+                        ? new { wkid = 3857, latestWkid = 3857 } 
+                        : _spatialReference,
                     hasZ = false,
                     hasM = false,
                     fields = GetFieldDefinitions(theme),
@@ -2354,7 +2356,7 @@ ExecuteQuery:
         /// <summary>
         /// Execute DuckDB query and return features
         /// </summary>
-        private async Task<List<object>> ExecuteDuckDbQuery(string query)
+        private async Task<List<object>> ExecuteDuckDbQuery(string query, int? outWkid = null)
         {
             var features = new List<object>();
 
@@ -2408,7 +2410,7 @@ ExecuteQuery:
                         {
                             if (kvp.Value is string gj && !string.IsNullOrWhiteSpace(gj))
                             {
-                                geometry = ParseGeoJsonToArcGISGeometry(gj);
+                                geometry = ParseGeoJsonToArcGISGeometry(gj, outWkid);
                             }
                             continue; // skip adding to attributes
                         }
@@ -2662,10 +2664,18 @@ ExecuteQuery:
             }
         }
 
-        private object ParseGeoJsonToArcGISGeometry(string geojson)
+        private object ParseGeoJsonToArcGISGeometry(string geojson, int? outWkid = null)
         {
             try
             {
+                // Determine spatial reference - use requested outWkid, or default to WGS84
+                object spatialRef = _spatialReference; // Default WGS84
+                if (outWkid.HasValue && (outWkid.Value == 3857 || outWkid.Value == 102100))
+                {
+                    // Web Mercator
+                    spatialRef = new { wkid = 3857, latestWkid = 3857 };
+                }
+                
                 using var doc = JsonDocument.Parse(geojson);
                 var root = doc.RootElement;
                 if (!root.TryGetProperty("type", out var typeProp)) return null;
@@ -2673,14 +2683,14 @@ ExecuteQuery:
                 if (string.Equals(type, "Point", StringComparison.OrdinalIgnoreCase))
                 {
                     var coords = root.GetProperty("coordinates");
-                    return new { x = coords[0].GetDouble(), y = coords[1].GetDouble(), spatialReference = _spatialReference };
+                    return new { x = coords[0].GetDouble(), y = coords[1].GetDouble(), spatialReference = spatialRef };
                 }
                 if (string.Equals(type, "LineString", StringComparison.OrdinalIgnoreCase))
                 {
                     var coords = root.GetProperty("coordinates");
                     var path = new List<double[]>();
                     foreach (var c in coords.EnumerateArray()) path.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
-                    return new { paths = new[] { path.ToArray() }, spatialReference = _spatialReference };
+                    return new { paths = new[] { path.ToArray() }, spatialReference = spatialRef };
                 }
                 if (string.Equals(type, "Polygon", StringComparison.OrdinalIgnoreCase))
                 {
@@ -2691,7 +2701,7 @@ ExecuteQuery:
                         foreach (var c in ring.EnumerateArray()) r.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
                         rings.Add(r);
                     }
-                    return new { rings = rings, spatialReference = _spatialReference };
+                    return new { rings = rings, spatialReference = spatialRef };
                 }
                 if (string.Equals(type, "MultiPoint", StringComparison.OrdinalIgnoreCase))
                 {
@@ -2700,7 +2710,7 @@ ExecuteQuery:
                     if (enumerator.MoveNext())
                     {
                         var p = enumerator.Current;
-                        return new { x = p[0].GetDouble(), y = p[1].GetDouble(), spatialReference = _spatialReference };
+                        return new { x = p[0].GetDouble(), y = p[1].GetDouble(), spatialReference = spatialRef };
                     }
                 }
                 if (string.Equals(type, "MultiLineString", StringComparison.OrdinalIgnoreCase))
@@ -2712,7 +2722,7 @@ ExecuteQuery:
                         var coords = lineEnumerator.Current;
                         var path = new List<double[]>();
                         foreach (var c in coords.EnumerateArray()) path.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
-                        return new { paths = new[] { path.ToArray() }, spatialReference = _spatialReference };
+                        return new { paths = new[] { path.ToArray() }, spatialReference = spatialRef };
                     }
                 }
                 if (string.Equals(type, "MultiPolygon", StringComparison.OrdinalIgnoreCase))
@@ -2729,7 +2739,7 @@ ExecuteQuery:
                             foreach (var c in ring.EnumerateArray()) r.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
                             rings.Add(r);
                         }
-                        return new { rings = rings, spatialReference = _spatialReference };
+                        return new { rings = rings, spatialReference = spatialRef };
                     }
                 }
             }
