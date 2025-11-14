@@ -2165,7 +2165,8 @@ ExecuteQuery:
         /// </summary>
         private object GetServiceExtent()
         {
-            if (_dataLoaded && _cachedXmin != 0 && _cachedYmin != 0 && _cachedXmax != 0 && _cachedYmax != 0)
+            // Check if cached extent is valid (proper extent validation instead of != 0)
+            if (_dataLoaded && _cachedXmin < _cachedXmax && _cachedYmin < _cachedYmax)
             {
                 return new
                 {
@@ -2175,6 +2176,53 @@ ExecuteQuery:
                     ymax = _cachedYmax,
                     spatialReference = _spatialReference
                 };
+            }
+            
+            // Try to get extent from current map viewport if available
+            try
+            {
+                ArcGIS.Core.Geometry.Envelope extent = null;
+                QueuedTask.Run(() =>
+                {
+                    if (MapView.Active != null && MapView.Active.Map != null)
+                    {
+                        var mapView = MapView.Active;
+                        extent = mapView.VisibleArea?.Extent;
+                    }
+                }).Wait(TimeSpan.FromSeconds(2)); // Wait up to 2 seconds for map viewport
+
+                if (extent != null)
+                {
+                    // Convert to WGS84 if needed (assuming extent is in map's spatial reference)
+                    var xmin = extent.XMin;
+                    var ymin = extent.YMin;
+                    var xmax = extent.XMax;
+                    var ymax = extent.YMax;
+                    
+                    // If extent is in Web Mercator (common for web maps), convert to WGS84
+                    if (extent.SpatialReference?.WKID == 3857 || extent.SpatialReference?.WKID == 102100)
+                    {
+                        (xmin, ymin, xmax, ymax) = ConvertWebMercatorToWgs84(xmin, ymin, xmax, ymax);
+                    }
+                    
+                    if (xmin < xmax && ymin < ymax)
+                    {
+                        // Add buffer like we do for cache
+                        var buffer = _cacheBuffer;
+                        return new
+                        {
+                            xmin = xmin - buffer,
+                            ymin = ymin - buffer,
+                            xmax = xmax + buffer,
+                            ymax = ymax + buffer,
+                            spatialReference = _spatialReference
+                        };
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"⚠️ Could not get extent from map viewport: {ex.Message}");
             }
             
             // No extent available - return error extent to prevent full-world queries
