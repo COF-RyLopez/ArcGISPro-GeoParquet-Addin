@@ -2550,14 +2550,22 @@ ExecuteQuery:
                                 try
                                 {
                                     geometry = ParseGeoJsonToArcGISGeometry(gj, outWkid);
-                                    if (geometry == null && objectId <= 3)
+                                    if (geometry == null)
                                     {
-                                        Debug.WriteLine($"⚠️ ParseGeoJsonToArcGISGeometry returned NULL for GeoJSON: {gj.Substring(0, Math.Min(100, gj.Length))}...");
+                                        nullGeometryCount++;
+                                        if (objectId <= 3)
+                                        {
+                                            Debug.WriteLine($"⚠️ ParseGeoJsonToArcGISGeometry returned NULL for GeoJSON (likely empty coordinates): {gj.Substring(0, Math.Min(100, gj.Length))}...");
+                                        }
                                     }
                                 }
                                 catch (Exception parseEx)
                                 {
-                                    Debug.WriteLine($"⚠️ Error parsing GeoJSON: {parseEx.Message}. GeoJSON: {gj.Substring(0, Math.Min(100, gj.Length))}...");
+                                    nullGeometryCount++;
+                                    if (objectId <= 3)
+                                    {
+                                        Debug.WriteLine($"⚠️ Error parsing GeoJSON: {parseEx.Message}. GeoJSON: {gj.Substring(0, Math.Min(100, gj.Length))}...");
+                                    }
                                 }
                             }
                             else
@@ -2568,6 +2576,10 @@ ExecuteQuery:
                                     if (kvp.Value == null || kvp.Value == DBNull.Value)
                                     {
                                         Debug.WriteLine($"⚠️ geometry_geojson is NULL for feature {objectId}");
+                                    }
+                                    else if (kvp.Value is string emptyStr && string.IsNullOrWhiteSpace(emptyStr))
+                                    {
+                                        Debug.WriteLine($"⚠️ geometry_geojson is empty string for feature {objectId}");
                                     }
                                     else
                                     {
@@ -2843,67 +2855,87 @@ ExecuteQuery:
                 var root = doc.RootElement;
                 if (!root.TryGetProperty("type", out var typeProp)) return null;
                 var type = typeProp.GetString();
+                
                 if (string.Equals(type, "Point", StringComparison.OrdinalIgnoreCase))
                 {
                     var coords = root.GetProperty("coordinates");
+                    if (coords.GetArrayLength() < 2) return null; // Invalid point
                     return new { x = coords[0].GetDouble(), y = coords[1].GetDouble(), spatialReference = spatialRef };
                 }
                 if (string.Equals(type, "LineString", StringComparison.OrdinalIgnoreCase))
                 {
                     var coords = root.GetProperty("coordinates");
+                    if (coords.GetArrayLength() == 0) return null; // Empty coordinates
                     var path = new List<double[]>();
                     foreach (var c in coords.EnumerateArray()) path.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
+                    if (path.Count == 0) return null; // No valid coordinates
                     return new { paths = new[] { path.ToArray() }, spatialReference = spatialRef };
                 }
                 if (string.Equals(type, "Polygon", StringComparison.OrdinalIgnoreCase))
                 {
+                    var coords = root.GetProperty("coordinates");
+                    if (coords.GetArrayLength() == 0) return null; // Empty coordinates
                     var rings = new List<List<double[]>>();
-                    foreach (var ring in root.GetProperty("coordinates").EnumerateArray())
+                    foreach (var ring in coords.EnumerateArray())
                     {
+                        if (ring.GetArrayLength() == 0) continue; // Skip empty rings
                         var r = new List<double[]>();
                         foreach (var c in ring.EnumerateArray()) r.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
-                        rings.Add(r);
+                        if (r.Count > 0) rings.Add(r);
                     }
+                    if (rings.Count == 0) return null; // No valid rings
                     return new { rings = rings, spatialReference = spatialRef };
                 }
                 if (string.Equals(type, "MultiPoint", StringComparison.OrdinalIgnoreCase))
                 {
                     var coords = root.GetProperty("coordinates");
+                    if (coords.GetArrayLength() == 0) return null; // Empty coordinates
                     var enumerator = coords.EnumerateArray();
                     if (enumerator.MoveNext())
                     {
                         var p = enumerator.Current;
+                        if (p.GetArrayLength() < 2) return null; // Invalid point
                         return new { x = p[0].GetDouble(), y = p[1].GetDouble(), spatialReference = spatialRef };
                     }
+                    return null; // No points
                 }
                 if (string.Equals(type, "MultiLineString", StringComparison.OrdinalIgnoreCase))
                 {
                     var lines = root.GetProperty("coordinates");
+                    if (lines.GetArrayLength() == 0) return null; // Empty coordinates
                     var lineEnumerator = lines.EnumerateArray();
                     if (lineEnumerator.MoveNext())
                     {
                         var coords = lineEnumerator.Current;
+                        if (coords.GetArrayLength() == 0) return null; // Empty line coordinates
                         var path = new List<double[]>();
                         foreach (var c in coords.EnumerateArray()) path.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
+                        if (path.Count == 0) return null; // No valid coordinates
                         return new { paths = new[] { path.ToArray() }, spatialReference = spatialRef };
                     }
+                    return null; // No lines
                 }
                 if (string.Equals(type, "MultiPolygon", StringComparison.OrdinalIgnoreCase))
                 {
                     var polys = root.GetProperty("coordinates");
+                    if (polys.GetArrayLength() == 0) return null; // Empty coordinates
                     var polyEnumerator = polys.EnumerateArray();
                     if (polyEnumerator.MoveNext())
                     {
                         var firstPoly = polyEnumerator.Current;
+                        if (firstPoly.GetArrayLength() == 0) return null; // Empty polygon coordinates
                         var rings = new List<List<double[]>>();
                         foreach (var ring in firstPoly.EnumerateArray())
                         {
+                            if (ring.GetArrayLength() == 0) continue; // Skip empty rings
                             var r = new List<double[]>();
                             foreach (var c in ring.EnumerateArray()) r.Add(new[] { c[0].GetDouble(), c[1].GetDouble() });
-                            rings.Add(r);
+                            if (r.Count > 0) rings.Add(r);
                         }
+                        if (rings.Count == 0) return null; // No valid rings
                         return new { rings = rings, spatialReference = spatialRef };
                     }
+                    return null; // No polygons
                 }
             }
             catch { }
