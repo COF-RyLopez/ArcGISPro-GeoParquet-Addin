@@ -2184,26 +2184,31 @@ ExecuteQuery:
                 ArcGIS.Core.Geometry.Envelope extent = null;
                 QueuedTask.Run(() =>
                 {
-                    if (MapView.Active != null && MapView.Active.Map != null)
+                    if (MapView.Active != null)
                     {
-                        var mapView = MapView.Active;
-                        extent = mapView.VisibleArea?.Extent;
+                        var mapExtent = MapView.Active.Extent;
+                        if (mapExtent != null)
+                        {
+                            // Project to WGS84 if needed (same as existing data loader)
+                            var wgs84 = SpatialReferenceBuilder.CreateSpatialReference(4326);
+                            if (mapExtent.SpatialReference == null || mapExtent.SpatialReference.Wkid != 4326)
+                            {
+                                extent = GeometryEngine.Instance.Project(mapExtent, wgs84) as ArcGIS.Core.Geometry.Envelope;
+                            }
+                            else
+                            {
+                                extent = mapExtent;
+                            }
+                        }
                     }
                 }).Wait(TimeSpan.FromSeconds(2)); // Wait up to 2 seconds for map viewport
 
                 if (extent != null)
                 {
-                    // Convert to WGS84 if needed (assuming extent is in map's spatial reference)
                     var xmin = extent.XMin;
                     var ymin = extent.YMin;
                     var xmax = extent.XMax;
                     var ymax = extent.YMax;
-                    
-                    // If extent is in Web Mercator (common for web maps), convert to WGS84
-                    if (extent.SpatialReference?.WKID == 3857 || extent.SpatialReference?.WKID == 102100)
-                    {
-                        (xmin, ymin, xmax, ymax) = ConvertWebMercatorToWgs84(xmin, ymin, xmax, ymax);
-                    }
                     
                     if (xmin < xmax && ymin < ymax)
                     {
