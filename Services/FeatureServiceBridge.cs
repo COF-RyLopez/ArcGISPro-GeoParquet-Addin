@@ -876,19 +876,33 @@ namespace DuckDBGeoparquet.Services
             }
             catch (InvalidOperationException ex)
             {
-                // Service extent not available - return clear error
-                Debug.WriteLine($"⚠️ Service metadata error: {ex.Message}");
-                context.Response.StatusCode = 500;
-                var errorJson = JsonSerializer.Serialize(new 
-                { 
-                    error = new 
-                    { 
-                        code = 500, 
-                        message = ex.Message,
-                        details = "The feature service requires data to be loaded before it can determine the extent. Please query a specific area first (e.g., zoom to your area of interest) to initialize the cache."
-                    } 
-                }, _jsonOptions);
-                await WriteJsonResponse(context, errorJson);
+                // Service extent not available - return default world extent instead of error
+                // This should rarely happen now since GetServiceExtent returns default extent
+                Debug.WriteLine($"⚠️ Service metadata error (fallback): {ex.Message}");
+                var serviceMetadata = new
+                {
+                    currentVersion = 11.1,
+                    serviceDescription = "DuckDB Multi-Layer Feature Service - Overture Maps",
+                    hasVersionedData = false,
+                    supportsDisconnectedEditing = false,
+                    supportsDatumTransformation = true,
+                    supportsReturnDeleteResults = false,
+                    hasStaticData = false,
+                    maxRecordCount = _maxRecordCount,
+                    supportedQueryFormats = "JSON,geoJSON",
+                    capabilities = "Query,Extract",
+                    description = "Live cloud-native access to all Overture Maps themes via DuckDB",
+                    copyrightText = "Data from Overture Maps Foundation via DuckDB",
+                    spatialReference = _spatialReference,
+                    initialExtent = new { xmin = -180.0, ymin = -90.0, xmax = 180.0, ymax = 90.0, spatialReference = _spatialReference },
+                    fullExtent = new { xmin = -180.0, ymin = -90.0, xmax = 180.0, ymax = 90.0, spatialReference = _spatialReference },
+                    allowGeometryUpdates = false,
+                    units = "esriDecimalDegrees",
+                    layers = _themes.Select(t => new { id = t.Id, name = t.Name, type = "Feature Layer" }).ToArray(),
+                    tables = new object[] { }
+                };
+                var json = JsonSerializer.Serialize(serviceMetadata, _jsonOptions);
+                await WriteJsonResponse(context, json);
             }
             catch (Exception ex)
             {
@@ -2204,12 +2218,12 @@ ExecuteQuery:
                 };
             }
             
-            // If cache is currently loading, wait briefly for it to complete
+            // If cache is currently loading, wait for it to complete
             if (!_dataLoaded && _loadSemaphore.CurrentCount == 0)
             {
-                Debug.WriteLine("⏳ Cache is currently loading, waiting up to 3 seconds...");
-                // Wait for cache to finish loading (with timeout)
-                for (int i = 0; i < 30 && !_dataLoaded; i++) // 30 * 100ms = 3 seconds
+                Debug.WriteLine("⏳ Cache is currently loading, waiting up to 10 seconds...");
+                // Wait for cache to finish loading (with timeout) - increased to 10 seconds for large datasets
+                for (int i = 0; i < 100 && !_dataLoaded; i++) // 100 * 100ms = 10 seconds
                 {
                     System.Threading.Thread.Sleep(100);
                 }
@@ -2311,12 +2325,17 @@ ExecuteQuery:
                 }
             }
             
-            // No extent available - return error extent to prevent full-world queries
-            Debug.WriteLine("⚠️ ERROR: Service extent not available - data must be loaded first. Use 'Zoom to Layer' or query a specific area to initialize the cache.");
-            throw new InvalidOperationException(
-                "Service extent not available. The feature service requires data to be loaded before it can determine the extent. " +
-                "Please query a specific area first (e.g., zoom to your area of interest) to initialize the cache, then the service extent will be available."
-            );
+            // No extent available - return default world extent instead of throwing exception
+            // This allows the service to respond even when cache isn't loaded yet
+            Debug.WriteLine("⚠️ No extent available yet - using default world extent. Cache may still be loading.");
+            return new
+            {
+                xmin = -180.0,
+                ymin = -90.0,
+                xmax = 180.0,
+                ymax = 90.0,
+                spatialReference = _spatialReference
+            };
         }
 
         /// <summary>
