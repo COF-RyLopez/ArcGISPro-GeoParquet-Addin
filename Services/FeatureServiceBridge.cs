@@ -1663,7 +1663,7 @@ ExecuteQuery:
                 if (returnGeometry)
                 {
                     // Use GeoJSON to ensure robust geometry encoding; apply simplification when appropriate
-                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, {outWkid.Value})" : "geometry";
+                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, 'EPSG:4326', {WkidToEpsgString(outWkid)})" : "geometry";
                     // Simplify → SnapToGrid
                     var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
                     var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
@@ -1683,7 +1683,7 @@ ExecuteQuery:
                 }
                 else
                 {
-                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, {outWkid.Value})" : "geometry";
+                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, 'EPSG:4326', {WkidToEpsgString(outWkid)})" : "geometry";
                     var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
                     var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
                     var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
@@ -1765,7 +1765,7 @@ ExecuteQuery:
                 // Append geometry only when requested by the client (respect returnGeometry)
                 if (returnGeometry)
                 {
-                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, {outWkid.Value})" : "geometry";
+                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, 'EPSG:4326', {WkidToEpsgString(outWkid)})" : "geometry";
                     var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
                     var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
                     var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
