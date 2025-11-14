@@ -265,9 +265,8 @@ namespace DuckDBGeoparquet.Services
             if (_discoveredFields.ContainsKey(theme.Id)) return;
             try
             {
-                // Always inspect schema directly from source to avoid limitations of in-memory cache (which only carries id/bbox/geometry)
-                var describeQuery = $"DESCRIBE SELECT * FROM read_parquet('{theme.S3Path}', filename=true, hive_partitioning=1) LIMIT 0";
-                var rows = await _dataProcessor.ExecuteQueryAsync(describeQuery);
+                // Use DataProcessor's schema discovery method for consistency with Overture Maps schema handling
+                var rows = await _dataProcessor.GetSchemaAsync(theme.S3Path);
                 var discovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var discoveredSql = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 var structCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

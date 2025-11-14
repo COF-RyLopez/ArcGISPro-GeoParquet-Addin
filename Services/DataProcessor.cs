@@ -269,6 +269,38 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
+        /// <summary>
+        /// Gets the schema information for a GeoParquet file from S3.
+        /// Returns a list of dictionaries with column_name and column_type.
+        /// This method follows the Overture Maps schema conventions.
+        /// </summary>
+        /// <param name="s3Path">S3 path to the GeoParquet file(s)</param>
+        /// <returns>List of dictionaries containing column_name and column_type</returns>
+        public async Task<List<Dictionary<string, object>>> GetSchemaAsync(string s3Path)
+        {
+            try
+            {
+                // Use the same approach as IngestFileAsync for consistency
+                using var command = _connection.CreateCommand();
+                command.CommandText = $@"
+                    CREATE OR REPLACE TABLE temp_schema AS 
+                    SELECT * FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1) LIMIT 0;
+                ";
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+
+                // Use ExecuteQueryAsync to get schema results
+                var results = await ExecuteQueryAsync("DESCRIBE temp_schema");
+                
+                System.Diagnostics.Debug.WriteLine($"Schema discovery: Found {results.Count} columns for {s3Path}");
+                return results;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error getting schema for {s3Path}: {ex.Message}");
+                throw new Exception($"Failed to get schema: {ex.Message}", ex);
+            }
+        }
+
         private static async Task RemoveLayersUsingFileAsync(string filePath)
         {
             // Validate the file path
