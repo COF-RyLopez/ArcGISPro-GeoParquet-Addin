@@ -1663,13 +1663,17 @@ ExecuteQuery:
                 if (returnGeometry)
                 {
                     // Use GeoJSON to ensure robust geometry encoding; apply simplification when appropriate
-                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, 'EPSG:4326', {WkidToEpsgString(outWkid)})" : "geometry";
+                    // Handle NULL geometry and wrap ST_Transform to prevent NULL results
+                    var baseGeom = "geometry";
+                    var geomExpr = outWkid.HasValue 
+                        ? $"CASE WHEN geometry IS NOT NULL THEN ST_Transform(geometry, 'EPSG:4326', {WkidToEpsgString(outWkid)}) ELSE NULL END"
+                        : baseGeom;
                     // Simplify → SnapToGrid
-                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
-                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
+                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"CASE WHEN {geomExpr} IS NOT NULL THEN ST_Simplify({geomExpr}, {simplifyTolerance}) ELSE NULL END" : geomExpr;
+                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"CASE WHEN {simplified} IS NOT NULL THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE NULL END" : simplified;
                     // Optionally drop tiny segments when zoomed out (for lines)
-                    var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
-                    fieldList.Add($"ST_AsGeoJSON({filtered}) as geometry_geojson");
+                    var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN {snapped} IS NOT NULL AND ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
+                    fieldList.Add($"CASE WHEN {filtered} IS NOT NULL THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson");
                 }
                 
                 query.Append(string.Join(", ", fieldList));
@@ -1683,11 +1687,15 @@ ExecuteQuery:
                 }
                 else
                 {
-                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, 'EPSG:4326', {WkidToEpsgString(outWkid)})" : "geometry";
-                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
-                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
-                    var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
-                    query.Append($"id, ST_AsGeoJSON({filtered}) as geometry_geojson");
+                    // Handle NULL geometry and wrap ST_Transform to prevent NULL results
+                    var baseGeom = "geometry";
+                    var geomExpr = outWkid.HasValue 
+                        ? $"CASE WHEN geometry IS NOT NULL THEN ST_Transform(geometry, 'EPSG:4326', {WkidToEpsgString(outWkid)}) ELSE NULL END"
+                        : baseGeom;
+                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"CASE WHEN {geomExpr} IS NOT NULL THEN ST_Simplify({geomExpr}, {simplifyTolerance}) ELSE NULL END" : geomExpr;
+                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"CASE WHEN {simplified} IS NOT NULL THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE NULL END" : simplified;
+                    var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN {snapped} IS NOT NULL AND ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
+                    query.Append($"id, CASE WHEN {filtered} IS NOT NULL THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson");
                 }
             }
             else
@@ -1765,20 +1773,25 @@ ExecuteQuery:
                 // Append geometry only when requested by the client (respect returnGeometry)
                 if (returnGeometry)
                 {
-                    var geomExpr = outWkid.HasValue ? $"ST_Transform(geometry, 'EPSG:4326', {WkidToEpsgString(outWkid)})" : "geometry";
-                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"ST_Simplify({geomExpr}, {simplifyTolerance})" : geomExpr;
-                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"ST_SnapToGrid({simplified}, {snapGrid})" : simplified;
-                    var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
+                    // Handle NULL geometry and wrap ST_Transform to prevent NULL results
+                    var baseGeom = "geometry";
+                    var geomExpr = outWkid.HasValue 
+                        ? $"CASE WHEN geometry IS NOT NULL THEN ST_Transform(geometry, 'EPSG:4326', {WkidToEpsgString(outWkid)}) ELSE NULL END"
+                        : baseGeom;
+                    var simplified = !string.IsNullOrEmpty(simplifyTolerance) ? $"CASE WHEN {geomExpr} IS NOT NULL THEN ST_Simplify({geomExpr}, {simplifyTolerance}) ELSE NULL END" : geomExpr;
+                    var snapped = !string.IsNullOrEmpty(snapGrid) ? $"CASE WHEN {simplified} IS NOT NULL THEN ST_SnapToGrid({simplified}, {snapGrid}) ELSE NULL END" : simplified;
+                    var filtered = !string.IsNullOrEmpty(lengthThreshold) ? $"CASE WHEN {snapped} IS NOT NULL AND ST_GeometryType({snapped}) IN ('LINESTRING','MULTILINESTRING') AND ST_Length({snapped}) < {lengthThreshold} THEN NULL ELSE {snapped} END" : snapped;
+                    var geomJsonExpr = $"CASE WHEN {filtered} IS NOT NULL THEN ST_AsGeoJSON({filtered}) ELSE NULL END as geometry_geojson";
 
                     bool requestedGeometry = fieldParts.Any(p => p.Trim().Equals("geometry", StringComparison.OrdinalIgnoreCase));
                     if (requestedGeometry)
                     {
-                        var withGeometry = translatedFields.Select(tf => tf.Equals("geometry", StringComparison.OrdinalIgnoreCase) ? $"ST_AsGeoJSON({filtered}) as geometry_geojson" : tf).ToList();
+                        var withGeometry = translatedFields.Select(tf => tf.Equals("geometry", StringComparison.OrdinalIgnoreCase) ? geomJsonExpr : tf).ToList();
                         query.Append(string.Join(", ", withGeometry));
                 }
                 else
-                {
-                        translatedFields.Add($"ST_AsGeoJSON({filtered}) as geometry_geojson");
+                    {
+                        translatedFields.Add(geomJsonExpr);
                         query.Append(string.Join(", ", translatedFields));
                     }
                 }
@@ -2456,6 +2469,10 @@ ExecuteQuery:
                             if (kvp.Value is string gj && !string.IsNullOrWhiteSpace(gj))
                             {
                                 geometry = ParseGeoJsonToArcGISGeometry(gj, outWkid);
+                            }
+                            else if (kvp.Value != null && kvp.Value != DBNull.Value)
+                            {
+                                Debug.WriteLine($"⚠️ geometry_geojson is not a string: {kvp.Value?.GetType().Name} = {kvp.Value}");
                             }
                             continue; // skip adding to attributes
                         }
