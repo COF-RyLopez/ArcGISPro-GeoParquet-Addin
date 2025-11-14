@@ -2182,6 +2182,7 @@ ExecuteQuery:
             // Check if cached extent is valid (proper extent validation instead of != 0)
             if (_dataLoaded && _cachedXmin < _cachedXmax && _cachedYmin < _cachedYmax)
             {
+                Debug.WriteLine($"✅ Using cached extent: ({_cachedXmin:F4}, {_cachedYmin:F4})–({_cachedXmax:F4}, {_cachedYmax:F4})");
                 return new
                 {
                     xmin = _cachedXmin,
@@ -2192,11 +2193,36 @@ ExecuteQuery:
                 };
             }
             
+            // If cache is currently loading, wait briefly for it to complete
+            if (!_dataLoaded && _loadSemaphore.CurrentCount == 0)
+            {
+                Debug.WriteLine("⏳ Cache is currently loading, waiting up to 3 seconds...");
+                // Wait for cache to finish loading (with timeout)
+                for (int i = 0; i < 30 && !_dataLoaded; i++) // 30 * 100ms = 3 seconds
+                {
+                    System.Threading.Thread.Sleep(100);
+                }
+                
+                // Check again after waiting
+                if (_dataLoaded && _cachedXmin < _cachedXmax && _cachedYmin < _cachedYmax)
+                {
+                    Debug.WriteLine($"✅ Using cached extent (after wait): ({_cachedXmin:F4}, {_cachedYmin:F4})–({_cachedXmax:F4}, {_cachedYmax:F4})");
+                    return new
+                    {
+                        xmin = _cachedXmin,
+                        ymin = _cachedYmin,
+                        xmax = _cachedXmax,
+                        ymax = _cachedYmax,
+                        spatialReference = _spatialReference
+                    };
+                }
+            }
+            
             // Try to get extent from current map viewport if available
             try
             {
                 ArcGIS.Core.Geometry.Envelope extent = null;
-                QueuedTask.Run(() =>
+                var task = QueuedTask.Run(() =>
                 {
                     if (MapView.Active != null)
                     {
@@ -2214,34 +2240,64 @@ ExecuteQuery:
                                 extent = mapExtent;
                             }
                         }
-                    }
-                }).Wait(TimeSpan.FromSeconds(2)); // Wait up to 2 seconds for map viewport
-
-                if (extent != null)
-                {
-                    var xmin = extent.XMin;
-                    var ymin = extent.YMin;
-                    var xmax = extent.XMax;
-                    var ymax = extent.YMax;
-                    
-                    if (xmin < xmax && ymin < ymax)
-                    {
-                        // Add buffer like we do for cache
-                        var buffer = _cacheBuffer;
-                        return new
+                        else
                         {
-                            xmin = xmin - buffer,
-                            ymin = ymin - buffer,
-                            xmax = xmax + buffer,
-                            ymax = ymax + buffer,
-                            spatialReference = _spatialReference
-                        };
+                            Debug.WriteLine("⚠️ MapView.Active.Extent is null");
+                        }
                     }
+                    else
+                    {
+                        Debug.WriteLine("⚠️ MapView.Active is null");
+                    }
+                });
+                
+                // Wait up to 2 seconds for map viewport
+                if (task.Wait(TimeSpan.FromSeconds(2)))
+                {
+                    if (extent != null)
+                    {
+                        var xmin = extent.XMin;
+                        var ymin = extent.YMin;
+                        var xmax = extent.XMax;
+                        var ymax = extent.YMax;
+                        
+                        if (xmin < xmax && ymin < ymax)
+                        {
+                            // Add buffer like we do for cache
+                            var buffer = _cacheBuffer;
+                            Debug.WriteLine($"✅ Using map viewport extent: ({xmin - buffer:F4}, {ymin - buffer:F4})–({xmax + buffer:F4}, {ymax + buffer:F4})");
+                            return new
+                            {
+                                xmin = xmin - buffer,
+                                ymin = ymin - buffer,
+                                xmax = xmax + buffer,
+                                ymax = ymax + buffer,
+                                spatialReference = _spatialReference
+                            };
+                        }
+                        else
+                        {
+                            Debug.WriteLine($"⚠️ Map viewport extent is invalid: ({xmin}, {ymin})–({xmax}, {ymax})");
+                        }
+                    }
+                    else
+                    {
+                        Debug.WriteLine("⚠️ Map viewport extent is null after QueuedTask");
+                    }
+                }
+                else
+                {
+                    Debug.WriteLine("⚠️ Timeout waiting for map viewport extent (2 seconds)");
                 }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"⚠️ Could not get extent from map viewport: {ex.Message}");
+                Debug.WriteLine($"   Exception type: {ex.GetType().Name}");
+                if (ex.InnerException != null)
+                {
+                    Debug.WriteLine($"   Inner exception: {ex.InnerException.Message}");
+                }
             }
             
             // No extent available - return error extent to prevent full-world queries
