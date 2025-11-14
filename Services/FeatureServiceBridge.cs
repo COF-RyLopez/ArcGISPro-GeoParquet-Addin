@@ -2168,6 +2168,24 @@ ExecuteQuery:
         }
 
         /// <summary>
+        /// Convert WKID integer to EPSG string format for DuckDB ST_Transform
+        /// </summary>
+        private string WkidToEpsgString(int? wkid)
+        {
+            if (!wkid.HasValue) return null;
+            
+            // Map common WKIDs to EPSG codes
+            // 102100 is the old ESRI code for Web Mercator, same as 3857
+            if (wkid.Value == 102100 || wkid.Value == 3857)
+                return "'EPSG:3857'";
+            if (wkid.Value == 4326)
+                return "'EPSG:4326'";
+            
+            // Default: use the WKID as-is (most WKIDs match EPSG codes)
+            return $"'EPSG:{wkid.Value}'";
+        }
+
+        /// <summary>
         /// Convert Web Mercator coordinates to WGS84 (degrees)
         /// </summary>
         private (double xmin, double ymin, double xmax, double ymax) ConvertWebMercatorToWgs84(double xmin, double ymin, double xmax, double ymax)
