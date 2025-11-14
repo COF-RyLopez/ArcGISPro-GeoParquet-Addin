@@ -1643,8 +1643,15 @@ ExecuteQuery:
                 // Add bbox fields that are common to all themes
                 fieldList.AddRange(new[] { "bbox.xmin as bbox_xmin", "bbox.ymin as bbox_ymin", "bbox.xmax as bbox_xmax", "bbox.ymax as bbox_ymax" });
                 
+                // Ensure schema is discovered before building field list
+                await EnsureThemeFieldsDiscoveredAsync(theme);
+                
+                // Get discovered fields for this theme to ensure we only include fields that exist
+                var discoveredForTheme = _discoveredFields.TryGetValue(theme.Id, out var disc) ? disc : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                
                 // Add theme-specific fields (expanded on-demand from discovery)
-                foreach (var field in theme.Fields.Where(f => f != "id"))
+                // Only include fields that were actually discovered in the parquet schema
+                foreach (var field in theme.Fields.Where(f => f != "id" && discoveredForTheme.Contains(f)))
                 {
                     // If field is a flattened struct member, render via expression when querying parquet
                     if (_discoveredFieldSql.TryGetValue(theme.Id, out var map) && map.TryGetValue(field, out var expr) && !useCacheForFields)
@@ -1652,7 +1659,7 @@ ExecuteQuery:
                     else
                     {
                         if (!string.Equals(field, "sources_property", StringComparison.OrdinalIgnoreCase))
-                    fieldList.Add(field);
+                            fieldList.Add(field);
                     }
                 }
                 
