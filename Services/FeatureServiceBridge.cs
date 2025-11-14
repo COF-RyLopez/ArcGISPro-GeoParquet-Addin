@@ -377,10 +377,18 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
+        /// <summary>
+        /// Computes a stable 32-bit integer ObjectID from the Overture Maps ID string.
+        /// Uses SHA1 hashing to convert long Overture Maps IDs (which can exceed ObjectID's capacity)
+        /// into a 32-bit integer. This ensures ObjectID never directly uses the string ID.
+        /// </summary>
+        /// <param name="seed">The Overture Maps ID string (can be any length)</param>
+        /// <returns>A positive 32-bit integer suitable for ArcGIS ObjectID</returns>
         private static int ComputeObjectId(string seed)
         {
             if (string.IsNullOrEmpty(seed)) return 0;
-            // Stable 32-bit hash
+            // Stable 32-bit hash - converts long Overture Maps IDs to 32-bit integers
+            // ObjectID cannot handle long string IDs directly, so we hash them
             using var sha1 = SHA1.Create();
             var bytes = Encoding.UTF8.GetBytes(seed);
             var hash = sha1.ComputeHash(bytes);
