@@ -854,22 +854,40 @@ namespace DuckDBGeoparquet.Services
                     description = "Live cloud-native access to all Overture Maps themes via DuckDB",
                     copyrightText = "Data from Overture Maps Foundation via DuckDB",
                     spatialReference = _spatialReference,
-                    initialExtent = new
-                    {
-                        xmin = -180.0,
-                        ymin = -90.0,
-                        xmax = 180.0,
-                        ymax = 90.0,
-                        spatialReference = _spatialReference
-                    },
-                    fullExtent = new
-                    {
-                        xmin = -180.0,
-                        ymin = -90.0,
-                        xmax = 180.0,
-                        ymax = 90.0,
-                        spatialReference = _spatialReference
-                    },
+                    initialExtent = _dataLoaded && _cachedXmin != 0 && _cachedYmin != 0 && _cachedXmax != 0 && _cachedYmax != 0
+                        ? new
+                        {
+                            xmin = _cachedXmin,
+                            ymin = _cachedYmin,
+                            xmax = _cachedXmax,
+                            ymax = _cachedYmax,
+                            spatialReference = _spatialReference
+                        }
+                        : new
+                        {
+                            xmin = -180.0,
+                            ymin = -90.0,
+                            xmax = 180.0,
+                            ymax = 90.0,
+                            spatialReference = _spatialReference
+                        },
+                    fullExtent = _dataLoaded && _cachedXmin != 0 && _cachedYmin != 0 && _cachedXmax != 0 && _cachedYmax != 0
+                        ? new
+                        {
+                            xmin = _cachedXmin,
+                            ymin = _cachedYmin,
+                            xmax = _cachedXmax,
+                            ymax = _cachedYmax,
+                            spatialReference = _spatialReference
+                        }
+                        : new
+                        {
+                            xmin = -180.0,
+                            ymin = -90.0,
+                            xmax = 180.0,
+                            ymax = 90.0,
+                            spatialReference = _spatialReference
+                        },
                     allowGeometryUpdates = false,
                     units = "esriDecimalDegrees",
                     layers = _themes.Select(t => new { id = t.Id, name = t.Name, type = "Feature Layer" }).ToArray(),
@@ -1200,7 +1218,14 @@ namespace DuckDBGeoparquet.Services
                     returnGeometry = false;
                 }
 
-                Debug.WriteLine($"Layer {layerId} ({theme.Name}) Query: where={whereClause}, outFields={outFields}, geometry={geometryParam}, spatialRel={spatialRel}");
+                // ArcGIS Pro expects geometry by default for spatial layers - ensure it's included unless explicitly disabled
+                // When outFields=OBJECTID, Pro expects geometry for rendering
+                if (outFields == "OBJECTID" && !explicitReturnGeometry)
+                {
+                    returnGeometry = true; // Force geometry for OBJECTID queries (Pro's default behavior)
+                }
+
+                Debug.WriteLine($"Layer {layerId} ({theme.Name}) Query: where={whereClause}, outFields={outFields}, returnGeometry={returnGeometry}, geometry={geometryParam}, spatialRel={spatialRel}");
 
                 // Proactively refresh viewport cache when outside extent, but skip when AOI is active
                 if (_dataLoaded && string.IsNullOrEmpty(_aoiWkt) && !string.IsNullOrEmpty(geometryParam))
@@ -2406,6 +2431,11 @@ ExecuteQuery:
                     else
                     {
                         // For features without geometry, omit geometry field entirely
+                        // Log warning if we expected geometry but didn't get it
+                        if (objectId == 1 && features.Count == 0)
+                        {
+                            Debug.WriteLine($"⚠️ Warning: First feature has no geometry. Check if geometry_geojson column is in query results.");
+                        }
                         feature = new
                         {
                             attributes = attributes
@@ -2415,7 +2445,20 @@ ExecuteQuery:
                     features.Add(feature);
                 }
 
-                Debug.WriteLine($"📦 Returned={features.Count}");
+                // Count features with geometry by checking the first few
+                int featuresWithGeometry = 0;
+                int checkCount = Math.Min(10, features.Count);
+                for (int i = 0; i < checkCount; i++)
+                {
+                    var f = features[i];
+                    var fType = f.GetType();
+                    var geometryProp = fType.GetProperty("geometry");
+                    if (geometryProp != null && geometryProp.GetValue(f) != null)
+                    {
+                        featuresWithGeometry++;
+                    }
+                }
+                Debug.WriteLine($"📦 Returned={features.Count} features (sampled {checkCount}, {featuresWithGeometry} have geometry)");
             }
             catch (Exception ex)
             {
