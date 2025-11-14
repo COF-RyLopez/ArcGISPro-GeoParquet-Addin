@@ -848,6 +848,10 @@ namespace DuckDBGeoparquet.Services
         {
             try
             {
+                // Get extent using async method (same pattern as DataProcessor)
+                var extent = await GetServiceExtentAsync();
+                
+                // Build service metadata - extent may be null if not available yet (graceful handling like DataProcessor)
                 var serviceMetadata = new
                 {
                     currentVersion = 11.1,
@@ -863,44 +867,14 @@ namespace DuckDBGeoparquet.Services
                     description = "Live cloud-native access to all Overture Maps themes via DuckDB",
                     copyrightText = "Data from Overture Maps Foundation via DuckDB",
                     spatialReference = _spatialReference,
-                    initialExtent = GetServiceExtent(),
-                    fullExtent = GetServiceExtent(),
+                    initialExtent = extent,
+                    fullExtent = extent,
                     allowGeometryUpdates = false,
                     units = "esriDecimalDegrees",
                     layers = _themes.Select(t => new { id = t.Id, name = t.Name, type = "Feature Layer" }).ToArray(),
                     tables = new object[] { }
                 };
 
-                var json = JsonSerializer.Serialize(serviceMetadata, _jsonOptions);
-                await WriteJsonResponse(context, json);
-            }
-            catch (InvalidOperationException ex)
-            {
-                // Service extent not available - return default world extent instead of error
-                // This should rarely happen now since GetServiceExtent returns default extent
-                Debug.WriteLine($"⚠️ Service metadata error (fallback): {ex.Message}");
-                var serviceMetadata = new
-                {
-                    currentVersion = 11.1,
-                    serviceDescription = "DuckDB Multi-Layer Feature Service - Overture Maps",
-                    hasVersionedData = false,
-                    supportsDisconnectedEditing = false,
-                    supportsDatumTransformation = true,
-                    supportsReturnDeleteResults = false,
-                    hasStaticData = false,
-                    maxRecordCount = _maxRecordCount,
-                    supportedQueryFormats = "JSON,geoJSON",
-                    capabilities = "Query,Extract",
-                    description = "Live cloud-native access to all Overture Maps themes via DuckDB",
-                    copyrightText = "Data from Overture Maps Foundation via DuckDB",
-                    spatialReference = _spatialReference,
-                    initialExtent = new { xmin = -180.0, ymin = -90.0, xmax = 180.0, ymax = 90.0, spatialReference = _spatialReference },
-                    fullExtent = new { xmin = -180.0, ymin = -90.0, xmax = 180.0, ymax = 90.0, spatialReference = _spatialReference },
-                    allowGeometryUpdates = false,
-                    units = "esriDecimalDegrees",
-                    layers = _themes.Select(t => new { id = t.Id, name = t.Name, type = "Feature Layer" }).ToArray(),
-                    tables = new object[] { }
-                };
                 var json = JsonSerializer.Serialize(serviceMetadata, _jsonOptions);
                 await WriteJsonResponse(context, json);
             }
@@ -2200,9 +2174,10 @@ ExecuteQuery:
         }
 
         /// <summary>
-        /// Get service extent - requires data to be loaded first
+        /// Get service extent - follows same pattern as DataProcessor.cs
+        /// Returns null if extent is not available (graceful handling like DataProcessor)
         /// </summary>
-        private object GetServiceExtent()
+        private async Task<object> GetServiceExtentAsync()
         {
             // Check if cached extent is valid (proper extent validation instead of != 0)
             if (_dataLoaded && _cachedXmin < _cachedXmax && _cachedYmin < _cachedYmax)
@@ -2218,14 +2193,16 @@ ExecuteQuery:
                 };
             }
             
-            // If cache is currently loading, wait for it to complete
+            // If cache is currently loading, wait for it to complete (same approach as DataProcessor)
             if (!_dataLoaded && _loadSemaphore.CurrentCount == 0)
             {
-                Debug.WriteLine("⏳ Cache is currently loading, waiting up to 10 seconds...");
-                // Wait for cache to finish loading (with timeout) - increased to 10 seconds for large datasets
-                for (int i = 0; i < 100 && !_dataLoaded; i++) // 100 * 100ms = 10 seconds
+                Debug.WriteLine("⏳ Cache is currently loading, waiting for completion...");
+                // Wait for cache to finish loading - use async wait instead of blocking
+                int waitCount = 0;
+                while (!_dataLoaded && waitCount < 100) // 100 * 100ms = 10 seconds max
                 {
-                    System.Threading.Thread.Sleep(100);
+                    await Task.Delay(100);
+                    waitCount++;
                 }
                 
                 // Check again after waiting
@@ -2243,11 +2220,11 @@ ExecuteQuery:
                 }
             }
             
-            // Try to get extent from current map viewport if available
+            // Try to get extent from current map viewport if available (same pattern as DataProcessor and EnsureDataLoadedAsync)
             try
             {
                 ArcGIS.Core.Geometry.Envelope extent = null;
-                var task = QueuedTask.Run(() =>
+                await QueuedTask.Run(() =>
                 {
                     if (MapView.Active != null)
                     {
@@ -2276,43 +2253,31 @@ ExecuteQuery:
                     }
                 });
                 
-                // Wait up to 2 seconds for map viewport
-                if (task.Wait(TimeSpan.FromSeconds(2)))
+                if (extent != null)
                 {
-                    if (extent != null)
+                    var xmin = extent.XMin;
+                    var ymin = extent.YMin;
+                    var xmax = extent.XMax;
+                    var ymax = extent.YMax;
+                    
+                    if (xmin < xmax && ymin < ymax)
                     {
-                        var xmin = extent.XMin;
-                        var ymin = extent.YMin;
-                        var xmax = extent.XMax;
-                        var ymax = extent.YMax;
-                        
-                        if (xmin < xmax && ymin < ymax)
+                        // Add buffer like we do for cache
+                        var buffer = _cacheBuffer;
+                        Debug.WriteLine($"✅ Using map viewport extent: ({xmin - buffer:F4}, {ymin - buffer:F4})–({xmax + buffer:F4}, {ymax + buffer:F4})");
+                        return new
                         {
-                            // Add buffer like we do for cache
-                            var buffer = _cacheBuffer;
-                            Debug.WriteLine($"✅ Using map viewport extent: ({xmin - buffer:F4}, {ymin - buffer:F4})–({xmax + buffer:F4}, {ymax + buffer:F4})");
-                            return new
-                            {
-                                xmin = xmin - buffer,
-                                ymin = ymin - buffer,
-                                xmax = xmax + buffer,
-                                ymax = ymax + buffer,
-                                spatialReference = _spatialReference
-                            };
-                        }
-                        else
-                        {
-                            Debug.WriteLine($"⚠️ Map viewport extent is invalid: ({xmin}, {ymin})–({xmax}, {ymax})");
-                        }
+                            xmin = xmin - buffer,
+                            ymin = ymin - buffer,
+                            xmax = xmax + buffer,
+                            ymax = ymax + buffer,
+                            spatialReference = _spatialReference
+                        };
                     }
                     else
                     {
-                        Debug.WriteLine("⚠️ Map viewport extent is null after QueuedTask");
+                        Debug.WriteLine($"⚠️ Map viewport extent is invalid: ({xmin}, {ymin})–({xmax}, {ymax})");
                     }
-                }
-                else
-                {
-                    Debug.WriteLine("⚠️ Timeout waiting for map viewport extent (2 seconds)");
                 }
             }
             catch (Exception ex)
@@ -2325,17 +2290,9 @@ ExecuteQuery:
                 }
             }
             
-            // No extent available - return default world extent instead of throwing exception
-            // This allows the service to respond even when cache isn't loaded yet
-            Debug.WriteLine("⚠️ No extent available yet - using default world extent. Cache may still be loading.");
-            return new
-            {
-                xmin = -180.0,
-                ymin = -90.0,
-                xmax = 180.0,
-                ymax = 90.0,
-                spatialReference = _spatialReference
-            };
+            // No extent available - return null (graceful handling like DataProcessor when extent is null)
+            Debug.WriteLine("⚠️ No extent available - service will work without extent until cache loads");
+            return null;
         }
 
         /// <summary>
