@@ -854,40 +854,8 @@ namespace DuckDBGeoparquet.Services
                     description = "Live cloud-native access to all Overture Maps themes via DuckDB",
                     copyrightText = "Data from Overture Maps Foundation via DuckDB",
                     spatialReference = _spatialReference,
-                    initialExtent = _dataLoaded && _cachedXmin != 0 && _cachedYmin != 0 && _cachedXmax != 0 && _cachedYmax != 0
-                        ? new
-                        {
-                            xmin = _cachedXmin,
-                            ymin = _cachedYmin,
-                            xmax = _cachedXmax,
-                            ymax = _cachedYmax,
-                            spatialReference = _spatialReference
-                        }
-                        : new
-                        {
-                            xmin = -180.0,
-                            ymin = -90.0,
-                            xmax = 180.0,
-                            ymax = 90.0,
-                            spatialReference = _spatialReference
-                        },
-                    fullExtent = _dataLoaded && _cachedXmin != 0 && _cachedYmin != 0 && _cachedXmax != 0 && _cachedYmax != 0
-                        ? new
-                        {
-                            xmin = _cachedXmin,
-                            ymin = _cachedYmin,
-                            xmax = _cachedXmax,
-                            ymax = _cachedYmax,
-                            spatialReference = _spatialReference
-                        }
-                        : new
-                        {
-                            xmin = -180.0,
-                            ymin = -90.0,
-                            xmax = 180.0,
-                            ymax = 90.0,
-                            spatialReference = _spatialReference
-                        },
+                    initialExtent = GetServiceExtent(),
+                    fullExtent = GetServiceExtent(),
                     allowGeometryUpdates = false,
                     units = "esriDecimalDegrees",
                     layers = _themes.Select(t => new { id = t.Id, name = t.Name, type = "Feature Layer" }).ToArray(),
@@ -896,6 +864,22 @@ namespace DuckDBGeoparquet.Services
 
                 var json = JsonSerializer.Serialize(serviceMetadata, _jsonOptions);
                 await WriteJsonResponse(context, json);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Service extent not available - return clear error
+                Debug.WriteLine($"⚠️ Service metadata error: {ex.Message}");
+                context.Response.StatusCode = 500;
+                var errorJson = JsonSerializer.Serialize(new 
+                { 
+                    error = new 
+                    { 
+                        code = 500, 
+                        message = ex.Message,
+                        details = "The feature service requires data to be loaded before it can determine the extent. Please query a specific area first (e.g., zoom to your area of interest) to initialize the cache."
+                    } 
+                }, _jsonOptions);
+                await WriteJsonResponse(context, errorJson);
             }
             catch (Exception ex)
             {
@@ -2127,6 +2111,31 @@ ExecuteQuery:
             }
             catch { }
             return null;
+        }
+
+        /// <summary>
+        /// Get service extent - requires data to be loaded first
+        /// </summary>
+        private object GetServiceExtent()
+        {
+            if (_dataLoaded && _cachedXmin != 0 && _cachedYmin != 0 && _cachedXmax != 0 && _cachedYmax != 0)
+            {
+                return new
+                {
+                    xmin = _cachedXmin,
+                    ymin = _cachedYmin,
+                    xmax = _cachedXmax,
+                    ymax = _cachedYmax,
+                    spatialReference = _spatialReference
+                };
+            }
+            
+            // No extent available - return error extent to prevent full-world queries
+            Debug.WriteLine("⚠️ ERROR: Service extent not available - data must be loaded first. Use 'Zoom to Layer' or query a specific area to initialize the cache.");
+            throw new InvalidOperationException(
+                "Service extent not available. The feature service requires data to be loaded before it can determine the extent. " +
+                "Please query a specific area first (e.g., zoom to your area of interest) to initialize the cache, then the service extent will be available."
+            );
         }
 
         /// <summary>
