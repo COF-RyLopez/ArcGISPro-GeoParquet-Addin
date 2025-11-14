@@ -1187,6 +1187,33 @@ namespace DuckDBGeoparquet.Services
                 var maxRecords = int.TryParse(GetQueryParam(queryParams, "resultRecordCount"), out var max) ? max : _maxRecordCount;
                 var resultOffset = int.TryParse(GetQueryParam(queryParams, "resultOffset"), out var off) ? off : 0;
                 var outWkid = int.TryParse(GetQueryParam(queryParams, "outSR"), out var wk) ? wk : (int?)null;
+                
+                // If outSR not specified, detect from geometry parameter's spatialReference (Pro sends Web Mercator)
+                if (!outWkid.HasValue && !string.IsNullOrEmpty(geometryParam))
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(geometryParam);
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("spatialReference", out var srProp))
+                        {
+                            if (srProp.TryGetProperty("wkid", out var wkidProp))
+                            {
+                                var wkid = wkidProp.GetInt32();
+                                if (wkid == 3857 || wkid == 102100)
+                                    outWkid = 3857; // Use Web Mercator to match Pro's map
+                            }
+                            else if (srProp.TryGetProperty("latestWkid", out var latestWkidProp))
+                            {
+                                var latestWkid = latestWkidProp.GetInt32();
+                                if (latestWkid == 3857 || latestWkid == 102100)
+                                    outWkid = 3857;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+                
                 var format = GetQueryParam(queryParams, "f") ?? "json";
                 var forceMaterialize = (GetQueryParam(queryParams, "forceMaterialize") ?? "false").Equals("true", StringComparison.OrdinalIgnoreCase);
                 // Geometry precision and quantization (ArcGIS REST) – used to reduce payload/vertices
@@ -1209,7 +1236,7 @@ namespace DuckDBGeoparquet.Services
                     returnGeometry = true; // Force geometry for OBJECTID queries (Pro's default behavior)
                 }
 
-                Debug.WriteLine($"Layer {layerId} ({theme.Name}) Query: where={whereClause}, outFields={outFields}, returnGeometry={returnGeometry}, geometry={geometryParam}, spatialRel={spatialRel}");
+                Debug.WriteLine($"Layer {layerId} ({theme.Name}) Query: where={whereClause}, outFields={outFields}, returnGeometry={returnGeometry}, outSR={outWkid?.ToString() ?? "null"}, geometry={geometryParam}, spatialRel={spatialRel}");
 
                 // Proactively refresh viewport cache when outside extent, but skip when AOI is active
                 if (_dataLoaded && string.IsNullOrEmpty(_aoiWkt) && !string.IsNullOrEmpty(geometryParam))
