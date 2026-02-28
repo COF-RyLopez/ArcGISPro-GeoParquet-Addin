@@ -53,8 +53,9 @@ jobs:
     - name: Run Unit Tests
       run: |
         echo "Running tests..."
-        # dotnet test DuckDBGeoparquet.Tests/DuckDBGeoparquet.Tests.csproj --no-build --verbosity normal
-        echo "No tests configured yet. Skipping."
+        dotnet test DuckDBGeoparquet.Tests/DuckDBGeoparquet.Tests.csproj --verbosity normal
+
+
 
 
     - name: Commit version update back to main branch
