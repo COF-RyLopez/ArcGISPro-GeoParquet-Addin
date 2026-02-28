@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="DuckDBGeoparquet.Views.WizardDockpaneView"
+<UserControl x:Class="DuckDBGeoparquet.Views.WizardDockpaneView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
@@ -140,6 +140,19 @@
                                     <TextBox Grid.Column="1" Text="{Binding DataOutputPath}" VerticalAlignment="Center" IsReadOnly="True" Margin="0,0,4,0" Style="{DynamicResource Esri_TextBox}"/>
                                     <Button Grid.Column="2" Content="Browse..." Style="{DynamicResource Esri_Button}" Command="{Binding BrowseDataLocationCommand}" Width="70"/>
                                 </Grid>
+                                <Grid Margin="0,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Compression:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <ComboBox Grid.Column="1" ItemsSource="{Binding CompressionOptions}" SelectedItem="{Binding SelectedCompression}" Style="{DynamicResource Esri_ComboBox}" VerticalAlignment="Center"/>
+                                </Grid>
+                                <TextBlock TextWrapping="Wrap" Margin="0,2,0,0" Style="{DynamicResource Esri_TextBlockSmall}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+                                    <Run Text="ZSTD: Best compression ratio (recommended). "/>
+                                    <Run Text="SNAPPY: Fast compression, larger files. "/>
+                                    <Run Text="GZIP: Good balance of speed and size."/>
+                                </TextBlock>
                             </StackPanel>
                         </Border>
                         <!-- Selected Themes Preview -->
@@ -201,7 +214,7 @@
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
-            <!-- Status Tab -->
+            <!-- Status Tab (index 1) -->
             <TabItem Header="Status">
                 <StackPanel Margin="16,12,16,12">
                     <TextBlock Text="Operation Progress" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,4"/>
@@ -297,6 +310,80 @@
 
                                 <!-- Action Button -->
                                 <Button Content="Create Multifile Feature Connection" Command="{Binding CreateMfcCommand}" HorizontalAlignment="Left" Margin="0,15,0,0" Style="{DynamicResource Esri_Button}"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            
+            <!-- Cache Management Tab (Pro 3.6+) -->
+            <TabItem Header="Cache Management" Visibility="{Binding IsCacheManagementTabVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="16,12,16,12" Orientation="Vertical">
+                        <TextBlock Text="Parquet Cache Management" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,12"/>
+                        
+                        <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
+                                ArcGIS Pro 3.6 automatically caches Parquet files with fewer than 500,000 records for faster access. 
+                                This panel allows you to view cache information and clear cached files when needed.
+                                <LineBreak/><LineBreak/>
+                                <Bold>Note:</Bold> Clearing the cache will require Pro to rebuild caches on next access, which may slow down initial loading.
+                            </TextBlock>
+                        </Border>
+
+                        <TextBlock Text="Cache Information" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <Grid Margin="0,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Cache Location:" FontWeight="SemiBold" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                    <TextBox Grid.Column="1" Text="{Binding CacheLocation}" IsReadOnly="True" Style="{DynamicResource Esri_TextBox}" VerticalAlignment="Center"/>
+                                </Grid>
+                                <Grid Margin="0,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Cache Size:" FontWeight="SemiBold" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding CacheSize}" VerticalAlignment="Center" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
+                                </Grid>
+                                <Grid Margin="0,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Cached Files:" FontWeight="SemiBold" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding CacheFileCount, StringFormat='{}{0} files'}" VerticalAlignment="Center" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
+                                </Grid>
+                                <Button Content="Refresh Cache Info" Command="{Binding RefreshCacheInfoCommand}" HorizontalAlignment="Left" Margin="0,8,0,0" Style="{DynamicResource Esri_Button}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="Cache Actions" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
+                                    Clear all cached Parquet files. This will free up disk space but may slow down initial access to previously cached files.
+                                </TextBlock>
+                                <Button Content="Clear Cache" Command="{Binding ClearCacheCommand}" HorizontalAlignment="Left" Style="{DynamicResource Esri_Button}" Width="120"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>

@@ -1,4 +1,4 @@
-﻿using ArcGIS.Core.CIM;
+using ArcGIS.Core.CIM;
 using ArcGIS.Desktop.Framework;
 using ArcGIS.Desktop.Framework.Contracts;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
@@ -22,7 +22,7 @@ using System.Text;
 using System.IO;
 using System.Windows.Forms;
 using System.Threading;
-using ArcGIS.Desktop.Core; // Added for Project.Current
+using ArcGIS.Desktop.Core;
 using System.Net;
 
 namespace DuckDBGeoparquet.Views
@@ -212,6 +212,7 @@ namespace DuckDBGeoparquet.Views
 
         // Add CancellationTokenSource for cancelling operations
         private CancellationTokenSource _cts;
+        private bool _skipExistingData;
 
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
         {
@@ -349,6 +350,7 @@ namespace DuckDBGeoparquet.Views
 
         // Properties for TreeView Preview
         public int SelectedLeafItemCount => GetSelectedLeafItems().Count;
+        
         public List<SelectableThemeItem> AllSelectedLeafItemsForPreview => GetSelectedLeafItems();
 
         // Public parameterless constructor for XAML Designer
@@ -408,6 +410,8 @@ namespace DuckDBGeoparquet.Views
             _dataProcessor = new DataProcessor();
 
             LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => GetSelectedLeafItems().Count > 0);
+            RefreshCacheInfoCommand = new RelayCommand(() => RefreshCacheInfo());
+            ClearCacheCommand = new RelayCommand(() => ClearCache(), () => ArcGISProVersionHelper.IsPro36OrLater);
             ShowThemeInfoCommand = new RelayCommand(() => ShowThemeInfo(), () => SelectedItemForPreview != null);
             SetCustomExtentCommand = new RelayCommand(() => SetCustomExtent(), () => UseCustomExtent);
             BrowseMfcLocationCommand = new RelayCommand(() => BrowseMfcLocation());
@@ -467,6 +471,12 @@ namespace DuckDBGeoparquet.Views
 
                 InitializeThemes(); // Populate Themes collection
                 AddToLog("Async Initialization: Themes initialized");
+
+                // Initialize cache info if Pro 3.6+
+                if (ArcGISProVersionHelper.IsPro36OrLater)
+                {
+                    RefreshCacheInfo();
+                }
 
                 var defaultBasePath = DeterminedDefaultMfcBasePath;
                 DataOutputPath = Path.Combine(defaultBasePath, "Data", LatestRelease ?? "latest");
@@ -557,6 +567,8 @@ namespace DuckDBGeoparquet.Views
             get => _selectedTabIndex;
             set => SetProperty(ref _selectedTabIndex, value);
         }
+
+        public bool IsCacheManagementTabVisible => ArcGISProVersionHelper.IsPro36OrLater;
 
         private string _statusText = "Initializing...";
         public string StatusText
@@ -716,6 +728,41 @@ namespace DuckDBGeoparquet.Views
             set => SetProperty(ref _dataOutputPath, value);
         }
 
+        private string _selectedCompression = "ZSTD";
+        public string SelectedCompression
+        {
+            get => _selectedCompression;
+            set => SetProperty(ref _selectedCompression, value);
+        }
+
+        // Available compression options for binding
+        public List<string> CompressionOptions => new List<string> { "ZSTD", "SNAPPY", "GZIP" };
+
+        // Cache management properties
+        private string _cacheLocation = "";
+        public string CacheLocation
+        {
+            get => _cacheLocation;
+            set => SetProperty(ref _cacheLocation, value);
+        }
+
+        private string _cacheSize = "";
+        public string CacheSize
+        {
+            get => _cacheSize;
+            set => SetProperty(ref _cacheSize, value);
+        }
+
+        private int _cacheFileCount = 0;
+        public int CacheFileCount
+        {
+            get => _cacheFileCount;
+            set => SetProperty(ref _cacheFileCount, value);
+        }
+
+        public ICommand RefreshCacheInfoCommand { get; private set; }
+        public ICommand ClearCacheCommand { get; private set; }
+
         private bool _usePreviouslyLoadedData = true;
         public bool UsePreviouslyLoadedData
         {
@@ -798,7 +845,7 @@ namespace DuckDBGeoparquet.Views
             {
                 if (string.IsNullOrWhiteSpace(release)) return;
                 string cacheFile = GetLatestReleaseCacheFilePath();
-                string? dir = Path.GetDirectoryName(cacheFile);
+                string dir = Path.GetDirectoryName(cacheFile);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
                 File.WriteAllText(cacheFile, release);
             }
@@ -1392,21 +1439,31 @@ namespace DuckDBGeoparquet.Views
                     StatusText = $"Deleting {folderName} folder ({i + 1}/{typeFoldersToDelete.Count})...";
                     AddToLog($"Deleting folder: {folderName}");
 
-                    // Delete folder asynchronously to prevent UI blocking
-                    await Task.Run(() =>
+                    // Delete folder asynchronously with retries to prevent UI blocking
+                    await Task.Run(async () =>
                     {
-                        try
+                        const int maxAttempts = 3;
+                        for (int attempt = 1; attempt <= maxAttempts; attempt++)
                         {
-                            if (Directory.Exists(folderPath))
+                            try
                             {
-                                Directory.Delete(folderPath, recursive: true);
-                                System.Diagnostics.Debug.WriteLine($"Successfully deleted folder: {folderPath}");
+                                if (Directory.Exists(folderPath))
+                                {
+                                    Directory.Delete(folderPath, recursive: true);
+                                    System.Diagnostics.Debug.WriteLine($"Successfully deleted folder: {folderPath}");
+                                }
+                                return;
                             }
-                        }
-                        catch (Exception ex)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"Error deleting folder {folderPath}: {ex.Message}");
-                            // Log but don't throw - we'll continue with other folders
+                            catch (IOException ex) when (attempt < maxAttempts)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"Attempt {attempt} to delete folder {folderPath} failed: {ex.Message}. Retrying...");
+                                await Task.Delay(attempt * 200);
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"Error deleting folder {folderPath}: {ex.Message}");
+                                return;
+                            }
                         }
                     });
 
@@ -1542,6 +1599,210 @@ namespace DuckDBGeoparquet.Views
             });
         }
 
+        private async Task<Envelope> GetLoadExtentAsync()
+        {
+            Envelope extent = null;
+            await QueuedTask.Run(() =>
+            {
+                SpatialReference wgs84 = SpatialReferenceBuilder.CreateSpatialReference(4326);
+
+                if (UseCurrentMapExtent && MapView.Active != null)
+                {
+                    Envelope mapExtent = MapView.Active.Extent;
+                    if (mapExtent != null)
+                    {
+                        if (mapExtent.SpatialReference == null || mapExtent.SpatialReference.Wkid != 4326)
+                        {
+                            AddToLog($"Map extent SR is {mapExtent.SpatialReference?.Wkid.ToString() ?? "null"}, projecting to WGS84 (4326).");
+                            try
+                            {
+                                extent = GeometryEngine.Instance.Project(mapExtent, wgs84) as Envelope;
+                                if (extent == null)
+                                {
+                                    AddToLog("Warning: Map extent projection to WGS84 resulted in null. Original extent might be invalid or projection failed.");
+                                    extent = mapExtent;
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                AddToLog($"Error projecting map extent: {ex.Message}. Using original extent values, which might be incorrect for filtering.");
+                                System.Diagnostics.Debug.WriteLine($"Error projecting map extent: {ex.Message}");
+                                extent = mapExtent;
+                            }
+                        }
+                        else
+                        {
+                            AddToLog("Map extent is already in WGS84.");
+                            extent = mapExtent;
+                        }
+                        AddToLog($"Using WGS84 extent from map: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
+                        System.Diagnostics.Debug.WriteLine($"WGS84 extent from map: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
+                    }
+                    else
+                    {
+                        AddToLog("Map extent is null.");
+                    }
+                }
+                else if (UseCustomExtent && CustomExtent != null)
+                {
+                    extent = CustomExtent;
+                    AddToLog($"Using custom WGS84 extent: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
+                    System.Diagnostics.Debug.WriteLine($"Using custom WGS84 extent: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
+                }
+                else
+                {
+                    AddToLog("No extent specified or available for filtering.");
+                }
+            });
+            return extent;
+        }
+
+        private async Task<bool> CheckAndReplaceExistingDataAsync(List<SelectableThemeItem> selectedItems, string dataPath)
+        {
+            _skipExistingData = false;
+            bool existingDataFound = false;
+
+            if (Directory.Exists(dataPath))
+            {
+                foreach (var selectedItem in selectedItems)
+                {
+                    var actualTypeSpecificDataPath = Path.Combine(dataPath, selectedItem.ActualType);
+                    if (Directory.Exists(actualTypeSpecificDataPath) && Directory.EnumerateFiles(actualTypeSpecificDataPath, "*.parquet").Any())
+                    {
+                        existingDataFound = true;
+                        break;
+                    }
+                }
+            }
+
+            if (existingDataFound)
+            {
+                var confirmResult = ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                    "Existing data found for one or more selected themes.\n\nYes = Replace existing files\nNo = Keep existing files and skip already-downloaded themes\nCancel = Abort",
+                    "Replace or Skip Existing Data?",
+                    System.Windows.MessageBoxButton.YesNoCancel,
+                    System.Windows.MessageBoxImage.Warning);
+
+                if (confirmResult == System.Windows.MessageBoxResult.Cancel)
+                {
+                    StatusText = "Operation cancelled by user";
+                    AddToLog("Operation cancelled - user chose to cancel when existing data was detected");
+                    return false;
+                }
+
+                if (confirmResult == System.Windows.MessageBoxResult.No)
+                {
+                    _skipExistingData = true;
+                    AddToLog("User chose to keep existing data; will skip already-downloaded themes");
+                    StatusText = "Keeping existing data; skipping already-downloaded themes";
+                    return true;
+                }
+
+                // Yes = replace
+                AddToLog("User confirmed replacing existing data");
+
+                StatusText = "Preparing to replace existing data...";
+                AddToLog("Removing existing layers and deleting theme folders...");
+                await PerformBulkDataReplacementAsync(selectedItems, dataPath);
+                AddToLog("Existing data cleanup completed. Beginning new data loading...");
+            }
+
+            return true;
+        }
+
+        private async Task<bool> LoadAndCreateLayersForItemAsync(
+            SelectableThemeItem item, int itemIndex, int totalCount,
+            int processedCount, Envelope extent, CancellationToken ct)
+        {
+            string parentS3Theme = item.ParentThemeForS3;
+            string actualS3Type = item.ActualType;
+            string itemDisplayName = item.DisplayName;
+
+            StatusText = $"Processing {itemIndex + 1} of {totalCount}: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}";
+            AddToLog($"Processing: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}");
+            AddToLog($"Data type for S3: theme='{parentS3Theme}', type='{actualS3Type}'");
+            System.Diagnostics.Debug.WriteLine($"Data type for S3: theme='{parentS3Theme}', type='{actualS3Type}'");
+
+            string trimmedRelease = LatestRelease?.Trim() ?? "";
+            string s3Path = trimmedRelease.Length > 0
+                ? $"{S3_BASE_PATH}/{trimmedRelease}/theme={parentS3Theme}/type={actualS3Type}/*.parquet"
+                : $"{S3_BASE_PATH}/theme={parentS3Theme}/type={actualS3Type}/*.parquet";
+
+            AddToLog($"Loading from S3 path: {s3Path}");
+            System.Diagnostics.Debug.WriteLine($"Loading from S3 path: {s3Path}");
+
+            await Task.Delay(50);
+
+            if (_skipExistingData)
+            {
+                var existingFolder = Path.Combine(DataOutputPath, actualS3Type);
+                if (Directory.Exists(existingFolder) && Directory.EnumerateFiles(existingFolder, "*.parquet").Any())
+                {
+                    AddToLog($"Skipping {itemDisplayName} (existing data kept per user choice)");
+                    StatusText = $"Skipping {itemDisplayName} (existing data found)";
+                    return true;
+                }
+            }
+
+            var ingestProgressReporter = new Progress<string>(status =>
+            {
+                StatusText = status;
+                AddToLog(status);
+                var baseProgress = (processedCount * 100.0) / totalCount;
+                var ingestProgress = 1.5;
+                ProgressValue = Math.Min(baseProgress + ingestProgress, 98.0);
+            });
+
+            using var heartbeatCts = new CancellationTokenSource();
+            var heartbeatTask = StartHeartbeatAsync(itemDisplayName, heartbeatCts.Token);
+
+            StatusText = $"Loading {itemDisplayName} from S3 (this may take 30-60 seconds)...";
+            AddToLog($"⏳ Starting S3 data load for {itemDisplayName} - please wait, this operation may take time...");
+
+            bool ingestSuccess = await _dataProcessor.IngestFileAsync(s3Path, extent, actualS3Type, ingestProgressReporter);
+
+            heartbeatCts.Cancel();
+            try { await heartbeatTask; } catch (OperationCanceledException) { }
+
+            if (!ingestSuccess)
+            {
+                AddToLog($"❌ Failed to ingest data from {s3Path}");
+                StatusText = $"Error loading data from {s3Path}";
+                return false;
+            }
+
+            AddToLog($"✅ Successfully loaded {itemDisplayName} data from S3");
+
+            if (ct.IsCancellationRequested)
+                return false;
+
+            await Task.Delay(50);
+
+            string featureLayerName = $"{MakeFriendlyName(parentS3Theme)} - {itemDisplayName}";
+            StatusText = $"Creating layers for {itemDisplayName}...";
+            AddToLog($"🔄 Creating feature layers for {itemDisplayName}...");
+
+            var itemProgressReporter = new Progress<string>(status =>
+            {
+                StatusText = status;
+                AddToLog(status);
+                var baseProgress = (processedCount * 100.0) / totalCount;
+                var itemProgress = 3.0;
+                ProgressValue = Math.Min(baseProgress + itemProgress, 99.0);
+            });
+
+            await _dataProcessor.CreateFeatureLayerAsync(featureLayerName, itemProgressReporter, parentS3Theme, actualS3Type, DataOutputPath, SelectedCompression);
+
+            ProgressValue = ((processedCount + 1) * 100.0) / totalCount;
+
+            StatusText = $"✅ Completed {itemDisplayName} ({processedCount + 1}/{totalCount})";
+            AddToLog($"✅ Successfully loaded {itemDisplayName} for {MakeFriendlyName(parentS3Theme)}");
+
+            await Task.Delay(100);
+
+            return true;
+        }
+
         private async Task LoadOvertureDataAsync()
         {
             try
@@ -1561,67 +1822,13 @@ namespace DuckDBGeoparquet.Views
                 // Switch to status tab
                 SelectedTabIndex = 1;
 
+
+
                 StatusText = $"Loading {selectedLeafItems.Count} selected data types...";
                 AddToLog($"Starting to load {selectedLeafItems.Count} data type(s) from release {LatestRelease}");
 
-                // Get map extent
-                Envelope extent = null;
-                await QueuedTask.Run(() =>
-                {
-                    SpatialReference wgs84 = SpatialReferenceBuilder.CreateSpatialReference(4326); // WGS84
+                Envelope extent = await GetLoadExtentAsync();
 
-                    if (UseCurrentMapExtent && MapView.Active != null)
-                    {
-                        Envelope mapExtent = MapView.Active.Extent;
-                        if (mapExtent != null)
-                        {
-                            if (mapExtent.SpatialReference == null || mapExtent.SpatialReference.Wkid != 4326)
-                            {
-                                AddToLog($"Map extent SR is {mapExtent.SpatialReference?.Wkid.ToString() ?? "null"}, projecting to WGS84 (4326).");
-                                try
-                                {
-                                    extent = GeometryEngine.Instance.Project(mapExtent, wgs84) as Envelope;
-                                    if (extent == null)
-                                    {
-                                        AddToLog("Warning: Map extent projection to WGS84 resulted in null. Original extent might be invalid or projection failed.");
-                                        // Attempt to use original extent if projection fails catastrophically, though it might lead to issues.
-                                        // Or, decide to stop if projection is critical. For now, logging and using original as fallback.
-                                        extent = mapExtent; // Fallback to original, though this might be problematic.
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    AddToLog($"Error projecting map extent: {ex.Message}. Using original extent values, which might be incorrect for filtering.");
-                                    System.Diagnostics.Debug.WriteLine($"Error projecting map extent: {ex.Message}");
-                                    extent = mapExtent; // Fallback
-                                }
-                            }
-                            else
-                            {
-                                AddToLog("Map extent is already in WGS84.");
-                                extent = mapExtent;
-                            }
-                            AddToLog($"Using WGS84 extent from map: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
-                            System.Diagnostics.Debug.WriteLine($"WGS84 extent from map: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
-                        }
-                        else
-                        {
-                            AddToLog("Map extent is null.");
-                        }
-                    }
-                    else if (UseCustomExtent && CustomExtent != null) // CustomExtent should already be in WGS84
-                    {
-                        extent = CustomExtent; // Assumes CustomExtent is now always WGS84
-                        AddToLog($"Using custom WGS84 extent: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
-                        System.Diagnostics.Debug.WriteLine($"Using custom WGS84 extent: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
-                    }
-                    else
-                    {
-                        AddToLog("No extent specified or available for filtering.");
-                    }
-                });
-
-                // Check for cancellation
                 if (cancellationToken.IsCancellationRequested)
                 {
                     StatusText = "Operation cancelled";
@@ -1629,59 +1836,15 @@ namespace DuckDBGeoparquet.Views
                     return;
                 }
 
-                // Check if any of the themes already have data in the target location
-                bool existingDataFound = false;
                 string dataPath = DataOutputPath;
-
-                // Check if the folder exists and has theme folders that match selected themes
-                if (Directory.Exists(dataPath))
-                {
-                    foreach (var selectedItem in selectedLeafItems) // Check based on what will be loaded
-                    {
-                        // New path structure: DataOutputPath / {ActualS3Type} / *.parquet
-                        var actualTypeSpecificDataPath = Path.Combine(dataPath, selectedItem.ActualType);
-                        if (Directory.Exists(actualTypeSpecificDataPath) && Directory.EnumerateFiles(actualTypeSpecificDataPath, "*.parquet").Any())
-                        {
-                            existingDataFound = true;
-                            break; // Found data for at least one type, no need to check further
-                        }
-                    }
-                }
-
-                // If existing data is found, confirm with user before overwriting
-                if (existingDataFound)
-                {
-                    var confirmResult = ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
-                        "Existing data found for one or more selected themes. Loading new data will replace the existing files.\n\nDo you want to continue?",
-                        "Replace Existing Data?",
-                        System.Windows.MessageBoxButton.YesNo,
-                        System.Windows.MessageBoxImage.Warning);
-
-                    if (confirmResult == System.Windows.MessageBoxResult.No)
-                    {
-                        StatusText = "Operation cancelled by user";
-                        AddToLog("Operation cancelled - user chose not to replace existing data");
-                        return;
-                    }
-
-                    AddToLog("User confirmed replacing existing data");
-
-                    // Perform bulk folder deletion with progress feedback to prevent UI blocking
-                    StatusText = "Preparing to replace existing data...";
-                    AddToLog("Removing existing layers and deleting theme folders...");
-                    await PerformBulkDataReplacementAsync(selectedLeafItems, dataPath);
-                    AddToLog("Existing data cleanup completed. Beginning new data loading...");
-                }
+                if (!await CheckAndReplaceExistingDataAsync(selectedLeafItems, dataPath))
+                    return;
 
                 int totalDataTypesToProcess = selectedLeafItems.Count;
                 int processedDataTypes = 0;
 
-                // Process each selected leaf item (sub-theme or leaf parent theme)
                 for (int itemIndex = 0; itemIndex < selectedLeafItems.Count; itemIndex++)
                 {
-                    var itemToLoad = selectedLeafItems[itemIndex];
-
-                    // Check for cancellation between items
                     if (cancellationToken.IsCancellationRequested)
                     {
                         StatusText = "Operation cancelled";
@@ -1689,59 +1852,9 @@ namespace DuckDBGeoparquet.Views
                         return;
                     }
 
-                    string parentS3Theme = itemToLoad.ParentThemeForS3;
-                    string actualS3Type = itemToLoad.ActualType;
-                    string itemDisplayName = itemToLoad.DisplayName; // For logging and layer naming
-
-                    // Enhanced status and logging with better visibility
-                    StatusText = $"Processing {itemIndex + 1} of {totalDataTypesToProcess}: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}";
-                    AddToLog($"Processing: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}");
-                    AddToLog($"Data type for S3: theme='{parentS3Theme}', type='{actualS3Type}'");
-                    System.Diagnostics.Debug.WriteLine($"Data type for S3: theme='{parentS3Theme}', type='{actualS3Type}'");
-
-                    string trimmedRelease = LatestRelease?.Trim() ?? "";
-                    string s3Path = trimmedRelease.Length > 0
-                ? $"{S3_BASE_PATH}/{trimmedRelease}/theme={parentS3Theme}/type={actualS3Type}/*.parquet"
-                : $"{S3_BASE_PATH}/theme={parentS3Theme}/type={actualS3Type}/*.parquet";
-
-                    AddToLog($"Loading from S3 path: {s3Path}");
-                    System.Diagnostics.Debug.WriteLine($"Loading from S3 path: {s3Path}");
-
-                    // Add explicit UI yield before heavy operations
-                    await Task.Delay(50); // Allow UI to update
-
-                    // Create a detailed progress reporter for the S3 data loading phase with heartbeat
-                    var ingestProgressReporter = new Progress<string>(status =>
-                    {
-                        StatusText = status;
-                        AddToLog(status);
-                        // Update progress to show activity within current item
-                        var baseProgress = (processedDataTypes * 100.0) / totalDataTypesToProcess;
-                        var ingestProgress = 1.5; // Small increment for S3 loading
-                        ProgressValue = Math.Min(baseProgress + ingestProgress, 98.0);
-                    });
-
-                    // Add heartbeat timer for long-running S3 operations
-                    using var heartbeatCts = new CancellationTokenSource();
-                    var heartbeatTask = StartHeartbeatAsync(itemDisplayName, heartbeatCts.Token);
-
-                    StatusText = $"Loading {itemDisplayName} from S3 (this may take 30-60 seconds)...";
-                    AddToLog($"⏳ Starting S3 data load for {itemDisplayName} - please wait, this operation may take time...");
-
-                    bool ingestSuccess = await _dataProcessor.IngestFileAsync(s3Path, extent, actualS3Type, ingestProgressReporter);
-
-                    // Stop heartbeat
-                    heartbeatCts.Cancel();
-                    try { await heartbeatTask; } catch (OperationCanceledException) { /* Expected */ }
-
-                    if (!ingestSuccess)
-                    {
-                        AddToLog($"❌ Failed to ingest data from {s3Path}");
-                        StatusText = $"Error loading data from {s3Path}";
-                        continue; // Skip to next item
-                    }
-
-                    AddToLog($"✅ Successfully loaded {itemDisplayName} data from S3");
+                    bool success = await LoadAndCreateLayersForItemAsync(
+                        selectedLeafItems[itemIndex], itemIndex, totalDataTypesToProcess,
+                        processedDataTypes, extent, cancellationToken);
 
                     if (cancellationToken.IsCancellationRequested)
                     {
@@ -1750,34 +1863,8 @@ namespace DuckDBGeoparquet.Views
                         return;
                     }
 
-                    // Add UI yield before layer creation
-                    await Task.Delay(50);
-
-                    // Create a feature layer for the loaded data
-                    string featureLayerName = $"{MakeFriendlyName(parentS3Theme)} - {itemDisplayName}";
-                    StatusText = $"Creating layers for {itemDisplayName}...";
-                    AddToLog($"🔄 Creating feature layers for {itemDisplayName}...");
-
-                    var itemProgressReporter = new Progress<string>(status =>
-                    {
-                        StatusText = status;
-                        AddToLog(status);
-                        // Update progress bar with more granular feedback during processing
-                        var baseProgress = (processedDataTypes * 100.0) / totalDataTypesToProcess;
-                        var itemProgress = 3.0; // Small increment for within-item progress
-                        ProgressValue = Math.Min(baseProgress + itemProgress, 99.0); // Don't hit 100 until truly done
-                    });
-
-                    await _dataProcessor.CreateFeatureLayerAsync(featureLayerName, itemProgressReporter, parentS3Theme, actualS3Type, DataOutputPath);
-
-                    processedDataTypes++;
-                    ProgressValue = (processedDataTypes * 100.0) / totalDataTypesToProcess;
-
-                    StatusText = $"✅ Completed {itemDisplayName} ({processedDataTypes}/{totalDataTypesToProcess})";
-                    AddToLog($"✅ Successfully loaded {itemDisplayName} for {MakeFriendlyName(parentS3Theme)}");
-
-                    // Add small delay between items to ensure UI responsiveness
-                    await Task.Delay(100);
+                    if (success)
+                        processedDataTypes++;
                 }
 
                 // Check for cancellation
@@ -1832,6 +1919,8 @@ namespace DuckDBGeoparquet.Views
 
                 StatusText = $"Successfully loaded all selected themes from release {LatestRelease}";
                 AddToLog($"All selected themes loaded successfully");
+                
+                AddToLog("🚀 Data loaded successfully");
                 AddToLog("----------------");
                 if (extent != null)
                 {
@@ -1882,6 +1971,66 @@ namespace DuckDBGeoparquet.Views
             }
         }
 
+        private string ResolveDataFolder()
+        {
+            if (UsePreviouslyLoadedData && !string.IsNullOrEmpty(_lastLoadedDataPath))
+            {
+                AddToLog($"Using previously loaded data from: {_lastLoadedDataPath}");
+                return _lastLoadedDataPath;
+            }
+
+            if (UseCustomDataFolder && !string.IsNullOrEmpty(CustomDataFolderPath))
+            {
+                AddToLog($"Using custom data folder: {CustomDataFolderPath}");
+                return CustomDataFolderPath;
+            }
+
+            StatusText = "Error: No valid data folder specified";
+            AddToLog("ERROR: No valid data folder specified for MFC creation");
+            return null;
+        }
+
+        private bool ValidateDataFolder(string dataFolder)
+        {
+            if (!Directory.Exists(dataFolder))
+            {
+                AddToLog($"ERROR: Data folder does not exist: {dataFolder}");
+                StatusText = "Error creating Multifile Feature Connection - data folder not found";
+                return false;
+            }
+
+            int fileCount = Directory.GetFiles(dataFolder, "*.parquet", SearchOption.AllDirectories).Length;
+            AddToLog($"Found {fileCount} parquet files in data folder");
+
+            if (fileCount == 0)
+            {
+                var themeFolders = Directory.GetDirectories(dataFolder);
+                AddToLog($"Found {themeFolders.Length} theme folders in {dataFolder}");
+
+                foreach (var folder in themeFolders)
+                {
+                    AddToLog($"Theme folder: {Path.GetFileName(folder)}");
+                    var typeFolders = Directory.GetDirectories(folder);
+                    AddToLog($"  Contains {typeFolders.Length} type folders");
+
+                    foreach (var typeFolder in typeFolders)
+                    {
+                        var filesInType = Directory.GetFiles(typeFolder, "*.parquet");
+                        AddToLog($"  Type folder {Path.GetFileName(typeFolder)} contains {filesInType.Length} parquet files");
+                    }
+                }
+
+                if (fileCount == 0)
+                {
+                    AddToLog("No data files were found in the specified folder. Cannot create MFC.");
+                    StatusText = "Error creating Multifile Feature Connection - no data files found";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private async Task CreateMfcAsync()
         {
             try
@@ -1898,27 +2047,10 @@ namespace DuckDBGeoparquet.Views
                 AddToLog("Setting up Multifile Feature Connection for data");
                 ProgressValue = 0;
 
-                // Determine the data source folder
-                string dataFolder;
-
-                if (UsePreviouslyLoadedData && !string.IsNullOrEmpty(_lastLoadedDataPath))
-                {
-                    dataFolder = _lastLoadedDataPath;
-                    AddToLog($"Using previously loaded data from: {dataFolder}");
-                }
-                else if (UseCustomDataFolder && !string.IsNullOrEmpty(CustomDataFolderPath))
-                {
-                    dataFolder = CustomDataFolderPath;
-                    AddToLog($"Using custom data folder: {dataFolder}");
-                }
-                else
-                {
-                    StatusText = "Error: No valid data folder specified";
-                    AddToLog("ERROR: No valid data folder specified for MFC creation");
+                string dataFolder = ResolveDataFolder();
+                if (dataFolder == null)
                     return;
-                }
 
-                // Ensure connection folder exists
                 string connectionFolder = MfcOutputPath;
                 if (!Directory.Exists(connectionFolder))
                 {
@@ -1926,54 +2058,9 @@ namespace DuckDBGeoparquet.Views
                     Directory.CreateDirectory(connectionFolder);
                 }
 
-                // Check if data folder exists and has content
-                if (!Directory.Exists(dataFolder))
-                {
-                    AddToLog($"ERROR: Data folder does not exist: {dataFolder}");
-                    StatusText = "Error creating Multifile Feature Connection - data folder not found";
+                if (!ValidateDataFolder(dataFolder))
                     return;
-                }
 
-                // Check for cancellation
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    StatusText = "Operation cancelled";
-                    AddToLog("Operation was cancelled during MFC preparation");
-                    return;
-                }
-
-                // Do a sanity check on the data folder contents
-                int fileCount = Directory.GetFiles(dataFolder, "*.parquet", SearchOption.AllDirectories).Length;
-                AddToLog($"Found {fileCount} parquet files in data folder");
-
-                if (fileCount == 0)
-                {
-                    // Check if theme folders were created
-                    var themeFolders = Directory.GetDirectories(dataFolder);
-                    AddToLog($"Found {themeFolders.Length} theme folders in {dataFolder}");
-
-                    foreach (var folder in themeFolders)
-                    {
-                        AddToLog($"Theme folder: {Path.GetFileName(folder)}");
-                        var typeFolders = Directory.GetDirectories(folder);
-                        AddToLog($"  Contains {typeFolders.Length} type folders");
-
-                        foreach (var typeFolder in typeFolders)
-                        {
-                            var filesInType = Directory.GetFiles(typeFolder, "*.parquet");
-                            AddToLog($"  Type folder {Path.GetFileName(typeFolder)} contains {filesInType.Length} parquet files");
-                        }
-                    }
-
-                    if (fileCount == 0)
-                    {
-                        AddToLog("No data files were found in the specified folder. Cannot create MFC.");
-                        StatusText = "Error creating Multifile Feature Connection - no data files found";
-                        return;
-                    }
-                }
-
-                // Check for cancellation
                 if (cancellationToken.IsCancellationRequested)
                 {
                     StatusText = "Operation cancelled";
@@ -2103,16 +2190,12 @@ namespace DuckDBGeoparquet.Views
         /// </summary>
         internal static void Show()
         {
-            var pane = FrameworkApplication.DockPaneManager.Find(_dockPaneID);
+            var pane = FrameworkApplication.DockPaneManager.Find(_dockPaneID) as WizardDockpaneViewModel;
             if (pane == null)
                 return;
 
-            // Reset the state when showing the dockpane
-            if (pane is WizardDockpaneViewModel viewModel)
-            {
-                viewModel.ResetState();
-            }
-
+            pane.ResetState();
+            pane.SelectedTabIndex = 0;
             pane.Activate();
         }
 
@@ -2262,6 +2345,8 @@ namespace DuckDBGeoparquet.Views
             ProgressValue = 0;
             StatusText = "Ready to load Overture Maps data";
 
+
+
             // Clear log but keep initialization messages
             LogOutput = new();
             LogOutput.AppendLine("Initialization complete. Ready for a new query.");
@@ -2280,7 +2365,6 @@ namespace DuckDBGeoparquet.Views
 
         private void ShowCreateMfcTab()
         {
-            // Navigate to the Create MFC tab (index 2)
             SelectedTabIndex = 2;
             StatusText = "Ready to create Multifile Feature Connection";
             AddToLog("Create MFC tab activated");
@@ -2494,6 +2578,73 @@ namespace DuckDBGeoparquet.Views
                 leafItems.AddRange(themeItem.SubItems);
             }
             return leafItems.Distinct().ToList(); // Ensure distinct if structure could somehow allow duplicates
+        }
+
+        /// <summary>
+        /// Refreshes cache information display
+        /// </summary>
+        private void RefreshCacheInfo()
+        {
+            try
+            {
+                CacheLocation = CacheManager.GetCacheDirectory();
+                CacheSize = CacheManager.GetCacheSizeString();
+                CacheFileCount = CacheManager.GetCacheFileCount();
+                System.Diagnostics.Debug.WriteLine($"Cache info refreshed: {CacheLocation}, {CacheSize}, {CacheFileCount} files");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error refreshing cache info: {ex.Message}");
+                CacheLocation = "Error retrieving cache location";
+                CacheSize = "Unknown";
+                CacheFileCount = 0;
+            }
+        }
+
+        /// <summary>
+        /// Clears the Parquet cache
+        /// </summary>
+        private void ClearCache()
+        {
+            try
+            {
+                var result = ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                    $"This will delete all cached Parquet files ({CacheSize}).\n\nThis action cannot be undone. Continue?",
+                    "Clear Parquet Cache",
+                    System.Windows.MessageBoxButton.YesNo,
+                    System.Windows.MessageBoxImage.Warning);
+
+                if (result == System.Windows.MessageBoxResult.Yes)
+                {
+                    bool success = CacheManager.ClearCache();
+                    if (success)
+                    {
+                        RefreshCacheInfo();
+                        ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                            "Cache cleared successfully.",
+                            "Cache Cleared",
+                            System.Windows.MessageBoxButton.OK,
+                            System.Windows.MessageBoxImage.Information);
+                    }
+                    else
+                    {
+                        ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                            "Failed to clear cache. Some files may be in use by ArcGIS Pro.",
+                            "Clear Cache Failed",
+                            System.Windows.MessageBoxButton.OK,
+                            System.Windows.MessageBoxImage.Warning);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error clearing cache: {ex.Message}");
+                ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                    $"Error clearing cache: {ex.Message}",
+                    "Error",
+                    System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Error);
+            }
         }
     }
 }

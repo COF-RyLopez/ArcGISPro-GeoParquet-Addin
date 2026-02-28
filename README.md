@@ -27,7 +27,7 @@ Watch the add-in in action loading Overture Maps data with incredible performanc
 
 ## Requirements
 
-- **ArcGIS Pro**: Version 3.5 or later
+- **ArcGIS Pro**: Version 3.5 or later (3.6+ recommended for enhanced features)
 - **.NET SDK**: Version 8.0 or later
 - **Storage**: Minimum 4GB free disk space for temporary data
 - **Memory**: Minimum 8GB RAM (16GB recommended for large datasets)
@@ -165,6 +165,22 @@ The add-in maintains detailed logs that can help diagnose issues:
 - Review system logs for DuckDB-related errors
 - Optimized logging reduces noise while preserving essential debugging information
 
+### Cache Management (ArcGIS Pro 3.6+)
+
+ArcGIS Pro 3.6 automatically caches Parquet files with fewer than 500,000 records for faster access. The add-in includes a Cache Management tab that allows you to:
+- View cache location and size
+- Monitor cached file count
+- Clear cached files when needed
+
+**Cache Location:**
+- Pro 3.5: `%LOCALAPPDATA%\Esri\ArcGISPro\Cache\Parquet`
+- Pro 3.6: `%LOCALAPPDATA%\Esri\ArcGISPro\Cache\Parquet` (location may vary by configuration)
+
+To access cache management:
+1. Open the Overture Maps Data Loader dockpane
+2. Navigate to the "Cache Management" tab (Pro 3.6+ only)
+3. View cache information or clear cached files as needed
+
 ## Recent Improvements
 
 📦 **Latest Release**: See [GitHub Releases](https://github.com/COF-RyLopez/ArcGISPro-GeoParquet-Addin/releases) for complete release notes and changelog.
@@ -172,11 +188,15 @@ The add-in maintains detailed logs that can help diagnose issues:
 Release notes are automatically generated from git commits, ensuring you always have the most up-to-date information about what's new in each version.
 
 ### Key Recent Features
+- **ArcGIS Pro 3.6 Support**: Enhanced features for Pro 3.6 including cache management and compression options
+- **Compression Selection**: Choose between ZSTD (recommended), SNAPPY, or GZIP compression formats
+- **Cache Management**: View and manage Parquet cache for Pro 3.6+ users
+- **Backward Compatibility**: Maintains full support for ArcGIS Pro 3.5
 - **Automated Releases**: Fully automated CI/CD pipeline for seamless version management
 - **ArcGIS Online Publishing**: Automatic publishing to ArcGIS Marketplace with each release
 - **Performance Optimizations**: 5-15% faster processing through optimized file operations
 - **Smart Dataset Handling**: Automatically skips empty datasets for faster processing
-- **Native GeoParquet**: Fully utilizes ArcGIS Pro 3.5's built-in GeoParquet support
+- **Native GeoParquet**: Fully utilizes ArcGIS Pro's built-in GeoParquet support
 
 ## Contributing
 
