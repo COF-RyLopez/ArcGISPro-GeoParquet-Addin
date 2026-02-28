@@ -22,7 +22,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\DuckDBGeoparquet.csproj" />
+    <ProjectReference Include="..\DuckDBGeoparquet.csproj">
+      <GlobalPropertiesToRemove>GenerateProgramFile</GlobalPropertiesToRemove>
+    </ProjectReference>
   </ItemGroup>
 
 </Project>
