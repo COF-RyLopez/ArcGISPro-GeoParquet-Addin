@@ -50,10 +50,17 @@ jobs:
     - name: Build solution with MSBuild
       run: msbuild DuckDBGeoparquet.sln /p:Configuration=Release /p:Platform="Any CPU"
 
+    - name: Restore NuGet packages for Test Project
+      run: nuget restore DuckDBGeoparquet.Tests/DuckDBGeoparquet.Tests.csproj -PackagesDirectory packages
+
+    - name: Build Test Project
+      run: msbuild DuckDBGeoparquet.Tests/DuckDBGeoparquet.Tests.csproj /p:Configuration=Release /p:Platform="Any CPU"
+
     - name: Run Unit Tests
       run: |
         echo "Running tests..."
-        dotnet test DuckDBGeoparquet.Tests/DuckDBGeoparquet.Tests.csproj --verbosity normal
+        dotnet test DuckDBGeoparquet.Tests/bin/Release/net8.0-windows/DuckDBGeoparquet.Tests.dll --verbosity normal
+
 
 
 
