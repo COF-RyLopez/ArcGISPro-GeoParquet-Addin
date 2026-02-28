@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="DuckDBGeoparquet.Views.WizardDockpaneView"
+<UserControl x:Class="DuckDBGeoparquet.Views.WizardDockpaneView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
@@ -49,7 +49,7 @@
         <!-- Main content area with TabControl -->
         <TabControl Grid.Row="1" Margin="0,8,0,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
             <!-- Select Data Tab -->
-            <TabItem Header="Select Data" Visibility="{Binding IsSelectDataTabVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <TabItem Header="Select Data">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="16,12,16,12" Orientation="Vertical" >
                         <!-- 1. Choose Themes -->
@@ -140,6 +140,19 @@
                                     <TextBox Grid.Column="1" Text="{Binding DataOutputPath}" VerticalAlignment="Center" IsReadOnly="True" Margin="0,0,4,0" Style="{DynamicResource Esri_TextBox}"/>
                                     <Button Grid.Column="2" Content="Browse..." Style="{DynamicResource Esri_Button}" Command="{Binding BrowseDataLocationCommand}" Width="70"/>
                                 </Grid>
+                                <Grid Margin="0,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Compression:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <ComboBox Grid.Column="1" ItemsSource="{Binding CompressionOptions}" SelectedItem="{Binding SelectedCompression}" Style="{DynamicResource Esri_ComboBox}" VerticalAlignment="Center"/>
+                                </Grid>
+                                <TextBlock TextWrapping="Wrap" Margin="0,2,0,0" Style="{DynamicResource Esri_TextBlockSmall}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+                                    <Run Text="ZSTD: Best compression ratio (recommended). "/>
+                                    <Run Text="SNAPPY: Fast compression, larger files. "/>
+                                    <Run Text="GZIP: Good balance of speed and size."/>
+                                </TextBlock>
                             </StackPanel>
                         </Border>
                         <!-- Selected Themes Preview -->
@@ -202,7 +215,7 @@
                 </ScrollViewer>
             </TabItem>
             <!-- Status Tab (index 1) -->
-            <TabItem Header="Status" Visibility="{Binding IsStatusTabVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <TabItem Header="Status">
                 <StackPanel Margin="16,12,16,12">
                     <TextBlock Text="Operation Progress" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,4"/>
                     <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
@@ -235,179 +248,8 @@
                     </StackPanel>
                 </StackPanel>
             </TabItem>
-            <!-- Feature Service Tab (index 2) -->
-            <TabItem Header="Feature Service" Visibility="{Binding IsFeatureServiceTabVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="16,12,16,12" Orientation="Vertical">
-                        <TextBlock Text="DuckDB Feature Service Bridge" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,12"/>
-
-                        <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
-                                BorderBrush="{DynamicResource Esri_BorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="2"
-                                Padding="8"
-                                Margin="0,0,0,12">
-                                                           <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
-                                   The Multi-Layer Feature Service Bridge creates a local HTTP server with viewport-based DuckDB caching. Only data visible in your current map view is loaded into memory, just like the existing data loader functionality.
-                                   <LineBreak/><LineBreak/>
-                                   <Bold>⚡ VIEWPORT-BASED IN-MEMORY WORKFLOW:</Bold>
-                                   <LineBreak/>
-                                   1. <Bold>START:</Bold> Click "Start Feature Service" - loads current viewport data into memory
-                                   <LineBreak/>
-                                   2. <Bold>CONNECT:</Bold> Add the service URL to ArcGIS Pro as a Feature Service
-                                   <LineBreak/>
-                                   3. <Bold>SELECT:</Bold> Choose which layers to display (Places, Buildings, Addresses, etc.)
-                                   <LineBreak/>
-                                   4. <Bold>EXPLORE:</Bold> Pan/zoom in current area → instant responses from viewport cache!
-                                   <LineBreak/><LineBreak/>
-                                   <Bold>🎯 Only your current map viewport cached - minimal memory usage!</Bold>
-                               </TextBlock>
-                        </Border>
-
-                        <!-- Performance Info -->
-                        <Border Background="#D4EDDA" BorderBrush="#C3E6CB" BorderThickness="1" 
-                                CornerRadius="4" Padding="8" Margin="0,0,0,12">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="⚡" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                <TextBlock TextWrapping="Wrap" VerticalAlignment="Center" Foreground="#155724">
-                                    <Bold>Viewport-Based Cache:</Bold> Loads only data for your current map view into memory - minimal memory usage like existing data loader!
-                                </TextBlock>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Feature Service Controls -->
-                        <TextBlock Text="Service Controls" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
-                        <Border 
-                                BorderBrush="{DynamicResource Esri_BorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="2"
-                                Padding="8"
-                                Margin="0,0,0,12">
-                            <StackPanel>
-                                <!-- Service Status -->
-                                <Grid Margin="0,0,0,8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="Status:" FontWeight="SemiBold" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="1" Text="{Binding FeatureServiceStatusText}" VerticalAlignment="Center" 
-                                               Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
-                                </Grid>
-
-                                <!-- Service URL (when running) -->
-                                <Grid Margin="0,0,0,8" Visibility="{Binding IsFeatureServiceRunning, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="Service URL:" FontWeight="SemiBold" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                    <TextBox Grid.Column="1" Text="{Binding FeatureServiceUrl}" IsReadOnly="True" 
-                                             VerticalAlignment="Center" Margin="0,0,4,0" Style="{DynamicResource Esri_TextBox}"/>
-                                    <Button Grid.Column="2" Content="Copy" Width="50" Height="24" 
-                                            Command="{Binding CopyFeatureServiceUrlCommand}" Style="{DynamicResource Esri_Button}"/>
-                                </Grid>
-
-                                <!-- Cloud-Native Status Info -->
-                                <Border Background="#D1ECF1" BorderBrush="#BEE5EB" BorderThickness="1" 
-                                        CornerRadius="4" Padding="8" Margin="0,0,0,8">
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="☁️" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                        <TextBlock TextWrapping="Wrap" VerticalAlignment="Center" Foreground="#0C5460">
-                                            <Bold>Cloud-Native Ready!</Bold> Service queries live S3 data on-demand - no local storage required.
-                                        </TextBlock>
-                                    </StackPanel>
-                                </Border>
-
-                                <!-- AOI-first toggle -->
-                                <StackPanel Orientation="Horizontal" Margin="0,4,0,4">
-                                    <CheckBox Content="Require AOI before starting" IsChecked="{Binding RequireAoiBeforeStart}"/>
-                                </StackPanel>
-
-                                <!-- Control Button -->
-                                <Button Content="{Binding ToggleFeatureServiceButtonText}" 
-                                        Command="{Binding ToggleFeatureServiceCommand}" 
-                                        HorizontalAlignment="Left" 
-                                        Width="150"
-                                        Style="{DynamicResource Esri_ButtonBlue}" 
-                                        Margin="0,8,0,0"
-                                        IsEnabled="{Binding CanToggleFeatureService}"/>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- AOI Search and Lock-In -->
-                        <TextBlock Text="Area of Interest (AOI)" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
-                        <Border 
-                                BorderBrush="{DynamicResource Esri_BorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="2"
-                                Padding="8"
-                                Margin="0,0,0,12">
-                            <StackPanel>
-                                <TextBlock Text="Search Divisions (e.g., county, state, country):" Margin="0,0,0,6"/>
-                                <DockPanel>
-                                    <TextBox x:Name="AoiSearchBox" Text="{Binding AoiQuery, UpdateSourceTrigger=PropertyChanged}" Width="260" Style="{DynamicResource Esri_TextBox}"/>
-                                    <Button Content="Search" Command="{Binding AoiSearchCommand}" Margin="8,0,0,0" Style="{DynamicResource Esri_Button}"/>
-                                </DockPanel>
-                                <ListBox ItemsSource="{Binding AoiResults}" SelectedItem="{Binding SelectedAoi}" Height="140" Margin="0,6,0,6">
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <StackPanel>
-                                                <TextBlock Text="{Binding name}" FontWeight="SemiBold"/>
-                                                <TextBlock Text="{Binding adminLevel}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
-                                            </StackPanel>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                                <StackPanel Orientation="Horizontal">
-                                    <Button Content="Set AOI" Command="{Binding AoiSetCommand}" Width="90" Style="{DynamicResource Esri_ButtonBlue}"/>
-                                    <Button Content="Clear AOI" Command="{Binding AoiClearCommand}" Margin="8,0,0,0" Width="90" Style="{DynamicResource Esri_Button}"/>
-                                </StackPanel>
-                                <TextBlock Text="{Binding AoiStatus}" Margin="0,6,0,0" Foreground="{DynamicResource Esri_TextCaptionActiveBrush}"/>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Usage Instructions -->
-                        <TextBlock Text="Usage Instructions" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
-                        <Border 
-                                BorderBrush="{DynamicResource Esri_BorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="2"
-                                Padding="8"
-                                Margin="0,0,0,12">
-                            <StackPanel>
-                                <TextBlock Text="Adding Cloud Feature Service to ArcGIS Pro:" FontWeight="SemiBold" Margin="0,0,0,4"/>
-                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
-                                    1. In ArcGIS Pro, go to the Catalog pane
-                                    <LineBreak/>
-                                    2. Right-click on "Servers" → "New ArcGIS Server"
-                                    <LineBreak/>
-                                    3. Choose "Use GIS Services" 
-                                    <LineBreak/>
-                                    4. Enter the Service URL shown above when the service is running
-                                    <LineBreak/>
-                                    5. Browse the available layers and add them to your map
-                                    <LineBreak/>
-                                    6. Zoom/pan to your area of interest - data loads on-demand from S3!
-                                </TextBlock>
-                                
-                                <TextBlock Text="How It Works:" FontWeight="SemiBold" Margin="0,8,0,4"/>
-                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,0" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
-                                    • Live Queries: Pro sends your map extent to the service
-                                    <LineBreak/>
-                                    • S3 Data: Service queries Overture Maps data directly from cloud storage
-                                    <LineBreak/>
-                                    • Real-time: Data streams in as you navigate - no local files needed!
-                                </TextBlock>
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </ScrollViewer>
-            </TabItem>
-            
             <!-- Create MFC Tab -->
-            <TabItem Header="Create MFC" Visibility="{Binding IsCreateMfcTabVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <TabItem Header="Create MFC">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="16,12,16,12" Orientation="Vertical">
                         <TextBlock Text="Create Multifile Feature Connection" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,12"/>
@@ -468,6 +310,80 @@
 
                                 <!-- Action Button -->
                                 <Button Content="Create Multifile Feature Connection" Command="{Binding CreateMfcCommand}" HorizontalAlignment="Left" Margin="0,15,0,0" Style="{DynamicResource Esri_Button}"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            
+            <!-- Cache Management Tab (Pro 3.6+) -->
+            <TabItem Header="Cache Management" Visibility="{Binding IsCacheManagementTabVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="16,12,16,12" Orientation="Vertical">
+                        <TextBlock Text="Parquet Cache Management" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,12"/>
+                        
+                        <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
+                                ArcGIS Pro 3.6 automatically caches Parquet files with fewer than 500,000 records for faster access. 
+                                This panel allows you to view cache information and clear cached files when needed.
+                                <LineBreak/><LineBreak/>
+                                <Bold>Note:</Bold> Clearing the cache will require Pro to rebuild caches on next access, which may slow down initial loading.
+                            </TextBlock>
+                        </Border>
+
+                        <TextBlock Text="Cache Information" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <Grid Margin="0,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Cache Location:" FontWeight="SemiBold" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                    <TextBox Grid.Column="1" Text="{Binding CacheLocation}" IsReadOnly="True" Style="{DynamicResource Esri_TextBox}" VerticalAlignment="Center"/>
+                                </Grid>
+                                <Grid Margin="0,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Cache Size:" FontWeight="SemiBold" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding CacheSize}" VerticalAlignment="Center" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
+                                </Grid>
+                                <Grid Margin="0,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Cached Files:" FontWeight="SemiBold" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding CacheFileCount, StringFormat='{}{0} files'}" VerticalAlignment="Center" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
+                                </Grid>
+                                <Button Content="Refresh Cache Info" Command="{Binding RefreshCacheInfoCommand}" HorizontalAlignment="Left" Margin="0,8,0,0" Style="{DynamicResource Esri_Button}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="Cache Actions" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
+                                    Clear all cached Parquet files. This will free up disk space but may slow down initial access to previously cached files.
+                                </TextBlock>
+                                <Button Content="Clear Cache" Command="{Binding ClearCacheCommand}" HorizontalAlignment="Left" Style="{DynamicResource Esri_Button}" Width="120"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>

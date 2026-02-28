@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -399,14 +399,8 @@ namespace DuckDBGeoparquet.Services
                         string datasetName = new DirectoryInfo(dirPath).Name;
                         logAction($"Processing dataset: {datasetName}");
 
-                        string detectedGeometryType = null;
-                        string detectedWkid = "4326"; // Default SRID
-                        bool geometryColumnExistsInSchema = false;
-                        // Keep track of field names we've added to avoid duplicates if Parquet has both struct and flattened
-                        HashSet<string> addedFieldNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
                         var parquetFiles = Directory.GetFiles(dirPath, "*.parquet")
-                                            .OrderBy(f => f) // Consistent order
+                                            .OrderBy(f => f)
                                             .ToList();
 
                         if (!parquetFiles.Any())
@@ -425,230 +419,11 @@ namespace DuckDBGeoparquet.Services
                             FieldsList = new List<MfcField>()
                         };
 
-                        var columns = new List<MfcField>();
-
+                        bool geometryColumnExistsInSchema = false;
                         try
                         {
-                            using (var schemaCmd = duckDBConnection.CreateCommand())
-                            {
-                                schemaCmd.CommandText = $"DESCRIBE SELECT * FROM read_parquet('{firstParquetFileForSchema.Replace("'", "''")}') LIMIT 0;";
-                                using (var reader = await schemaCmd.ExecuteReaderAsync())
-                                {
-                                    var tempFieldList = new List<Tuple<string, string>>();
-                                    while (await reader.ReadAsync())
-                                    {
-                                        string colName = reader.GetString(0);
-                                        string colType = reader.GetString(1).ToUpper();
-                                        tempFieldList.Add(Tuple.Create(colName, colType));
-                                    }
-
-                                    foreach (var fieldTuple in tempFieldList)
-                                    {
-                                        string columnName = fieldTuple.Item1;
-                                        string duckDbType = fieldTuple.Item2;
-
-                                        logAction($"MFC Generation: Dataset '{datasetName}' - Schema Column: '{columnName}', DuckDB Type: '{duckDbType}'");
-
-                                        if (columnName.StartsWith("__duckdb_internal")) continue;
-
-                                        // Apply Exclusions
-                                        if (FieldExclusionMap.TryGetValue(datasetName, out var exclusions) && exclusions.Contains(columnName))
-                                        {
-                                            logAction($"MFC Generation: Excluding field '{columnName}' for dataset '{datasetName}' as per exclusion rules.");
-                                            continue;
-                                        }
-
-                                        // Apply Renames
-                                        if (FieldRenameMap.TryGetValue(datasetName, out var renames) && renames.TryGetValue(columnName, out var newName))
-                                        {
-                                            logAction($"MFC Generation: Renaming field '{columnName}' to '{newName}' for dataset '{datasetName}'.");
-                                            columnName = newName;
-                                        }
-
-                                        var knownBooleanFields = new HashSet<string> {
-                                            "has_parts", "is_underground", "is_land", "is_territorial", "is_salt", "is_intermittent"
-                                        };
-                                        string mfcType;
-                                        string sourceType = null;
-
-                                        if (columnName.ToLower() == GEOMETRY_COLUMN.ToLower())
-                                        {
-                                            geometryColumnExistsInSchema = true;
-                                            // Add geometry to main fields list without "visible: false"
-                                            if (addedFieldNames.Add(columnName))
-                                            {
-                                                columns.Add(new MfcField(columnName, "Binary"));
-                                            }
-                                            logAction($"MFC Generation: Found '{GEOMETRY_COLUMN}' field for '{datasetName}'. Will be added to main field list.");
-                                            continue;
-                                        }
-
-                                        // Handle specific bbox_xmin, etc. fields if they exist directly
-                                        if (columnName.ToLower() == "bbox_xmin" || columnName.ToLower() == "bbox_xmax" ||
-                                            columnName.ToLower() == "bbox_ymin" || columnName.ToLower() == "bbox_ymax")
-                                        {
-                                            if (addedFieldNames.Add(columnName))
-                                            {
-                                                columns.Add(new MfcField(columnName, "Float32"));
-                                            }
-                                            continue;
-                                        }
-
-                                        // If we encounter a 'bbox' struct, we IGNORE it for the main field list.
-                                        // The individual bbox_xmin, etc., fields will be added ensured later.
-                                        if (columnName.ToLower() == "bbox")
-                                        {
-                                            logAction($"MFC Generation: Encountered 'bbox' struct for dataset '{datasetName}'. It will be skipped in main field list. Flattened versions will be ensured.");
-                                            continue;
-                                        }
-
-                                        if ((columnName.ToLower() == "names" || columnName.ToLower() == "categories") && duckDbType.StartsWith("STRUCT"))
-                                        {
-                                            string primaryFieldName = $"{columnName}_primary";
-                                            if (addedFieldNames.Add(primaryFieldName))
-                                            {
-                                                columns.Add(new MfcField(primaryFieldName, "String"));
-                                            }
-                                            continue;
-                                        }
-
-                                        if (columnName.ToLower() == "cartography" && duckDbType.StartsWith("STRUCT"))
-                                        {
-                                            var cartoSubFields = new Dictionary<string, string>
-                                            {
-                                                { "prominence", "Int32" }, { "min_zoom", "Int32" },
-                                                { "max_zoom", "Int32" }, { "sort_key", "Int32" }
-                                            };
-                                            foreach (var subField in cartoSubFields)
-                                            {
-                                                string fullSubFieldName = $"cartography_{subField.Key}";
-                                                if (addedFieldNames.Add(fullSubFieldName))
-                                                {
-                                                    columns.Add(new MfcField(fullSubFieldName, subField.Value));
-                                                }
-                                            }
-                                            continue;
-                                        }
-
-                                        mfcType = ConvertDuckDbTypeToMfcType(duckDbType, columnName, logAction);
-                                        if (knownBooleanFields.Contains(columnName.ToLower()))
-                                        {
-                                            mfcType = "String";
-                                            sourceType = "Boolean";
-                                        }
-
-                                        if (addedFieldNames.Add(columnName))
-                                        {
-                                            columns.Add(new MfcField(columnName, mfcType, null, sourceType));
-                                        }
-                                    }
-                                }
-
-                                // Ensure the four specific bbox fields are present
-                                string[] requiredBboxFields = { "bbox_xmin", "bbox_xmax", "bbox_ymin", "bbox_ymax" };
-                                foreach (var bboxField in requiredBboxFields)
-                                {
-                                    if (addedFieldNames.Add(bboxField)) // If not already added (e.g., directly from Parquet schema)
-                                    {
-                                        columns.Add(new MfcField(bboxField, "Float32"));
-                                        logAction($"MFC Generation: Ensured '{bboxField}' (Float32) is added to dataset '{datasetName}'.");
-                                    }
-                                }
-
-                                // For 'place' dataset, ensure brand_wikidata and brand_names_primary exist
-                                if (datasetName.Equals("place", StringComparison.OrdinalIgnoreCase))
-                                {
-                                    if (addedFieldNames.Add("brand_wikidata"))
-                                    {
-                                        columns.Add(new MfcField("brand_wikidata", "String"));
-                                        logAction($"MFC Generation: Ensured 'brand_wikidata' (String) is added to dataset 'place'.");
-                                    }
-                                    if (addedFieldNames.Add("brand_names_primary"))
-                                    {
-                                        columns.Add(new MfcField("brand_names_primary", "String"));
-                                        logAction($"MFC Generation: Ensured 'brand_names_primary' (String) is added to dataset 'place'.");
-                                    }
-                                }
-
-                                // Reorder fields based on DatasetFieldOrder or default if not specified
-                                List<MfcField> finalOrderedFieldsList;
-                                if (DatasetFieldOrder.TryGetValue(datasetName, out var specificOrder))
-                                {
-                                    finalOrderedFieldsList = new List<MfcField>();
-                                    var availableFields = columns.ToDictionary(f => f.Name, f => f, StringComparer.OrdinalIgnoreCase);
-
-                                    // Add fields according to specificOrder
-                                    foreach (var fieldNameInOrder in specificOrder)
-                                    {
-                                        if (availableFields.TryGetValue(fieldNameInOrder, out var field))
-                                        {
-                                            finalOrderedFieldsList.Add(field);
-                                            availableFields.Remove(fieldNameInOrder);
-                                        }
-                                        else
-                                        {
-                                            logAction($"Warning: Field '{fieldNameInOrder}' specified in order for dataset '{datasetName}' was not found in available fields. It might be excluded, not present in Parquet, or not yet handled (e.g. complex structs).");
-                                        }
-                                    }
-
-                                    // Add any remaining fields from 'columns' that were not in specificOrder.
-                                    // These are fields present in the Parquet but not in the target MFC's defined order.
-                                    // They will be added alphabetically, with 'geometry' (if remaining and not in specificOrder) last among them.
-                                    var stillAvailableFields = availableFields.Values.ToList();
-                                    MfcField geomFieldFromAvailable = stillAvailableFields.FirstOrDefault(f => f.Name.Equals(GEOMETRY_COLUMN, StringComparison.OrdinalIgnoreCase));
-
-                                    foreach (var field in stillAvailableFields
-                                        .Where(f => !f.Name.Equals(GEOMETRY_COLUMN, StringComparison.OrdinalIgnoreCase))
-                                        .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase))
-                                    {
-                                        finalOrderedFieldsList.Add(field);
-                                        logAction($"MFC Generation: Adding field '{field.Name}' to dataset '{datasetName}' (was in Parquet but not in specific order).");
-                                    }
-
-                                    // Add geometry field if it was in availableFields and not already added by specificOrder
-                                    if (geomFieldFromAvailable != null && !specificOrder.Contains(GEOMETRY_COLUMN, StringComparer.OrdinalIgnoreCase))
-                                    {
-                                        finalOrderedFieldsList.Add(geomFieldFromAvailable);
-                                        logAction($"MFC Generation: Adding field '{GEOMETRY_COLUMN}' to dataset '{datasetName}' (was in Parquet but not in specific order, placed last among extras).");
-                                    }
-                                }
-                                else
-                                {
-                                    // Reorder fields: id, bbox_*, other fields alphabetically, geometry
-                                    var defaultOrderedFields = new List<MfcField>();
-                                    MfcField idField = columns.FirstOrDefault(f => f.Name.Equals("id", StringComparison.OrdinalIgnoreCase));
-                                    if (idField != null)
-                                    {
-                                        defaultOrderedFields.Add(idField);
-                                        columns.Remove(idField); // Remove to avoid re-adding
-                                    }
-
-                                    var bboxMfcFieldsSource = columns.Where(f => f.Name.StartsWith("bbox_", StringComparison.OrdinalIgnoreCase)).ToList();
-                                    var bboxOrderedFields = new List<MfcField>();
-                                    foreach (string bboxName in new[] { "bbox_xmin", "bbox_xmax", "bbox_ymin", "bbox_ymax" })
-                                    {
-                                        MfcField field = bboxMfcFieldsSource.FirstOrDefault(f => f.Name.Equals(bboxName, StringComparison.OrdinalIgnoreCase));
-                                        if (field != null)
-                                        {
-                                            bboxOrderedFields.Add(field);
-                                            columns.Remove(field); // Remove from original list to avoid re-adding
-                                        }
-                                    }
-                                    defaultOrderedFields.AddRange(bboxOrderedFields);
-
-                                    MfcField geomField = columns.FirstOrDefault(f => f.Name.Equals(GEOMETRY_COLUMN, StringComparison.OrdinalIgnoreCase));
-                                    if (geomField != null) columns.Remove(geomField); // Remove to add last
-
-                                    var otherFields = columns.OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ToList(); // Alphabetical for others
-                                    defaultOrderedFields.AddRange(otherFields);
-
-                                    if (geomField != null) defaultOrderedFields.Add(geomField); // Add geometry last
-
-                                    finalOrderedFieldsList = defaultOrderedFields; // Assign the result of default ordering
-                                }
-
-                                dataset.FieldsList = finalOrderedFieldsList;
-                            }
+                            var rawColumns = await DiscoverSchemaAsync(duckDBConnection, firstParquetFileForSchema, logAction);
+                            dataset.FieldsList = BuildFieldList(rawColumns, datasetName, GEOMETRY_COLUMN, logAction, out geometryColumnExistsInSchema);
                         }
                         catch (Exception ex)
                         {
@@ -656,67 +431,14 @@ namespace DuckDBGeoparquet.Services
                             continue;
                         }
 
+                        string detectedGeometryType = null;
+                        string detectedWkid = "4326"; // Default SRID
+
                         if (geometryColumnExistsInSchema)
                         {
-                            logAction($"Starting geometry type/SRID detection for dataset '{datasetName}'...");
-                            foreach (var parquetFile in parquetFiles)
-                            {
-                                string currentFileForGeomCheck = parquetFile.Replace('\\', '/');
-                                logAction($"  Checking file: {currentFileForGeomCheck}");
-                                try
-                                {
-                                    using (var geomCmd = duckDBConnection.CreateCommand())
-                                    {
-                                        // Query only for ST_GeometryType as ST_SRID is problematic
-                                        string query = $"SELECT ST_GeometryType({GEOMETRY_COLUMN}) FROM read_parquet('{currentFileForGeomCheck.Replace("'", "''")}') WHERE {GEOMETRY_COLUMN} IS NOT NULL LIMIT 1;";
-                                        geomCmd.CommandText = query;
-                                        logAction($"    Executing query: {query}");
-
-                                        using (var geomReader = await geomCmd.ExecuteReaderAsync())
-                                        {
-                                            if (await geomReader.ReadAsync())
-                                            {
-                                                logAction("    Successfully read a row for geometry info.");
-                                                object rawGeomTypeObj = geomReader.GetValue(0);
-                                                // SRID will be assumed as 4326 (default)
-
-                                                logAction($"    Raw ST_GeometryType: {(rawGeomTypeObj == DBNull.Value ? "DBNull" : rawGeomTypeObj?.ToString())}");
-                                                // No longer trying to read SRID from query
-                                                // logAction($"    Raw ST_SRID: {(rawSridObj == DBNull.Value ? "DBNull" : rawSridObj?.ToString())}"); 
-
-                                                if (rawGeomTypeObj != DBNull.Value && rawGeomTypeObj != null)
-                                                {
-                                                    detectedGeometryType = rawGeomTypeObj.ToString();
-                                                    // detectedWkid remains the default "4326"
-                                                    logAction($"MFC Generation: Detected geometry type '{detectedGeometryType}' for dataset '{datasetName}' using file '{currentFileForGeomCheck}'. SRID assumed as {detectedWkid}.");
-                                                    break;
-                                                }
-                                                else
-                                                {
-                                                    logAction("    ST_GeometryType was DBNull or null. Trying next file.");
-                                                }
-                                            }
-                                            else
-                                            {
-                                                logAction("    No rows returned for geometry info from this file. Trying next file.");
-                                            }
-                                        }
-                                    }
-                                }
-                                catch (Exception geomEx)
-                                {
-                                    logAction($"    Warning: Error executing geometry detection query on '{currentFileForGeomCheck}' for dataset '{datasetName}': {geomEx.Message}. Trying next file if available.");
-                                }
-                                if (!string.IsNullOrEmpty(detectedGeometryType)) break;
-                            }
-
-                            if (string.IsNullOrEmpty(detectedGeometryType))
-                            {
-                                logAction($"Warning: Could not detect a specific geometry type for dataset '{datasetName}' after checking all files. Defaulting geometry definition.");
-                            }
+                            detectedGeometryType = await DetectGeometryTypeAsync(duckDBConnection, datasetName, parquetFiles, logAction);
                         }
 
-                        // Populate dataset.Geometry section
                         if (geometryColumnExistsInSchema && !string.IsNullOrEmpty(detectedGeometryType))
                         {
                             dataset.Geometry = new MfcGeometry
@@ -743,15 +465,7 @@ namespace DuckDBGeoparquet.Services
                     }
                 }
 
-                var options = new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull // Or WhenWritingDefault if prefer
-                };
-                string jsonString = JsonSerializer.Serialize(mfcRoot, options);
-
-                await File.WriteAllTextAsync(outputMfcFilePath, jsonString);
-                logAction($"MFC file successfully generated at {outputMfcFilePath}");
+                await WriteMfcFile(outputMfcFilePath, mfcRoot, logAction);
                 return true;
             }
             catch (Exception ex)
@@ -759,6 +473,308 @@ namespace DuckDBGeoparquet.Services
                 logAction($"Error generating MFC file: {ex.Message}\n{ex.StackTrace}");
                 return false;
             }
+        }
+
+        private static async Task<List<(string Name, string Type)>> DiscoverSchemaAsync(
+            DuckDBConnection connection, string parquetFilePath, Action<string> logAction)
+        {
+            var columns = new List<(string Name, string Type)>();
+            using (var schemaCmd = connection.CreateCommand())
+            {
+                schemaCmd.CommandText = $"DESCRIBE SELECT * FROM read_parquet('{parquetFilePath.Replace("'", "''")}') LIMIT 0;";
+                using (var reader = await schemaCmd.ExecuteReaderAsync())
+                {
+                    while (await reader.ReadAsync())
+                    {
+                        string colName = reader.GetString(0);
+                        string colType = reader.GetString(1).ToUpper();
+                        columns.Add((colName, colType));
+                    }
+                }
+            }
+            return columns;
+        }
+
+        private static List<MfcField> BuildFieldList(
+            List<(string Name, string Type)> schemaColumns, string datasetName,
+            string geometryColumnName, Action<string> logAction,
+            out bool geometryColumnExists)
+        {
+            geometryColumnExists = false;
+            var columns = new List<MfcField>();
+            var addedFieldNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            var knownBooleanFields = new HashSet<string> {
+                "has_parts", "is_underground", "is_land", "is_territorial", "is_salt", "is_intermittent"
+            };
+
+            foreach (var (rawName, duckDbType) in schemaColumns)
+            {
+                string columnName = rawName;
+
+                logAction($"MFC Generation: Dataset '{datasetName}' - Schema Column: '{columnName}', DuckDB Type: '{duckDbType}'");
+
+                if (columnName.StartsWith("__duckdb_internal")) continue;
+
+                if (FieldExclusionMap.TryGetValue(datasetName, out var exclusions) && exclusions.Contains(columnName))
+                {
+                    logAction($"MFC Generation: Excluding field '{columnName}' for dataset '{datasetName}' as per exclusion rules.");
+                    continue;
+                }
+
+                if (FieldRenameMap.TryGetValue(datasetName, out var renames) && renames.TryGetValue(columnName, out var newName))
+                {
+                    logAction($"MFC Generation: Renaming field '{columnName}' to '{newName}' for dataset '{datasetName}'.");
+                    columnName = newName;
+                }
+
+                string mfcType;
+                string sourceType = null;
+
+                if (columnName.ToLower() == geometryColumnName.ToLower())
+                {
+                    geometryColumnExists = true;
+                    if (addedFieldNames.Add(columnName))
+                    {
+                        columns.Add(new MfcField(columnName, "Binary"));
+                    }
+                    logAction($"MFC Generation: Found '{geometryColumnName}' field for '{datasetName}'. Will be added to main field list.");
+                    continue;
+                }
+
+                if (columnName.ToLower() == "bbox_xmin" || columnName.ToLower() == "bbox_xmax" ||
+                    columnName.ToLower() == "bbox_ymin" || columnName.ToLower() == "bbox_ymax")
+                {
+                    if (addedFieldNames.Add(columnName))
+                    {
+                        columns.Add(new MfcField(columnName, "Float32"));
+                    }
+                    continue;
+                }
+
+                if (columnName.ToLower() == "bbox")
+                {
+                    logAction($"MFC Generation: Encountered 'bbox' struct for dataset '{datasetName}'. It will be skipped in main field list. Flattened versions will be ensured.");
+                    continue;
+                }
+
+                if ((columnName.ToLower() == "names" || columnName.ToLower() == "categories") && duckDbType.StartsWith("STRUCT"))
+                {
+                    string primaryFieldName = $"{columnName}_primary";
+                    if (addedFieldNames.Add(primaryFieldName))
+                    {
+                        columns.Add(new MfcField(primaryFieldName, "String"));
+                    }
+                    continue;
+                }
+
+                if (columnName.ToLower() == "cartography" && duckDbType.StartsWith("STRUCT"))
+                {
+                    var cartoSubFields = new Dictionary<string, string>
+                    {
+                        { "prominence", "Int32" }, { "min_zoom", "Int32" },
+                        { "max_zoom", "Int32" }, { "sort_key", "Int32" }
+                    };
+                    foreach (var subField in cartoSubFields)
+                    {
+                        string fullSubFieldName = $"cartography_{subField.Key}";
+                        if (addedFieldNames.Add(fullSubFieldName))
+                        {
+                            columns.Add(new MfcField(fullSubFieldName, subField.Value));
+                        }
+                    }
+                    continue;
+                }
+
+                mfcType = ConvertDuckDbTypeToMfcType(duckDbType, columnName, logAction);
+                if (knownBooleanFields.Contains(columnName.ToLower()))
+                {
+                    mfcType = "String";
+                    sourceType = "Boolean";
+                }
+
+                if (addedFieldNames.Add(columnName))
+                {
+                    columns.Add(new MfcField(columnName, mfcType, null, sourceType));
+                }
+            }
+
+            string[] requiredBboxFields = { "bbox_xmin", "bbox_xmax", "bbox_ymin", "bbox_ymax" };
+            foreach (var bboxField in requiredBboxFields)
+            {
+                if (addedFieldNames.Add(bboxField))
+                {
+                    columns.Add(new MfcField(bboxField, "Float32"));
+                    logAction($"MFC Generation: Ensured '{bboxField}' (Float32) is added to dataset '{datasetName}'.");
+                }
+            }
+
+            if (datasetName.Equals("place", StringComparison.OrdinalIgnoreCase))
+            {
+                if (addedFieldNames.Add("brand_wikidata"))
+                {
+                    columns.Add(new MfcField("brand_wikidata", "String"));
+                    logAction($"MFC Generation: Ensured 'brand_wikidata' (String) is added to dataset 'place'.");
+                }
+                if (addedFieldNames.Add("brand_names_primary"))
+                {
+                    columns.Add(new MfcField("brand_names_primary", "String"));
+                    logAction($"MFC Generation: Ensured 'brand_names_primary' (String) is added to dataset 'place'.");
+                }
+            }
+
+            if (DatasetFieldOrder.TryGetValue(datasetName, out var specificOrder))
+            {
+                var finalOrderedFieldsList = new List<MfcField>();
+                var availableFields = columns.ToDictionary(f => f.Name, f => f, StringComparer.OrdinalIgnoreCase);
+
+                foreach (var fieldNameInOrder in specificOrder)
+                {
+                    if (availableFields.TryGetValue(fieldNameInOrder, out var field))
+                    {
+                        finalOrderedFieldsList.Add(field);
+                        availableFields.Remove(fieldNameInOrder);
+                    }
+                    else
+                    {
+                        logAction($"Warning: Field '{fieldNameInOrder}' specified in order for dataset '{datasetName}' was not found in available fields. It might be excluded, not present in Parquet, or not yet handled (e.g. complex structs).");
+                    }
+                }
+
+                var stillAvailableFields = availableFields.Values.ToList();
+                MfcField geomFieldFromAvailable = stillAvailableFields.FirstOrDefault(f => f.Name.Equals(geometryColumnName, StringComparison.OrdinalIgnoreCase));
+
+                foreach (var field in stillAvailableFields
+                    .Where(f => !f.Name.Equals(geometryColumnName, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    finalOrderedFieldsList.Add(field);
+                    logAction($"MFC Generation: Adding field '{field.Name}' to dataset '{datasetName}' (was in Parquet but not in specific order).");
+                }
+
+                if (geomFieldFromAvailable != null && !specificOrder.Contains(geometryColumnName, StringComparer.OrdinalIgnoreCase))
+                {
+                    finalOrderedFieldsList.Add(geomFieldFromAvailable);
+                    logAction($"MFC Generation: Adding field '{geometryColumnName}' to dataset '{datasetName}' (was in Parquet but not in specific order, placed last among extras).");
+                }
+
+                return finalOrderedFieldsList;
+            }
+            else
+            {
+                var defaultOrderedFields = new List<MfcField>();
+                MfcField idField = columns.FirstOrDefault(f => f.Name.Equals("id", StringComparison.OrdinalIgnoreCase));
+                if (idField != null)
+                {
+                    defaultOrderedFields.Add(idField);
+                    columns.Remove(idField);
+                }
+
+                var bboxMfcFieldsSource = columns.Where(f => f.Name.StartsWith("bbox_", StringComparison.OrdinalIgnoreCase)).ToList();
+                var bboxOrderedFields = new List<MfcField>();
+                foreach (string bboxName in new[] { "bbox_xmin", "bbox_xmax", "bbox_ymin", "bbox_ymax" })
+                {
+                    MfcField field = bboxMfcFieldsSource.FirstOrDefault(f => f.Name.Equals(bboxName, StringComparison.OrdinalIgnoreCase));
+                    if (field != null)
+                    {
+                        bboxOrderedFields.Add(field);
+                        columns.Remove(field);
+                    }
+                }
+                defaultOrderedFields.AddRange(bboxOrderedFields);
+
+                MfcField geomField = columns.FirstOrDefault(f => f.Name.Equals(geometryColumnName, StringComparison.OrdinalIgnoreCase));
+                if (geomField != null) columns.Remove(geomField);
+
+                var otherFields = columns.OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ToList();
+                defaultOrderedFields.AddRange(otherFields);
+
+                if (geomField != null) defaultOrderedFields.Add(geomField);
+
+                return defaultOrderedFields;
+            }
+        }
+
+        private static async Task<string> DetectGeometryTypeAsync(
+            DuckDBConnection connection, string datasetName, List<string> parquetFiles, Action<string> logAction)
+        {
+            string detectedGeometryType = null;
+            const int MaxFilesToCheck = 3;
+
+            logAction($"Starting geometry type/SRID detection for dataset '{datasetName}'...");
+            int fileIndex = 0;
+            foreach (var parquetFile in parquetFiles)
+            {
+                fileIndex++;
+                if (fileIndex > MaxFilesToCheck)
+                {
+                    logAction($"    Stopping geometry detection after {MaxFilesToCheck} files for dataset '{datasetName}' to avoid long scans.");
+                    break;
+                }
+
+                string currentFileForGeomCheck = parquetFile.Replace('\\', '/');
+                logAction($"  Checking file: {currentFileForGeomCheck}");
+                try
+                {
+                    using (var geomCmd = connection.CreateCommand())
+                    {
+                        string query = $"SELECT ST_GeometryType({GEOMETRY_COLUMN}) FROM read_parquet('{currentFileForGeomCheck.Replace("'", "''")}') WHERE {GEOMETRY_COLUMN} IS NOT NULL LIMIT 1;";
+                        geomCmd.CommandText = query;
+                        logAction($"    Executing query: {query}");
+
+                        using (var geomReader = await geomCmd.ExecuteReaderAsync())
+                        {
+                            if (await geomReader.ReadAsync())
+                            {
+                                logAction("    Successfully read a row for geometry info.");
+                                object rawGeomTypeObj = geomReader.GetValue(0);
+
+                                logAction($"    Raw ST_GeometryType: {(rawGeomTypeObj == DBNull.Value ? "DBNull" : rawGeomTypeObj?.ToString())}");
+
+                                if (rawGeomTypeObj != DBNull.Value && rawGeomTypeObj != null)
+                                {
+                                    detectedGeometryType = rawGeomTypeObj.ToString();
+                                    logAction($"MFC Generation: Detected geometry type '{detectedGeometryType}' for dataset '{datasetName}' using file '{currentFileForGeomCheck}'. SRID assumed as 4326.");
+                                    break;
+                                }
+                                else
+                                {
+                                    logAction("    ST_GeometryType was DBNull or null. Trying next file.");
+                                }
+                            }
+                            else
+                            {
+                                logAction("    No rows returned for geometry info from this file. Trying next file.");
+                            }
+                        }
+                    }
+                }
+                catch (Exception geomEx)
+                {
+                    logAction($"    Warning: Error executing geometry detection query on '{currentFileForGeomCheck}' for dataset '{datasetName}': {geomEx.Message}. Trying next file if available.");
+                }
+                if (!string.IsNullOrEmpty(detectedGeometryType)) break;
+            }
+
+            if (string.IsNullOrEmpty(detectedGeometryType))
+            {
+                logAction($"Warning: Could not detect a specific geometry type for dataset '{datasetName}' after checking all files. Defaulting geometry definition.");
+            }
+
+            return detectedGeometryType;
+        }
+
+        private static async Task WriteMfcFile(string mfcFilePath, MfcRoot mfcRoot, Action<string> logAction)
+        {
+            var options = new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            };
+            string jsonString = JsonSerializer.Serialize(mfcRoot, options);
+
+            await File.WriteAllTextAsync(mfcFilePath, jsonString);
+            logAction($"MFC file successfully generated at {mfcFilePath}");
         }
 
         private static string ConvertDuckDbTypeToMfcType(string duckDbType, string columnNameForContext, Action<string> logAction)

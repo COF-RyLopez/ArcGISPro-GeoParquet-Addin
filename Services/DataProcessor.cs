@@ -1,9 +1,10 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+
 using System.Threading;
 using System.Threading.Tasks;
 using ArcGIS.Core.CIM;
@@ -39,6 +40,29 @@ namespace DuckDBGeoparquet.Services
 
         // Add static readonly field for the theme-type separator
         private static readonly string[] THEME_TYPE_SEPARATOR = [" - "];
+
+        // Columns to drop per dataset type to reduce S3 transfer and decoding cost (only dropped when present)
+        private static readonly Dictionary<string, HashSet<string>> ColumnDropMap = new(StringComparer.OrdinalIgnoreCase)
+        {
+            { "address", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "address_levels", "sources" } },
+            { "building", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
+            { "building_part", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
+            { "connector", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
+            { "division", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "local_type", "hierarchies", "capital_division_ids", "capital_of_divisions" } },
+            { "division_area", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
+            { "infrastructure", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } },
+            { "land", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } },
+            { "land_cover", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
+            { "land_use", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } },
+            { "place", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "addresses", "brand", "emails", "phones", "socials", "sources", "websites" } },
+            { "segment", new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+                "access_restrictions", "connectors", "destinations", "level_rules",
+                "prohibited_transitions", "road_flags", "road_surface", "routes", "sources",
+                "speed_limits", "subclass_rules", "width_rules"
+              }
+            },
+            { "water", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } }
+        };
 
         // Add a class-level field to store the current extent
         private dynamic _currentExtent;
@@ -129,14 +153,37 @@ namespace DuckDBGeoparquet.Services
                         $"4. Current extension search path: {extensionsPath}", ex);
                 }
 
-                // Configure DuckDB settings
-                command.CommandText = @"
-                    SET s3_region='us-west-2';
-                    SET enable_http_metadata_cache=true;
-                    SET enable_object_cache=true;
-                    SET enable_progress_bar=true;
-                ";
-                await command.ExecuteNonQueryAsync(CancellationToken.None);
+                // Configure DuckDB settings for optimal performance
+                // Execute each SET command separately to avoid potential parsing issues
+                try
+                {
+                    command.CommandText = "SET s3_region='us-west-2';";
+                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                    
+                    command.CommandText = "SET enable_http_metadata_cache=true;";
+                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                    
+                    command.CommandText = "SET enable_object_cache=true;";
+                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                    
+                    command.CommandText = "SET enable_progress_bar=true;";
+                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+
+                    // Additional performance tuning
+                    command.CommandText = "SET memory_limit='2GB';";
+                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+
+                    string tempDir = Path.GetTempPath().Replace('\\', '/');
+                    command.CommandText = $"SET temp_directory='{tempDir}';";
+                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+
+                    System.Diagnostics.Debug.WriteLine("DuckDB S3 and cache settings configured successfully");
+                }
+                catch (Exception settingsEx)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Warning: Could not set some DuckDB settings: {settingsEx.Message}");
+                    // Continue - these are optimizations, not required for functionality
+                }
 
                 // Enable parallelism according to host CPU
                 try
@@ -150,6 +197,7 @@ namespace DuckDBGeoparquet.Services
                 {
                     System.Diagnostics.Debug.WriteLine($"Warning: Could not set DuckDB threads: {threadEx.Message}");
                 }
+
             }
             catch (Exception ex)
             {
@@ -185,23 +233,48 @@ namespace DuckDBGeoparquet.Services
 
                 progress?.Report($"Reading schema from S3...");
 
+                // Create a fresh command for this operation to ensure clean state
                 using var command = _connection.CreateCommand();
-                command.CommandText = $@"
+                
+                // Ensure command text is empty before setting new query
+                command.CommandText = string.Empty;
+                
+                string schemaQuery = $@"
                     CREATE OR REPLACE TABLE temp AS 
                     SELECT * FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1) LIMIT 0;
                 ";
-                await command.ExecuteNonQueryAsync(CancellationToken.None);
+                command.CommandText = schemaQuery;
+                System.Diagnostics.Debug.WriteLine($"Executing schema query for {actualS3Type ?? "data"}...");
+                try
+                {
+                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Error executing schema query: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Query that failed: {schemaQuery.Substring(0, Math.Min(300, schemaQuery.Length))}");
+                    System.Diagnostics.Debug.WriteLine($"Connection state: {_connection.State}");
+                    throw;
+                }
 
                 command.CommandText = "DESCRIBE temp";
+                var columnNames = new List<string>();
                 using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
-                // Count columns for basic validation
-                int columnCount = 0;
-                while (await reader.ReadAsync()) { columnCount++; }
-                System.Diagnostics.Debug.WriteLine($"Schema validated: {columnCount} columns found");
+                // Collect column names for projection and count for validation
+                while (await reader.ReadAsync())
+                {
+                    var colName = reader.GetString(0);
+                    columnNames.Add(colName);
+                }
+                System.Diagnostics.Debug.WriteLine($"Schema validated: {columnNames.Count} columns found");
+
+                // Build a selective column list to trim heavy structs/arrays when safe
+                var projectedColumns = BuildColumnProjection(actualS3Type, columnNames);
 
                 progress?.Report($"Loading data from S3 (this may take a moment)...");
 
                 string spatialFilter = "";
+                string extentPolygon = "";
                 if (extent != null)
                 {
                     // Use culture-invariant formatting for SQL to prevent German locale decimal separator issues
@@ -210,25 +283,107 @@ namespace DuckDBGeoparquet.Services
                     string xMaxStr = ((double)extent.XMax).ToString("G", CultureInfo.InvariantCulture);
                     string yMaxStr = ((double)extent.YMax).ToString("G", CultureInfo.InvariantCulture);
                     
-                    spatialFilter = $@"
-                        WHERE bbox.xmin >= {xMinStr}
-                          AND bbox.ymin >= {yMinStr}
-                          AND bbox.xmax <= {xMaxStr}
-                          AND bbox.ymax <= {yMaxStr}";
+                    // Two-stage spatial filtering for accuracy and performance:
+                    // 1. Bbox overlap filter (fast pre-filter to reduce data)
+                    // 2. Clip geometries to extent (keeps all intersecting features, clips to extent)
+                    // Also exclude features with extremely large bounding boxes (likely global/error data)
+                    const double MAX_BBOX_WIDTH = 10.0;  // degrees longitude
+                    const double MAX_BBOX_HEIGHT = 5.0; // degrees latitude
+                    string maxBboxWidthStr = MAX_BBOX_WIDTH.ToString("G", CultureInfo.InvariantCulture);
+                    string maxBboxHeightStr = MAX_BBOX_HEIGHT.ToString("G", CultureInfo.InvariantCulture);
                     
-                    // Spatial filter applied successfully with culture-invariant formatting
+                    // Create a polygon from the extent for clipping
+                    // Format: POLYGON((xmin ymin, xmax ymin, xmax ymax, xmin ymax, xmin ymin))
+                    // Note: ST_GeomFromText in DuckDB doesn't accept SRID parameter - geometries are assumed to be in the same CRS as the data
+                    extentPolygon = $"ST_GeomFromText('POLYGON(({xMinStr} {yMinStr}, {xMaxStr} {yMinStr}, {xMaxStr} {yMaxStr}, {xMinStr} {yMaxStr}, {xMinStr} {yMinStr}))')";
+                    
+                    spatialFilter = $@"
+                        WHERE bbox.xmin <= {xMaxStr}
+                          AND bbox.xmax >= {xMinStr}
+                          AND bbox.ymin <= {yMaxStr}
+                          AND bbox.ymax >= {yMinStr}
+                          AND (bbox.xmax - bbox.xmin) <= {maxBboxWidthStr}
+                          AND (bbox.ymax - bbox.ymin) <= {maxBboxHeightStr}";
+                    
+                    System.Diagnostics.Debug.WriteLine($"Spatial filter applied: extent=({xMinStr}, {yMinStr}) to ({xMaxStr}, {yMaxStr}), max bbox size=({maxBboxWidthStr}, {maxBboxHeightStr}), geometries will be clipped to extent");
                     
                     progress?.Report($"Applying spatial filter for current map extent...");
                 }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine("WARNING: No extent provided - loading all data without spatial filter!");
+                }
 
-                string query = $@"
-                    CREATE OR REPLACE TABLE current_table AS 
-                    SELECT *
-                    FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
-                    {spatialFilter}
-                ";
+                // Build query with optional geometry clipping
+                string query;
+                // Determine which columns to project (if any) while always retaining geometry
+                var projectedColumnList = projectedColumns ?? "*";
+                var projectedColumnsWithoutGeometry = projectedColumns != null
+                    ? string.Join(", ", projectedColumns.Split(',').Select(c => c.Trim()).Where(c => !c.Equals("geometry", StringComparison.OrdinalIgnoreCase)))
+                    : "* EXCLUDE(geometry)";
+
+                if (extent != null && !string.IsNullOrEmpty(extentPolygon))
+                {
+                    // Clip geometries to extent - this keeps all intersecting features but clips them to the extent
+                    // Use ST_Intersection to clip, and only include features that actually intersect
+                    query = $@"
+                        CREATE OR REPLACE TABLE current_table AS 
+                        SELECT 
+                            {projectedColumnsWithoutGeometry},
+                            CASE 
+                                WHEN ST_Intersects(geometry, {extentPolygon}) 
+                                THEN ST_Intersection(geometry, {extentPolygon})
+                                ELSE NULL
+                            END as geometry
+                        FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
+                        {spatialFilter}
+                        AND ST_Intersects(geometry, {extentPolygon})";
+                }
+                else
+                {
+                    query = $@"
+                        CREATE OR REPLACE TABLE current_table AS 
+                        SELECT {projectedColumnList}
+                        FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
+                        {spatialFilter}";
+                }
+                
+                // Clear command text before setting new query to ensure clean state
+                command.CommandText = string.Empty;
                 command.CommandText = query;
-                await command.ExecuteNonQueryAsync(CancellationToken.None);
+                
+                System.Diagnostics.Debug.WriteLine($"Executing data load query for {actualS3Type ?? "data"}...");
+                try
+                {
+                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Error executing data load query: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Query that failed: {query.Substring(0, Math.Min(300, query.Length))}");
+                    System.Diagnostics.Debug.WriteLine($"Connection state: {_connection.State}");
+                    throw;
+                }
+
+                // Ensure geometries carry an SRID (ArcGIS Pro requires a defined spatial reference)
+                try
+                {
+                    command.CommandText = "SELECT COUNT(*) FROM duckdb_functions() WHERE function_name ILIKE 'st_setsrid' OR function_name ILIKE 'st_srid';";
+                    var sridFuncs = Convert.ToInt32(await command.ExecuteScalarAsync(CancellationToken.None));
+                    if (sridFuncs >= 2)
+                    {
+                        command.CommandText = "UPDATE current_table SET geometry = ST_SetSRID(geometry, 4326) WHERE ST_SRID(geometry) = 0;";
+                        await command.ExecuteNonQueryAsync(CancellationToken.None);
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine("Info: ST_SetSRID/ST_SRID not available in this DuckDB build; skipping SRID update.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Warning: Could not set SRID on current_table geometries: {ex.Message}");
+                }
 
                 command.CommandText = "SELECT COUNT(*) FROM current_table";
                 var count = await command.ExecuteScalarAsync(CancellationToken.None);
@@ -250,6 +405,33 @@ namespace DuckDBGeoparquet.Services
                 System.Diagnostics.Debug.WriteLine($"Query error: {ex.Message}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Build a projection list that drops known heavy optional columns for the given dataset type.
+        /// Returns null to indicate "SELECT *" when no drops apply.
+        /// </summary>
+        private static string BuildColumnProjection(string actualS3Type, List<string> columnNames)
+        {
+            if (string.IsNullOrWhiteSpace(actualS3Type) || columnNames == null || columnNames.Count == 0)
+                return null;
+
+            if (!ColumnDropMap.TryGetValue(actualS3Type, out var dropSet) || dropSet.Count == 0)
+                return null;
+
+            var projected = columnNames
+                .Where(name =>
+                    // Never drop geometry or bbox even if listed
+                    name.Equals(GEOMETRY_COLUMN, StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith($"{BBOX_COLUMN}_", StringComparison.OrdinalIgnoreCase) ||
+                    !dropSet.Contains(name))
+                .ToList();
+
+            // If projection would drop everything (unlikely), fall back to *
+            if (!projected.Any())
+                return null;
+
+            return string.Join(", ", projected);
         }
 
         public async Task<DataTable> GetPreviewDataAsync()
@@ -593,7 +775,7 @@ namespace DuckDBGeoparquet.Services
         /// <param name="parentS3Theme">The S3 parent theme key (e.g., 'buildings').</param>
         /// <param name="actualS3Type">The specific S3 data type (e.g., 'building', 'building_part').</param>
         /// <param name="dataOutputPathRoot">The root directory where data for the current release is stored (e.g., C:\...\ProjectHome\OvertureProAddinData\Data\{ReleaseVersion})</param>
-        public async Task CreateFeatureLayerAsync(string layerNameBase, IProgress<string> progress, string parentS3Theme, string actualS3Type, string dataOutputPathRoot)
+        public async Task CreateFeatureLayerAsync(string layerNameBase, IProgress<string> progress, string parentS3Theme, string actualS3Type, string dataOutputPathRoot, string compression = "ZSTD")
         {
             System.Diagnostics.Debug.WriteLine($"CreateFeatureLayerAsync called for: {layerNameBase}, ParentS3Theme: {parentS3Theme}, ActualS3Type: {actualS3Type}, DataOutputPathRoot: {dataOutputPathRoot}");
             progress?.Report($"Starting layer creation for {layerNameBase}");
@@ -636,7 +818,7 @@ namespace DuckDBGeoparquet.Services
             try
             {
                 // Now pass this specific folder to ExportByGeometryType
-                await ExportByGeometryType(layerNameBase, themeTypeSpecificFolder, progress);
+                await ExportByGeometryType(layerNameBase, themeTypeSpecificFolder, progress, compression);
 
                 progress?.Report($"Feature layer creation process completed for {layerNameBase}.");
                 System.Diagnostics.Debug.WriteLine($"Feature layer creation process completed for {layerNameBase}");
@@ -656,7 +838,7 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        private async Task ExportByGeometryType(string layerNameBase, string themeTypeSpecificOutputFolder, IProgress<string> progress = null)
+        private async Task ExportByGeometryType(string layerNameBase, string themeTypeSpecificOutputFolder, IProgress<string> progress = null, string compression = "ZSTD")
         {
             System.Diagnostics.Debug.WriteLine($"ExportByGeometryType for {layerNameBase}, OutputFolder: {themeTypeSpecificOutputFolder}");
             progress?.Report($"Processing geometry types for {layerNameBase} with optimal layer stacking");
@@ -706,6 +888,53 @@ namespace DuckDBGeoparquet.Services
 
             System.Diagnostics.Debug.WriteLine($"Processing {geometryTypes.Count} geometry types: {string.Join(", ", geometryTypes)}");
 
+            // Prepare a one-pass partitioned export by geometry type
+            string stagingFolder = Path.Combine(themeTypeSpecificOutputFolder, "__geom_partitions");
+            if (Directory.Exists(stagingFolder))
+            {
+                Directory.Delete(stagingFolder, recursive: true);
+            }
+            Directory.CreateDirectory(stagingFolder);
+
+            string validCompression = compression?.ToUpperInvariant() switch
+            {
+                "SNAPPY" => "SNAPPY",
+                "GZIP" => "GZIP",
+                "ZSTD" => "ZSTD",
+                _ => "ZSTD"
+            };
+
+            int rowGroupSize = 250000;
+
+            string partitionedCopy = $@"
+                COPY (
+                    SELECT 
+                        * EXCLUDE (geometry),
+                        geometry,
+                        ST_GeometryType(geometry) AS geom_type
+                    FROM current_table
+                    WHERE geometry IS NOT NULL
+                ) TO '{stagingFolder.Replace('\\', '/')}' 
+                WITH (
+                    FORMAT 'PARQUET',
+                    PARTITION_BY (geom_type),
+                    ROW_GROUP_SIZE {rowGroupSize},
+                    COMPRESSION '{validCompression}'
+                );";
+
+            try
+            {
+                command.CommandText = partitionedCopy;
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+                progress?.Report($"Exported all geometry types for {layerNameBase} in one pass");
+            }
+            catch (Exception ex)
+            {
+                progress?.Report($"Error during partitioned export: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error during partitioned export for {layerNameBase}: {ex.Message}");
+                throw;
+            }
+
             int typeIndex = 0;
             foreach (var geomType in geometryTypes)
             {
@@ -718,64 +947,74 @@ namespace DuckDBGeoparquet.Services
                 string descriptiveGeomType = GetDescriptiveGeometryType(geomType);
                 string finalLayerName = geometryTypes.Count > 1 ? $"{layerNameBase} ({descriptiveGeomType})" : layerNameBase;
                 string outputFileName = $"{MfcUtility.SanitizeFileName(finalLayerName)}.parquet";
+                string finalOutputPath = Path.Combine(themeTypeSpecificOutputFolder, outputFileName);
 
-                // Ensure output path uses the theme/type specific folder
-                string outputPath = Path.Combine(themeTypeSpecificOutputFolder, outputFileName);
-
-                // Ensure the specific output directory exists (it should from CreateFeatureLayerAsync, but double check)
-                string specificDir = Path.GetDirectoryName(outputPath);
-                if (!Directory.Exists(specificDir))
-                {
-                    System.Diagnostics.Debug.WriteLine($"Creating specific directory for Parquet export: {specificDir}");
-                    Directory.CreateDirectory(specificDir);
-                }
-
-                // Note: Individual file deletion is no longer needed here since we now delete
-                // entire folders upfront when the user confirms replacing existing data
-
-                string query = $"SELECT * EXCLUDE geometry, geometry FROM current_table WHERE ST_GeometryType(geometry) = '{geomType}'";
-
+                string partitionDir = Path.Combine(stagingFolder, $"geom_type={geomType}");
                 try
                 {
-                    string actualFilePath = await ExportToGeoParquet(query, outputPath, finalLayerName, progress);
-
-                    // Verify the file actually exists before adding to pending layers
-                    if (File.Exists(actualFilePath))
+                    if (!Directory.Exists(partitionDir))
                     {
-                        // Instead of immediately adding to map, collect layer info for bulk creation
-                        var layerInfo = new LayerCreationInfo
-                        {
-                            FilePath = actualFilePath,
-                            LayerName = finalLayerName,
-                            GeometryType = geomType,
-                            StackingPriority = geometryTypeOrder.TryGetValue(geomType, out int priority) ? priority : 99,
-                            ParentTheme = _currentParentS3Theme,
-                            ActualType = _currentActualS3Type
-                        };
-                        _pendingLayers.Add(layerInfo);
+                        progress?.Report($"Warning: No data found for geometry type {geomType}");
+                        System.Diagnostics.Debug.WriteLine($"Partition directory not found for {geomType}: {partitionDir}");
+                        continue;
+                    }
 
-                        progress?.Report($"Prepared layer {finalLayerName} for optimal stacking");
-                        System.Diagnostics.Debug.WriteLine($"Successfully prepared layer: {finalLayerName} at {actualFilePath}");
-                    }
-                    else
+                    var partitionFiles = Directory.GetFiles(partitionDir, "*.parquet");
+                    if (partitionFiles.Length == 0)
                     {
-                        progress?.Report($"Error: Export completed but file not found for {finalLayerName}");
-                        System.Diagnostics.Debug.WriteLine($"Error: Export completed but file not found: {actualFilePath}");
+                        progress?.Report($"Warning: No Parquet files produced for {geomType}");
+                        System.Diagnostics.Debug.WriteLine($"No parquet files in {partitionDir} for {geomType}");
+                        continue;
                     }
+
+                    // Use the first file for this geometry type (DuckDB emits one per partition by default)
+                    string partitionFile = partitionFiles[0];
+
+                    // Ensure destination folder exists
+                    Directory.CreateDirectory(Path.GetDirectoryName(finalOutputPath));
+
+                    // Overwrite if it exists from prior runs with retries; if still locked, fall back to unique name
+                    string targetPath = await EnsureTargetFileAvailableAsync(finalOutputPath);
+                    File.Move(partitionFile, targetPath);
+
+                    var layerInfo = new LayerCreationInfo
+                    {
+                        FilePath = targetPath,
+                        LayerName = finalLayerName,
+                        GeometryType = geomType,
+                        StackingPriority = geometryTypeOrder.TryGetValue(geomType, out int priority) ? priority : 99,
+                        ParentTheme = _currentParentS3Theme,
+                        ActualType = _currentActualS3Type
+                    };
+                    _pendingLayers.Add(layerInfo);
+
+                    progress?.Report($"Prepared layer {finalLayerName} for optimal stacking");
+                    System.Diagnostics.Debug.WriteLine($"Prepared layer: {finalLayerName} at {finalOutputPath}");
                 }
                 catch (Exception ex)
                 {
-                    progress?.Report($"Error exporting layer for {geomType}: {ex.Message}");
-                    System.Diagnostics.Debug.WriteLine($"Error during export for {geomType} of {layerNameBase}: {ex.Message}");
-                    System.Diagnostics.Debug.WriteLine($"Stack trace: {ex.StackTrace}");
-                    // Decide if we should continue with other geometry types or rethrow
-                    // For now, log and continue to attempt other types
+                    progress?.Report($"Error handling partition for {geomType}: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Error handling partition {geomType}: {ex.Message}");
                 }
             }
+
+            // Clean up staging folder
+            try
+            {
+                if (Directory.Exists(stagingFolder))
+                {
+                    Directory.Delete(stagingFolder, recursive: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Warning: Could not delete staging folder {stagingFolder}: {ex.Message}");
+            }
+
             progress?.Report($"Finished processing all geometry types for {layerNameBase}.");
         }
 
-        private async Task<string> ExportToGeoParquet(string query, string outputPath, string _layerName, IProgress<string> progress = null)
+        private async Task<string> ExportToGeoParquet(string query, string outputPath, string _layerName, IProgress<string> progress = null, string compression = "ZSTD")
         {
             progress?.Report($"Exporting data for {_layerName} to {Path.GetFileName(outputPath)}");
 
@@ -816,11 +1055,16 @@ namespace DuckDBGeoparquet.Services
                 
                 if (useTempFile)
                 {
-                    actualOutputPath = outputPath + $".tmp_{DateTime.Now:yyyyMMdd_HHmmss}";
+                    // Create temp file with .parquet extension so ArcGIS Pro can recognize it
+                    // Use format: filename_timestamp.parquet instead of filename.parquet.tmp_timestamp
+                    string directory = Path.GetDirectoryName(outputPath);
+                    string fileNameWithoutExt = Path.GetFileNameWithoutExtension(outputPath);
+                    string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                    actualOutputPath = Path.Combine(directory, $"{fileNameWithoutExt}_{timestamp}.parquet");
                     System.Diagnostics.Debug.WriteLine($"File still locked, using temporary export path: {actualOutputPath}");
                 }
                 
-                command.CommandText = BuildGeoParquetCopyCommand(query, actualOutputPath);
+                command.CommandText = BuildGeoParquetCopyCommand(query, actualOutputPath, compression);
                 await command.ExecuteNonQueryAsync(CancellationToken.None);
                 
                 // If we used a temp file, try to replace the original
@@ -850,8 +1094,10 @@ namespace DuckDBGeoparquet.Services
                         {
                             System.Diagnostics.Debug.WriteLine($"Could not replace original file after {attempt} attempts: {ex.Message}");
                             System.Diagnostics.Debug.WriteLine($"Temp file remains at: {actualOutputPath}");
+                            // Temp file has .parquet extension so it can be used as a layer
                             // Update the output path to point to the temp file for layer creation
                             outputPath = actualOutputPath;
+                            System.Diagnostics.Debug.WriteLine($"Using temp file as final output: {outputPath}");
                         }
                     }
                 }
@@ -867,16 +1113,31 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        private static string BuildGeoParquetCopyCommand(string selectQuery, string outputPath)
+        private static string BuildGeoParquetCopyCommand(string selectQuery, string outputPath, string compression = "ZSTD")
         {
+            // Validate compression type
+            string validCompression = compression?.ToUpperInvariant() switch
+            {
+                "SNAPPY" => "SNAPPY",
+                "GZIP" => "GZIP",
+                "ZSTD" => "ZSTD",
+                _ => "ZSTD" // Default to ZSTD if invalid
+            };
+
+            // Optimized row group size: 128MB target (approximately 100k-200k rows depending on data)
+            // Larger row groups improve compression and read performance, but increase memory usage
+            // 100000 is a good balance for most GeoParquet datasets
+            // For very large datasets, consider increasing to 200000-500000
+            int rowGroupSize = 100000;
+
             return $@"
                 COPY (
                     {selectQuery}
                 ) TO '{outputPath.Replace('\\', '/')}' 
                 WITH (
                     FORMAT 'PARQUET',
-                    ROW_GROUP_SIZE 100000,
-                    COMPRESSION 'ZSTD'
+                    ROW_GROUP_SIZE {rowGroupSize},
+                    COMPRESSION '{validCompression}'
                 );";
         }
 
@@ -903,30 +1164,21 @@ namespace DuckDBGeoparquet.Services
                 return;
             }
 
-            // Sort all layers by stacking priority (higher priority = higher in Contents panel = drawn on top)
-            // We want: Points on top (drawn last), Lines in middle, Polygons on bottom (drawn first)
-            var sortedLayers = _pendingLayers
-                .OrderByDescending(layer => layer.StackingPriority) // Higher priority first
-                .ThenBy(layer => layer.ParentTheme) // Secondary sort by theme for consistency
-                .ThenBy(layer => layer.ActualType)  // Tertiary sort by actual type
-                .ToList();
+            var sortedLayers = SortLayersByGeometryPriority(_pendingLayers);
 
             progress?.Report($"Preparing to add {sortedLayers.Count} layers with optimal stacking order...");
-            System.Diagnostics.Debug.WriteLine($"Adding {sortedLayers.Count} layers in optimal stacking order (points → lines → polygons):");
+            System.Diagnostics.Debug.WriteLine($"Adding {sortedLayers.Count} layers in optimal stacking order (points → lines → polygons, with buildings at top of polygons):");
 
             foreach (var layer in sortedLayers)
             {
                 System.Diagnostics.Debug.WriteLine($"  {layer.LayerName} ({layer.GeometryType}, priority {layer.StackingPriority})");
             }
 
-            // Group layers by geometry type for progress reporting
-            var pointLayers = sortedLayers.Where(l => l.StackingPriority == 3).ToList();
-            var lineLayers = sortedLayers.Where(l => l.StackingPriority == 2).ToList();
-            var polygonLayers = sortedLayers.Where(l => l.StackingPriority == 1).ToList();
+            int pointCount = sortedLayers.Count(l => l.StackingPriority == 3);
+            int lineCount = sortedLayers.Count(l => l.StackingPriority == 2);
+            int polygonCount = sortedLayers.Count(l => l.StackingPriority == 1);
+            progress?.Report($"Layer summary: {pointCount} point layers, {lineCount} line layers, {polygonCount} polygon layers");
 
-            progress?.Report($"Layer summary: {pointLayers.Count} point layers, {lineLayers.Count} line layers, {polygonLayers.Count} polygon layers");
-
-            // Use individual layer creation for single layers, bulk creation for multiple layers
             if (sortedLayers.Count == 1)
             {
                 progress?.Report("Single layer detected, using individual layer creation...");
@@ -936,7 +1188,7 @@ namespace DuckDBGeoparquet.Services
             else
             {
                 List<LayerCreationInfo> missingLayersForIndividualCreation = null;
-                
+
                 try
                 {
                     progress?.Report("Starting bulk layer creation process...");
@@ -951,86 +1203,9 @@ namespace DuckDBGeoparquet.Services
                             return;
                         }
 
-                        progress?.Report("Validating layer files...");
-
-                        // Use BulkMapMemberCreationParams for optimal performance
-                        var uris = new List<Uri>();
-                        var layerNames = new List<string>();
-                        int validFiles = 0;
-
-                        foreach (var layerInfo in sortedLayers)
-                        {
-                            if (File.Exists(layerInfo.FilePath))
-                            {
-                                uris.Add(new Uri(layerInfo.FilePath));
-                                layerNames.Add(layerInfo.LayerName);
-                                validFiles++;
-                                System.Diagnostics.Debug.WriteLine($"Valid file for {layerInfo.LayerName}: {layerInfo.FilePath}");
-                            }
-                            else
-                            {
-                                progress?.Report($"Warning: File not found for {layerInfo.LayerName}");
-                                System.Diagnostics.Debug.WriteLine($"Warning: File not found for layer {layerInfo.LayerName}: {layerInfo.FilePath}");
-                            }
-                        }
-
-                        progress?.Report($"Validated {validFiles} layer files. Creating layers...");
-
-                        if (uris.Any())
-                        {
-                            progress?.Report("Executing bulk layer creation (this may take a moment)...");
-
-                            // Create layers using LayerFactory with URI enumeration for optimal performance
-                            System.Diagnostics.Debug.WriteLine($"Attempting to create {uris.Count} layers via bulk creation...");
-                            var layers = LayerFactory.Instance.CreateLayers(uris, map);
-
-                            progress?.Report($"Bulk creation completed. Applying settings to {layers.Count} layers...");
-                            System.Diagnostics.Debug.WriteLine($"Bulk creation result: {layers.Count} layers created from {uris.Count} URIs");
-
-                            // Apply custom names and settings to the created layers
-                            for (int i = 0; i < layers.Count && i < layerNames.Count; i++)
-                            {
-                                if (layers[i] != null)
-                                {
-                                    layers[i].SetName(layerNames[i]);
-
-                                    // Apply cache and feature reduction settings
-                                    if (layers[i] is FeatureLayer featureLayer)
-                                    {
-                                        ApplyLayerSettings(featureLayer);
-                                    }
-
-                                    // Report progress every few layers to keep UI responsive
-                                    if (i % 3 == 0 || i == layers.Count - 1)
-                                    {
-                                        progress?.Report($"Configured layer {i + 1} of {layers.Count}: {layerNames[i]}");
-                                    }
-                                    System.Diagnostics.Debug.WriteLine($"Successfully added layer: {layerNames[i]}");
-                                }
-                            }
-
-                            progress?.Report($"✅ Successfully added {layers.Count} layers with optimal stacking order!");
-                            System.Diagnostics.Debug.WriteLine($"Bulk layer creation completed. Added {layers.Count} layers.");
-                            
-                            // If bulk creation didn't create all expected layers, fall back to individual creation for missing ones
-                            if (layers.Count < uris.Count)
-                            {
-                                progress?.Report($"Some layers missing from bulk creation ({layers.Count}/{uris.Count}). Creating missing layers individually...");
-                                System.Diagnostics.Debug.WriteLine($"Bulk creation incomplete: {layers.Count}/{uris.Count} layers created. Falling back for missing layers...");
-                                
-                                // Find which layers were not created and create them individually
-                                var createdLayerNames = layers.Select(l => l.Name).ToHashSet();
-                                var missingLayers = sortedLayers.Where(layerInfo => 
-                                    File.Exists(layerInfo.FilePath) && 
-                                    !createdLayerNames.Contains(layerInfo.LayerName)).ToList();
-                                
-                                // Store missing layers for individual creation outside QueuedTask
-                                missingLayersForIndividualCreation = missingLayers;
-                            }
-                        }
+                        missingLayersForIndividualCreation = AddLayerBatch(map, sortedLayers, progress);
                     });
-                    
-                    // Create missing layers individually outside QueuedTask
+
                     if (missingLayersForIndividualCreation?.Any() == true)
                     {
                         await FallbackToIndividualLayerCreation(missingLayersForIndividualCreation, progress);
@@ -1041,37 +1216,276 @@ namespace DuckDBGeoparquet.Services
                     progress?.Report($"Error during bulk layer creation: {ex.Message}");
                     System.Diagnostics.Debug.WriteLine($"Error in AddAllLayersToMapAsync: {ex.Message}");
 
-                    // Fallback to individual layer creation if bulk creation fails
                     progress?.Report("Falling back to individual layer creation...");
                     await FallbackToIndividualLayerCreation(sortedLayers, progress);
                 }
             }
-            
-            // Clear pending layers after processing
+
             _pendingLayers.Clear();
         }
 
-        /// <summary>
-        /// Fallback method for individual layer creation if bulk creation fails
-        /// </summary>
-        private async Task FallbackToIndividualLayerCreation(List<LayerCreationInfo> layers, IProgress<string> progress)
+        private static List<LayerCreationInfo> SortLayersByGeometryPriority(List<LayerCreationInfo> layers)
         {
-            foreach (var layerInfo in layers)
+            var sorted = layers
+                .OrderByDescending(layer => layer.StackingPriority)
+                .ThenByDescending(layer => layer.LayerName.Contains("Building", StringComparison.OrdinalIgnoreCase))
+                .ThenBy(layer => layer.ParentTheme)
+                .ThenBy(layer => layer.ActualType)
+                .ToList();
+
+            var pointLayers = sorted.Where(l => l.StackingPriority == 3).ToList();
+            var lineLayers = sorted.Where(l => l.StackingPriority == 2).ToList();
+            var polygonLayers = sorted.Where(l => l.StackingPriority == 1).ToList();
+
+            polygonLayers.Reverse();
+
+            return pointLayers.Concat(lineLayers).Concat(polygonLayers).ToList();
+        }
+
+        private List<LayerCreationInfo> AddLayerBatch(Map map, List<LayerCreationInfo> sortedLayers, IProgress<string> progress)
+        {
+            progress?.Report("Validating layer files...");
+
+            var uris = new List<Uri>();
+            var layerNames = new List<string>();
+            int validFiles = 0;
+
+            foreach (var layerInfo in sortedLayers)
             {
-                try
+                if (File.Exists(layerInfo.FilePath))
                 {
-                    await AddLayerToMapAsync(layerInfo.FilePath, layerInfo.LayerName, progress);
+                    uris.Add(new Uri(layerInfo.FilePath));
+                    layerNames.Add(layerInfo.LayerName);
+                    validFiles++;
+                    System.Diagnostics.Debug.WriteLine($"Valid file for {layerInfo.LayerName}: {layerInfo.FilePath}");
                 }
-                catch (Exception ex)
+                else
                 {
-                    progress?.Report($"Error adding layer {layerInfo.LayerName}: {ex.Message}");
-                    System.Diagnostics.Debug.WriteLine($"Error in fallback layer creation for {layerInfo.LayerName}: {ex.Message}");
+                    progress?.Report($"Warning: File not found for {layerInfo.LayerName}");
+                    System.Diagnostics.Debug.WriteLine($"Warning: File not found for layer {layerInfo.LayerName}: {layerInfo.FilePath}");
+                }
+            }
+
+            progress?.Report($"Validated {validFiles} layer files. Creating layers...");
+
+            if (!uris.Any())
+                return null;
+
+            progress?.Report("Executing bulk layer creation (this may take a moment)...");
+
+            System.Diagnostics.Debug.WriteLine($"Attempting to create {uris.Count} layers via bulk creation...");
+            var layers = LayerFactory.Instance.CreateLayers(uris, map);
+
+            progress?.Report($"Bulk creation completed. Applying settings to {layers.Count} layers...");
+            System.Diagnostics.Debug.WriteLine($"Bulk creation result: {layers.Count} layers created from {uris.Count} URIs");
+
+            for (int i = 0; i < layers.Count && i < layerNames.Count; i++)
+            {
+                if (layers[i] != null)
+                {
+                    layers[i].SetName(layerNames[i]);
+
+                    if (layers[i] is FeatureLayer featureLayer)
+                    {
+                        ApplyLayerSettings(featureLayer);
+                    }
+
+                    if (i % 3 == 0 || i == layers.Count - 1)
+                    {
+                        progress?.Report($"Configured layer {i + 1} of {layers.Count}: {layerNames[i]}");
+                    }
+                    System.Diagnostics.Debug.WriteLine($"Successfully added layer: {layerNames[i]}");
+                }
+            }
+
+            progress?.Report($"✅ Successfully added {layers.Count} layers with optimal stacking order!");
+            System.Diagnostics.Debug.WriteLine($"Bulk layer creation completed. Added {layers.Count} layers.");
+
+            RepositionBuildingsLayer(map, sortedLayers, progress);
+
+            if (layers.Count < uris.Count)
+            {
+                progress?.Report($"Some layers missing from bulk creation ({layers.Count}/{uris.Count}). Creating missing layers individually...");
+                System.Diagnostics.Debug.WriteLine($"Bulk creation incomplete: {layers.Count}/{uris.Count} layers created. Falling back for missing layers...");
+
+                var createdLayerNames = layers.Select(l => l.Name).ToHashSet();
+                return sortedLayers.Where(layerInfo =>
+                    File.Exists(layerInfo.FilePath) &&
+                    !createdLayerNames.Contains(layerInfo.LayerName)).ToList();
+            }
+
+            return null;
+        }
+
+        private static void RepositionBuildingsLayer(Map map, List<LayerCreationInfo> sortedLayers, IProgress<string> progress)
+        {
+            var buildingsLayer = map.Layers.FirstOrDefault(l => l != null && l.Name.Contains("Building", StringComparison.OrdinalIgnoreCase));
+
+            if (buildingsLayer == null)
+                return;
+
+            var lineLayerNames = sortedLayers
+                .Where(l => l.StackingPriority == 2)
+                .Select(l => l.LayerName)
+                .ToList();
+
+            var firstLineLayer = map.Layers.FirstOrDefault(l => l != null && lineLayerNames.Contains(l.Name));
+
+            if (firstLineLayer != null)
+            {
+                int firstLineIndex = map.Layers.IndexOf(firstLineLayer);
+                int buildingsIndex = map.Layers.IndexOf(buildingsLayer);
+
+                if (buildingsIndex != firstLineIndex - 1)
+                {
+                    try
+                    {
+                        int targetIndex = firstLineIndex - 1;
+                        map.MoveLayer(buildingsLayer, targetIndex);
+                        System.Diagnostics.Debug.WriteLine($"Moved Buildings layer from index {buildingsIndex} to {targetIndex} (right before first line layer at {firstLineIndex})");
+                        progress?.Report($"Moved Buildings layer to top of polygon layers");
+                    }
+                    catch (Exception moveEx)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Warning: Could not move Buildings layer: {moveEx.Message}");
+                    }
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"Buildings layer already in correct position (index {buildingsIndex}, right before first line at {firstLineIndex})");
+                }
+            }
+            else
+            {
+                int buildingsIndex = map.Layers.IndexOf(buildingsLayer);
+                int lastIndex = map.Layers.Count - 1;
+
+                if (buildingsIndex != lastIndex)
+                {
+                    try
+                    {
+                        map.MoveLayer(buildingsLayer, lastIndex);
+                        System.Diagnostics.Debug.WriteLine($"Moved Buildings layer from index {buildingsIndex} to {lastIndex} (last layer)");
+                        progress?.Report($"Moved Buildings layer to top of polygon layers");
+                    }
+                    catch (Exception moveEx)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Warning: Could not move Buildings layer: {moveEx.Message}");
+                    }
                 }
             }
         }
 
+        private async Task AddLayerWithFallback(Map map, LayerCreationInfo layerInfo, IProgress<string> progress)
+        {
+            try
+            {
+                await AddLayerToMapAsync(layerInfo.FilePath, layerInfo.LayerName, progress);
+            }
+            catch (Exception ex)
+            {
+                progress?.Report($"Error adding layer {layerInfo.LayerName}: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error in fallback layer creation for {layerInfo.LayerName}: {ex.Message}");
+            }
+        }
+
+        private async Task AddLayersWithFallbackBatch(List<LayerCreationInfo> layers, IProgress<string> progress)
+        {
+            if (layers == null || layers.Count == 0)
+                return;
+
+            await QueuedTask.Run(() =>
+            {
+                var map = MapView.Active?.Map;
+                if (map == null)
+                {
+                    progress?.Report("Error: No active map found to add layer(s).");
+                    System.Diagnostics.Debug.WriteLine("AddLayersWithFallbackBatch: No active map found.");
+                    return;
+                }
+
+                foreach (var layerInfo in layers)
+                {
+                    if (!File.Exists(layerInfo.FilePath))
+                    {
+                        progress?.Report($"Error: Parquet file not found at {layerInfo.FilePath}");
+                        System.Diagnostics.Debug.WriteLine($"AddLayersWithFallbackBatch: Parquet file not found at {layerInfo.FilePath}");
+                        continue;
+                    }
+
+                    try
+                    {
+                        Uri dataUri = new(layerInfo.FilePath);
+                        Layer newLayer = LayerFactory.Instance.CreateLayer(dataUri, map, layerName: layerInfo.LayerName);
+                        if (newLayer == null)
+                        {
+                            progress?.Report($"Error: Could not create layer for {layerInfo.LayerName}.");
+                            System.Diagnostics.Debug.WriteLine($"AddLayersWithFallbackBatch: LayerFactory returned null for {layerInfo.FilePath}");
+                            continue;
+                        }
+
+                        if (newLayer is FeatureLayer featureLayer)
+                        {
+                            ApplyLayerSettings(featureLayer);
+                        }
+
+                        progress?.Report($"Successfully added layer: {newLayer?.Name ?? layerInfo.LayerName}");
+                        System.Diagnostics.Debug.WriteLine($"AddLayersWithFallbackBatch: Added layer {newLayer?.Name ?? layerInfo.LayerName}");
+                    }
+                    catch (Exception ex)
+                    {
+                        progress?.Report($"Error adding layer {layerInfo.LayerName}: {ex.Message}");
+                        System.Diagnostics.Debug.WriteLine($"AddLayersWithFallbackBatch: Error adding layer {layerInfo.LayerName}: {ex.Message}");
+                    }
+                }
+            });
+        }
+
+        /// <summary>
+        /// Ensure the target file path is available for writing; tries to delete if it exists, with retries.
+        /// If still locked, returns a unique alternate path.
+        /// </summary>
+        private static async Task<string> EnsureTargetFileAvailableAsync(string targetPath)
+        {
+            const int maxAttempts = 3;
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    if (File.Exists(targetPath))
+                    {
+                        File.Delete(targetPath);
+                    }
+                    return targetPath;
+                }
+                catch (IOException ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Attempt {attempt} to delete {targetPath} failed: {ex.Message}.");
+                    if (attempt < maxAttempts)
+                    {
+                        System.Diagnostics.Debug.WriteLine("Retrying...");
+                        await Task.Delay(attempt * 200);
+                    }
+                }
+            }
+
+            // All attempts failed; return a unique alternative path so the caller can still write
+            string altPath = Path.Combine(
+                Path.GetDirectoryName(targetPath) ?? string.Empty,
+                $"{Path.GetFileNameWithoutExtension(targetPath)}_{Guid.NewGuid():N}{Path.GetExtension(targetPath)}");
+
+            System.Diagnostics.Debug.WriteLine($"Target file locked after retries. Using alternate path: {altPath}");
+            return altPath;
+        }
+
+        private async Task FallbackToIndividualLayerCreation(List<LayerCreationInfo> layers, IProgress<string> progress)
+        {
+            await AddLayersWithFallbackBatch(layers, progress);
+        }
+
         /// <summary>
         /// Applies consistent settings to feature layers (cache, feature reduction, etc.)
+        /// Note: In Pro 3.5, accessing layer definitions for Parquet files may trigger domain lookups that fail
         /// </summary>
         private static void ApplyLayerSettings(FeatureLayer featureLayer)
         {
@@ -1093,6 +1507,12 @@ namespace DuckDBGeoparquet.Services
                     featureLayer.SetDefinition(layerDef);
                     System.Diagnostics.Debug.WriteLine($"Applied settings to layer: {featureLayer.Name}");
                 }
+            }
+            catch (ArgumentException ex) when (ex.Message.Contains("domain") || ex.Message.Contains("Domain") || ex.Message.Contains("not supported"))
+            {
+                // Pro 3.5 limitation: Parquet files don't support domains
+                // Layer is still usable without these settings
+                System.Diagnostics.Debug.WriteLine($"Info: Skipping layer settings for {featureLayer.Name} (domain access not supported for Parquet in Pro 3.5): {ex.Message}");
             }
             catch (Exception ex)
             {
@@ -1171,13 +1591,15 @@ namespace DuckDBGeoparquet.Services
                     return;
                 }
 
+                Layer newLayer = null;
                 try
                 {
                     // Create a URI for the Parquet file
                     Uri dataUri = new(parquetFilePath);
 
                     // Create the layer using LayerFactory
-                    Layer newLayer = LayerFactory.Instance.CreateLayer(dataUri, map, layerName: layerName);
+                    // Note: In Pro 3.5, this may succeed but subsequent property access may fail
+                    newLayer = LayerFactory.Instance.CreateLayer(dataUri, map, layerName: layerName);
 
                     if (newLayer == null)
                     {
@@ -1187,6 +1609,8 @@ namespace DuckDBGeoparquet.Services
                     }
 
                     // Attempt to set cache settings to None for performance with potentially large/dynamic datasets
+                    // Note: In Pro 3.5, accessing layer definitions for Parquet files may trigger domain lookups
+                    // that fail, so we wrap this in comprehensive error handling
                     if (newLayer is FeatureLayer featureLayerForCacheSettings)
                     {
                         try
@@ -1200,13 +1624,21 @@ namespace DuckDBGeoparquet.Services
                                 System.Diagnostics.Debug.WriteLine($"Successfully set DisplayCacheType and FeatureCacheType to None for {featureLayerForCacheSettings.Name}.");
                             }
                         }
+                        catch (ArgumentException ex) when (ex.Message.Contains("domain") || ex.Message.Contains("Domain"))
+                        {
+                            // Pro 3.5 may try to access domains which Parquet files don't support
+                            // This is a known limitation - continue without setting cache options
+                            System.Diagnostics.Debug.WriteLine($"Info: Skipping cache settings for {featureLayerForCacheSettings.Name} (domain access not supported for Parquet in Pro 3.5): {ex.Message}");
+                        }
                         catch (Exception ex)
                         {
+                            // Log but continue - layer is still usable without these settings
                             System.Diagnostics.Debug.WriteLine($"Warning: Failed to set cache options for layer {featureLayerForCacheSettings.Name}: {ex.Message}");
                         }
                     }
 
-                    // Specific handling for address layers to disable feature reduction/binning by default
+                    // Specific handling to disable feature reduction/binning by default
+                    // Note: In Pro 3.5, accessing layer definitions for Parquet files may trigger domain lookups
                     if (newLayer is FeatureLayer featureLayer) // Apply to all FeatureLayers
                     {
                         try
@@ -1235,23 +1667,57 @@ namespace DuckDBGeoparquet.Services
                                 // If layerDef.FeatureReduction is null, no feature reduction is configured, so nothing to do.
                             }
                         }
+                        catch (ArgumentException ex) when (ex.Message.Contains("domain") || ex.Message.Contains("Domain") || ex.Message.Contains("not supported"))
+                        {
+                            // Pro 3.5 may try to access domains or unsupported operations for Parquet files
+                            // This is a known limitation - continue without modifying feature reduction
+                            System.Diagnostics.Debug.WriteLine($"Info: Skipping feature reduction settings for {featureLayer.Name} (domain/operation not supported for Parquet in Pro 3.5): {ex.Message}");
+                        }
                         catch (Exception ex)
                         {
-                            // Log any errors during the process
+                            // Log any errors during the process but continue
                             System.Diagnostics.Debug.WriteLine($"Warning: Failed to access or modify feature reduction for layer {featureLayer.Name}: {ex.Message}");
                         }
                     }
 
-                    progress?.Report($"Successfully added layer: {newLayer.Name}");
-                    System.Diagnostics.Debug.WriteLine($"AddLayerToMapAsync: Successfully added layer {newLayer.Name} to map {map.Name}");
+                    // If we got here, layer was created successfully
+                    // Even if property access failed, the layer is usable
+                    progress?.Report($"Successfully added layer: {newLayer?.Name ?? layerName}");
+                    System.Diagnostics.Debug.WriteLine($"AddLayerToMapAsync: Successfully added layer {newLayer?.Name ?? layerName} to map {map.Name}");
+                }
+                catch (ArgumentException ex) when (ex.Message.Contains("domain") || ex.Message.Contains("Domain") || ex.Message.Contains("not supported"))
+                {
+                    // Pro 3.5 limitation: Parquet files don't support domains
+                    // If layer was created, it's still usable even if property access failed
+                    if (newLayer != null)
+                    {
+                        progress?.Report($"Layer {layerName} added (some properties unavailable in Pro 3.5)");
+                        System.Diagnostics.Debug.WriteLine($"AddLayerToMapAsync: Layer {layerName} added with limitations (domain access not supported): {ex.Message}");
+                    }
+                    else
+                    {
+                        // Layer creation itself failed
+                        progress?.Report($"Error: Could not create layer {layerName} (Parquet limitation in Pro 3.5): {ex.Message}");
+                        System.Diagnostics.Debug.WriteLine($"AddLayerToMapAsync: Failed to create layer {layerName}: {ex.Message}");
+                        throw; // Re-throw if layer creation failed
+                    }
                 }
                 catch (Exception ex)
                 {
-                    progress?.Report($"Error adding layer {layerName} to map: {ex.Message}");
-                    System.Diagnostics.Debug.WriteLine($"AddLayerToMapAsync: Error adding layer {layerName} from {parquetFilePath}: {ex.Message}");
-                    System.Diagnostics.Debug.WriteLine($"Stack trace: {ex.StackTrace}");
-                    // Optionally, show a message box to the user if critical
-                    // ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show($"Failed to add layer {layerName}:\n{ex.Message}", "Layer Error", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+                    // If layer was created, report success with warning
+                    if (newLayer != null)
+                    {
+                        progress?.Report($"Layer {layerName} added (with warnings: {ex.Message})");
+                        System.Diagnostics.Debug.WriteLine($"AddLayerToMapAsync: Layer {layerName} added but encountered error: {ex.Message}");
+                    }
+                    else
+                    {
+                        // Layer creation failed completely
+                        progress?.Report($"Error adding layer {layerName} to map: {ex.Message}");
+                        System.Diagnostics.Debug.WriteLine($"AddLayerToMapAsync: Error adding layer {layerName} from {parquetFilePath}: {ex.Message}");
+                        System.Diagnostics.Debug.WriteLine($"Stack trace: {ex.StackTrace}");
+                        throw; // Re-throw if layer creation failed
+                    }
                 }
             });
         }
