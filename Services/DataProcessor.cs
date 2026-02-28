@@ -46,8 +46,9 @@ namespace DuckDBGeoparquet.Services
         {
             ExtentInfo extentInfo = null;
             
-            if (extent != null && extent is Envelope env)
+            if (extent != null && extent is Envelope)
             {
+                var env = (Envelope)extent;
                 extentInfo = new ExtentInfo
                 {
                     XMin = env.XMin,
@@ -263,7 +264,7 @@ namespace DuckDBGeoparquet.Services
                 try
                 {
                     var parameters = Geoprocessing.MakeValueArray(featureLayer, styleFilePath);
-                    await Geoprocessing.ExecuteToolAsync("management.ApplySymbologyFromLayer", parameters, null, GPExecuteToolFlags.Default);
+                    await Geoprocessing.ExecuteToolAsync("management.ApplySymbologyFromLayer", parameters, null, null, GPExecuteToolFlags.Default);
                 }
                 catch (Exception ex)
                 {
