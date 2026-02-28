@@ -1,4 +1,4 @@
-﻿# ArcGIS Pro GeoParquet Add‑in
+# ArcGIS Pro GeoParquet Add‑in
 
 A powerful ArcGIS Pro add-in that simplifies working with cloud-native geospatial data formats, especially GeoParquet files. This tool uses [DuckDB](https://duckdb.org/) to deliver high-performance data processing directly within ArcGIS Pro, making it ideal for both GIS professionals and newcomers alike.
 
@@ -126,7 +126,10 @@ Watch the add-in in action loading Overture Maps data with incredible performanc
   - `WizardDockpane.xaml` / `WizardDockpane.xaml.cs`: The UI components
   - `WizardDockpaneViewModel.cs`: ViewModel controlling the UI logic
 - **Services/**  
-  - `DataProcessor.cs`: Core data handling using DuckDB
+  - `DataProcessor.cs`: Core data handling, DuckDB integration, and layer creation
+  - `MfcUtility.cs`: Multifile Feature Connection (MFC) generation
+  - `ArcGISProVersionHelper.cs`: ArcGIS Pro version detection
+  - `CacheManager.cs`: Parquet cache management (Pro 3.6+)
 - **DuckDBGeoparquetModule.cs**: Main module class
 - **Config.daml**: Add-in manifest defining components
 

@@ -178,6 +178,6 @@ git push origin v0.1.4
 
 For issues or questions:
 - Check the workflow logs in GitHub Actions
-- Review the PowerShell script: `.github/workflows/publish-agol.ps1`
+- Review the publishing script: `.github/workflows/publish-agol.py`
 - Open an issue in the repository
 

@@ -343,41 +343,6 @@ namespace DuckDBGeoparquet.Services
                                 setupCmd.CommandText = "FORCE INSTALL spatial; LOAD spatial;";
                                 await setupCmd.ExecuteNonQueryAsync();
                                 logAction("DuckDB spatial extension FORCE INSTALLED and LOADED successfully.");
-
-                                // Diagnostic check for spatial functions
-                                using (var checkCmd = duckDBConnection.CreateCommand())
-                                {
-                                    checkCmd.CommandText = "SELECT function_name FROM duckdb_functions() WHERE function_name ILIKE 'st_srid' OR function_name ILIKE 'st_geometrytype' ORDER BY function_name;";
-                                    logAction($"Executing diagnostic query: {checkCmd.CommandText}");
-                                    using (var reader = await checkCmd.ExecuteReaderAsync())
-                                    {
-                                        bool foundSrid = false;
-                                        bool foundGeomType = false;
-                                        while (await reader.ReadAsync())
-                                        {
-                                            string funcName = reader.GetString(0);
-                                            logAction($"Found function via diagnostic query: {funcName}");
-                                            if (funcName.ToLowerInvariant() == "st_srid") foundSrid = true;
-                                            if (funcName.ToLowerInvariant() == "st_geometrytype") foundGeomType = true;
-                                        }
-                                        if (foundSrid && foundGeomType)
-                                        {
-                                            logAction("Diagnostic check: ST_SRID and ST_GeometryType ARE listed in duckdb_functions().");
-                                        }
-                                        else if (foundSrid)
-                                        {
-                                            logAction("Diagnostic check: ST_SRID IS listed, but ST_GeometryType IS NOT.");
-                                        }
-                                        else if (foundGeomType)
-                                        {
-                                            logAction("Diagnostic check: ST_GeometryType IS listed, but ST_SRID IS NOT.");
-                                        }
-                                        else
-                                        {
-                                            logAction("Diagnostic check: NEITHER ST_SRID NOR ST_GeometryType are listed in duckdb_functions(). This is the core issue.");
-                                        }
-                                    }
-                                }
                                 spatialLoaded = true;
                             }
                             catch (Exception forceEx)

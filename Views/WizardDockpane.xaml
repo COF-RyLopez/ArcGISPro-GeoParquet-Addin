@@ -41,7 +41,7 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Manual release (offline):" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <TextBox Grid.Column="1" Text="{Binding ManualReleaseText, UpdateSourceTrigger=PropertyChanged}" Style="{DynamicResource Esri_TextBox}"/>
+                    <TextBox Grid.Column="1" Text="{Binding ManualReleaseText, UpdateSourceTrigger=PropertyChanged}" />
                     <Button Grid.Column="2" Content="Apply" Command="{Binding ApplyManualReleaseCommand}" Style="{DynamicResource Esri_Button}" Margin="8,0,0,0"/>
                 </Grid>
             </Border>
@@ -85,7 +85,6 @@
                                                         <DataTemplate DataType="{x:Type local:SelectableThemeItem}">
                                                             <CheckBox Content="{Binding DisplayName}" 
                                                                       IsChecked="{Binding IsSelected, Mode=TwoWay}" 
-                                                                      Style="{DynamicResource Esri_CheckBox}" 
                                                                       Margin="0,2,0,2"
                                                                       />
                                                         </DataTemplate>
@@ -137,7 +136,7 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Data Output Location:" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                    <TextBox Grid.Column="1" Text="{Binding DataOutputPath}" VerticalAlignment="Center" IsReadOnly="True" Margin="0,0,4,0" Style="{DynamicResource Esri_TextBox}"/>
+                                    <TextBox Grid.Column="1" Text="{Binding DataOutputPath}" VerticalAlignment="Center" IsReadOnly="True" Margin="0,0,4,0" />
                                     <Button Grid.Column="2" Content="Browse..." Style="{DynamicResource Esri_Button}" Command="{Binding BrowseDataLocationCommand}" Width="70"/>
                                 </Grid>
                                 <Grid Margin="0,4,0,4">
@@ -146,9 +145,9 @@
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Compression:" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                    <ComboBox Grid.Column="1" ItemsSource="{Binding CompressionOptions}" SelectedItem="{Binding SelectedCompression}" Style="{DynamicResource Esri_ComboBox}" VerticalAlignment="Center"/>
+                                    <ComboBox Grid.Column="1" ItemsSource="{Binding CompressionOptions}" SelectedItem="{Binding SelectedCompression}"  VerticalAlignment="Center"/>
                                 </Grid>
-                                <TextBlock TextWrapping="Wrap" Margin="0,2,0,0" Style="{DynamicResource Esri_TextBlockSmall}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+                                <TextBlock TextWrapping="Wrap" Margin="0,2,0,0" Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
                                     <Run Text="ZSTD: Best compression ratio (recommended). "/>
                                     <Run Text="SNAPPY: Fast compression, larger files. "/>
                                     <Run Text="GZIP: Good balance of speed and size."/>
@@ -209,7 +208,7 @@
                         <!-- Action Buttons -->
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
                             <Button Content="Cancel" Command="{Binding CancelCommand}" Style="{DynamicResource Esri_Button}" Margin="0,0,8,0" Width="80"/>
-                            <Button Content="Load Data" Command="{Binding LoadDataCommand}" Style="{DynamicResource Esri_ButtonBlue}" Width="100"/>
+                            <Button Content="Load Data" Command="{Binding LoadDataCommand}" Style="{DynamicResource Esri_Button}" Width="100"/>
                         </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
@@ -226,7 +225,7 @@
                             Margin="0,0,0,12">
                         <StackPanel>
                             <TextBlock Text="{Binding StatusText}" Style="{DynamicResource Esri_TextBlockRegular}" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}" TextWrapping="Wrap" Margin="0,0,0,4"/>
-                            <ProgressBar Value="{Binding ProgressValue}" Height="20" Margin="0,4,0,0" Style="{DynamicResource Esri_ProgressBar}"/>
+                            <ProgressBar Value="{Binding ProgressValue}" Height="20" Margin="0,4,0,0" />
                         </StackPanel>
                     </Border>
                     <TextBlock Text="Log Output" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,4"/>
@@ -238,8 +237,7 @@
                         <TextBox x:Name="LogTextBox" Height="300" IsReadOnly="True" Text="{Binding LogOutputText, Mode=OneWay}" 
                                  TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,0,0,12" 
                                  FontFamily="Consolas" Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}" 
-                                 Foreground="{DynamicResource Esri_TextControlBrush}" Style="{DynamicResource Esri_TextBoxMedium}"
-                                 TextChanged="LogTextBox_TextChanged"/>
+                                 Foreground="{DynamicResource Esri_TextControlBrush}"                                 TextChanged="LogTextBox_TextChanged"/>
                     </Border>
 
                     <!-- Navigation Buttons -->
@@ -350,7 +348,7 @@
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Cache Location:" FontWeight="SemiBold" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                    <TextBox Grid.Column="1" Text="{Binding CacheLocation}" IsReadOnly="True" Style="{DynamicResource Esri_TextBox}" VerticalAlignment="Center"/>
+                                    <TextBox Grid.Column="1" Text="{Binding CacheLocation}" IsReadOnly="True"  VerticalAlignment="Center"/>
                                 </Grid>
                                 <Grid Margin="0,4,0,4">
                                     <Grid.ColumnDefinitions>
@@ -393,9 +391,9 @@
         <!-- Loading Overlay -->
         <Grid Grid.Row="1" Background="{DynamicResource Esri_DockPaneClientAreaBackgroundBrush}" Visibility="{Binding IsLoading, Converter={StaticResource BooleanToVisibilityConverter}}">
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                <ProgressBar Style="{DynamicResource Esri_ProgressBar}" IsIndeterminate="True" Width="200" Height="10" Margin="0,0,0,8"/>
+                <ProgressBar  IsIndeterminate="True" Width="200" Height="10" Margin="0,0,0,8"/>
                 <TextBlock Text="Initializing Overture Maps Data Loader..." Style="{DynamicResource Esri_TextBlockRegular}" Foreground="{DynamicResource Esri_TextStyleEmphasisBrush}" HorizontalAlignment="Center"/>
-                <TextBlock Text="Please wait while we set things up" Style="{DynamicResource Esri_TextBlockSmall}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}" Opacity="0.7" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+                <TextBlock Text="Please wait while we set things up" Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}" Opacity="0.7" Margin="0,4,0,0" HorizontalAlignment="Center"/>
             </StackPanel>
         </Grid>
     </Grid>

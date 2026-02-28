@@ -1718,6 +1718,17 @@ namespace DuckDBGeoparquet.Views
             string actualS3Type = item.ActualType;
             string itemDisplayName = item.DisplayName;
 
+            if (_skipExistingData)
+            {
+                var existingFolder = Path.Combine(DataOutputPath, actualS3Type);
+                if (Directory.Exists(existingFolder) && Directory.EnumerateFiles(existingFolder, "*.parquet").Any())
+                {
+                    AddToLog($"Skipping {itemDisplayName} (existing data kept per user choice)");
+                    StatusText = $"Skipping {itemDisplayName} (existing data found)";
+                    return true;
+                }
+            }
+
             StatusText = $"Processing {itemIndex + 1} of {totalCount}: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}";
             AddToLog($"Processing: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}");
             AddToLog($"Data type for S3: theme='{parentS3Theme}', type='{actualS3Type}'");
@@ -1732,17 +1743,6 @@ namespace DuckDBGeoparquet.Views
             System.Diagnostics.Debug.WriteLine($"Loading from S3 path: {s3Path}");
 
             await Task.Delay(50);
-
-            if (_skipExistingData)
-            {
-                var existingFolder = Path.Combine(DataOutputPath, actualS3Type);
-                if (Directory.Exists(existingFolder) && Directory.EnumerateFiles(existingFolder, "*.parquet").Any())
-                {
-                    AddToLog($"Skipping {itemDisplayName} (existing data kept per user choice)");
-                    StatusText = $"Skipping {itemDisplayName} (existing data found)";
-                    return true;
-                }
-            }
 
             var ingestProgressReporter = new Progress<string>(status =>
             {

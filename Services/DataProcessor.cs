@@ -365,26 +365,6 @@ namespace DuckDBGeoparquet.Services
                     throw;
                 }
 
-                // Ensure geometries carry an SRID (ArcGIS Pro requires a defined spatial reference)
-                try
-                {
-                    command.CommandText = "SELECT COUNT(*) FROM duckdb_functions() WHERE function_name ILIKE 'st_setsrid' OR function_name ILIKE 'st_srid';";
-                    var sridFuncs = Convert.ToInt32(await command.ExecuteScalarAsync(CancellationToken.None));
-                    if (sridFuncs >= 2)
-                    {
-                        command.CommandText = "UPDATE current_table SET geometry = ST_SetSRID(geometry, 4326) WHERE ST_SRID(geometry) = 0;";
-                        await command.ExecuteNonQueryAsync(CancellationToken.None);
-                    }
-                    else
-                    {
-                        System.Diagnostics.Debug.WriteLine("Info: ST_SetSRID/ST_SRID not available in this DuckDB build; skipping SRID update.");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Warning: Could not set SRID on current_table geometries: {ex.Message}");
-                }
-
                 command.CommandText = "SELECT COUNT(*) FROM current_table";
                 var count = await command.ExecuteScalarAsync(CancellationToken.None);
                 progress?.Report($"Successfully loaded {count:N0} rows from S3");
