@@ -9,6 +9,9 @@
 		<NoWarn>CA1416</NoWarn>
 		<PlatformTarget>x64</PlatformTarget>
 		<EnableWindowsTargeting>true</EnableWindowsTargeting>
+		<IsTestProject>false</IsTestProject>
+		<GenerateProgramFile>false</GenerateProgramFile>
+		<OutputType>Library</OutputType>
 	</PropertyGroup>
 	<ItemGroup>
 		<Compile Remove="DuckDBGeoparquet.Tests\**" />
