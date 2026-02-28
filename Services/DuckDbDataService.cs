@@ -272,7 +272,7 @@ namespace DuckDBGeoparquet.Services
 
                 try
                 {
-                    (string actualFilePath, double exportedArea) = await ExportToGeoParquet(query, outputPath, finalLayerName, progress);
+                    (string actualFilePath, double exportedArea) = await ExportToGeoParquet(query, outputPath, finalLayerName, geomType, progress);
 
                     if (File.Exists(actualFilePath))
                     {
@@ -301,15 +301,15 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        private async Task<(string FilePath, double Area)> ExportToGeoParquet(string query, string outputPath, string _layerName, IProgress<string> progress = null)
+        private async Task<(string FilePath, double Area)> ExportToGeoParquet(string query, string outputPath, string _layerName, string geomType, IProgress<string> progress = null)
         {
             progress?.Report($"Exporting data for {_layerName} to {Path.GetFileName(outputPath)}");
 
             double avgArea = 0.0;
-            if (query.Contains("POLYGON", StringComparison.OrdinalIgnoreCase) || query.Contains("LINESTRING", StringComparison.OrdinalIgnoreCase))
+            if (geomType.Contains("POLYGON", StringComparison.OrdinalIgnoreCase) || geomType.Contains("LINESTRING", StringComparison.OrdinalIgnoreCase))
             {
                 using var areaCommand = _connection.CreateCommand();
-                string areaQuery = $"SELECT AVG(ST_Area(geometry)) FROM current_table WHERE ST_GeometryType(geometry) = '{query.Split(''')[1]}'";
+                string areaQuery = $"SELECT AVG(ST_Area(geometry)) FROM current_table WHERE ST_GeometryType(geometry) = '{geomType}'";
                 areaCommand.CommandText = areaQuery;
                 var areaResult = await areaCommand.ExecuteScalarAsync(CancellationToken.None);
                 if (areaResult != DBNull.Value && areaResult != null)
