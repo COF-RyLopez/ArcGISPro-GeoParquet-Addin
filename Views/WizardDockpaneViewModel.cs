@@ -1724,7 +1724,8 @@ namespace DuckDBGeoparquet.Views
                 if (Directory.Exists(existingFolder) && Directory.EnumerateFiles(existingFolder, "*.parquet").Any())
                 {
                     AddToLog($"Skipping {itemDisplayName} (existing data kept per user choice)");
-                    StatusText = $"Skipping {itemDisplayName} (existing data found)";
+                    StatusText = $"Skipping {itemDisplayName} ({processedCount + 1}/{totalCount})";
+                    ProgressValue = ((processedCount + 1) * 100.0) / totalCount;
                     return true;
                 }
             }
