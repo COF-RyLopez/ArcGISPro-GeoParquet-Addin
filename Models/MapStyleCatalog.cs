@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 
 namespace DuckDBGeoparquet.Models
 {
@@ -9,12 +10,55 @@ namespace DuckDBGeoparquet.Models
     /// </summary>
     public static class MapStyleCatalog
     {
-        public static List<MapStyleDefinition> AllStyles { get; } = new()
+        public static List<MapStylePack> StylePacks { get; } = new()
         {
-            CreateStreetsStyle(),
-            CreateStreetsNightStyle(),
-            CreateLightGrayCanvasStyle(),
+            CreateOpenBasemapPack(),
+            CreateExperimentalPack(),
         };
+
+        public static List<MapStyleDefinition> AllStyles { get; } = StylePacks
+            .SelectMany(pack => pack.Styles)
+            .ToList();
+
+        private static MapStylePack CreateOpenBasemapPack()
+        {
+            var pack = new MapStylePack
+            {
+                Id = "esri_open_basemap",
+                DisplayName = "Esri Open Basemap",
+                Description = "Core basemap-aligned cartography derived from Esri Open Basemap themes.",
+                Category = "Official",
+                IsExperimental = false,
+                Styles = new List<MapStyleDefinition>
+                {
+                    CreateStreetsStyle(),
+                    CreateStreetsNightStyle(),
+                    CreateLightGrayCanvasStyle(),
+                }
+            };
+
+            ApplyPackMetadata(pack);
+            return pack;
+        }
+
+        private static MapStylePack CreateExperimentalPack()
+        {
+            var pack = new MapStylePack
+            {
+                Id = "community_experimental",
+                DisplayName = "Community Experimental",
+                Description = "Artist-inspired and in-progress style experiments.",
+                Category = "Experimental",
+                IsExperimental = true,
+                Styles = new List<MapStyleDefinition>
+                {
+                    CreateNewAmsterdamStylxStyle(),
+                }
+            };
+
+            ApplyPackMetadata(pack);
+            return pack;
+        }
 
         private static MapStyleDefinition CreateStreetsStyle()
         {
@@ -307,6 +351,125 @@ namespace DuckDBGeoparquet.Models
 
                 RoadClassColors = roadClassColors,
                 RoadClassWidths = roadClassWidths,
+            };
+        }
+
+        private static MapStyleDefinition CreateNewAmsterdamStylxStyle()
+        {
+            // Keep the existing Streets palette as a fallback when a style item cannot be resolved
+            // from the .stylx source.
+            var style = CreateStreetsStyle();
+            style.Id = "new_amsterdam_stylx";
+            style.DisplayName = "New Amsterdam";
+            style.Description = "Stylx-based cartography inspired by John Nelson's New Amsterdam style.";
+            style.ThumbnailResourceKey = "StyleThumb_NewAmsterdam";
+            style.ThumbnailUri = "pack://application:,,,/DuckDBGeoparquet;component/Images/Styles/streets_thumb.png";
+
+            style.UseStylxSymbols = true;
+            style.StylxPath = "NewAmsterdam.stylx";
+
+            style.StylxTypeGeometrySymbolKeys = new Dictionary<string, string>
+            {
+                { "place:point", "Place" },
+                // Force fallback to palette markers for ultra-dense point themes.
+                { "address:point", "" },
+                { "connector:point", "" },
+                { "infrastructure:point", "" },
+                { "land:point", "" },
+                { "division:point", "" },
+                { "division_boundary:line", "Boundary" },
+                // Performance safe mode: use palette fallback for dense polygon themes by default.
+                { "water:polygon", "" },
+                { "building:polygon", "" },
+                { "building_part:polygon", "" },
+                { "division_area:polygon", "" },
+                { "land_use:polygon", "" },
+                { "land_cover:polygon", "" },
+                { "bathymetry:polygon", "" },
+                { "land:polygon", "" },
+                { "infrastructure:polygon", "" },
+            };
+
+            style.StylxSegmentClassSymbolKeys = new Dictionary<string, string>();
+
+            // No default stylx symbol fallback; use stylx only for explicit type/geometry mappings above.
+            style.StylxDefaultPointSymbolKey = null;
+            style.StylxDefaultLineSymbolKey = null;
+            style.StylxDefaultPolygonSymbolKey = null;
+
+            // Tone down dense point layers in this theme.
+            style.AddressPointColor = "#6E6E6E";
+            style.AddressPointSize = 1.6;
+            style.ConnectorColor = "#6B6B6B";
+            style.ConnectorSize = 1.8;
+            style.PlaceDefaultColor = "#6E5842";
+            style.PlaceDefaultSize = 3.0;
+
+            return style;
+        }
+
+        private static void ApplyPackMetadata(MapStylePack pack)
+        {
+            if (pack?.Styles == null)
+                return;
+
+            foreach (var style in pack.Styles)
+            {
+                if (style == null)
+                    continue;
+
+                style.StylePackId = pack.Id;
+                style.StylePackName = pack.DisplayName;
+                style.StyleCategory = pack.Category;
+                style.IsExperimental = pack.IsExperimental;
+                style.DrawOrderRanks ??= CreateDefaultDrawOrderRanks();
+            }
+        }
+
+        private static Dictionary<string, int> CreateDefaultDrawOrderRanks()
+        {
+            // Higher rank draws above lower rank.
+            // This default favors operational readability:
+            // points and transportation above context polygons, with buildings above base fills.
+            return new Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase)
+            {
+                // Point overlays
+                { "place:point", 130 },
+                { "division:point", 126 },
+                { "address:point", 118 },
+                { "connector:point", 114 },
+                { "infrastructure:point", 112 },
+                { "land:point", 108 },
+                { "water:point", 106 },
+
+                // Linear networks and boundaries
+                { "segment:line", 104 },
+                { "division_boundary:line", 100 },
+                { "infrastructure:line", 96 },
+                { "water:line", 94 },
+                { "land_use:line", 92 },
+                { "land:line", 90 },
+
+                // Polygonal overlays
+                { "building:polygon", 86 },
+                { "building_part:polygon", 84 },
+                { "infrastructure:polygon", 78 },
+                { "division_area:polygon", 76 },
+                { "division:polygon", 74 },
+                { "land_use:polygon", 72 },
+                { "land_cover:polygon", 68 },
+                { "land:polygon", 64 },
+                { "bathymetry:polygon", 60 },
+                { "water:polygon", 56 },
+
+                // Type-only fallbacks
+                { "building", 86 },
+                { "building_part", 84 },
+                { "segment", 104 },
+                { "address", 118 },
+                { "place", 130 },
+                { "bathymetry", 60 },
+                { "water", 56 },
             };
         }
     }

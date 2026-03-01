@@ -167,7 +167,17 @@
                                            Style="{DynamicResource Esri_TextBlockH7}">
                                     Choose a cartographic style for your layers, inspired by Esri Open Basemap themes. Select "None" to use default ArcGIS Pro symbology.
                                 </TextBlock>
-                                <ListBox ItemsSource="{Binding AvailableMapStyles}"
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <TextBlock Text="Style Group:"
+                                               VerticalAlignment="Center"
+                                               Margin="0,0,6,0"
+                                               Style="{DynamicResource Esri_TextBlockH7}"
+                                               Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                    <ComboBox ItemsSource="{Binding MapStyleCategoryFilters}"
+                                              SelectedItem="{Binding SelectedMapStyleCategory, Mode=TwoWay}"
+                                              Width="130"/>
+                                </StackPanel>
+                                <ListBox ItemsSource="{Binding FilteredMapStyles}"
                                          SelectedItem="{Binding SelectedMapStyle, Mode=TwoWay}"
                                          BorderThickness="0"
                                          Background="Transparent"
@@ -242,15 +252,19 @@
                                     <Button Content="Clear Selection"
                                             Command="{Binding ClearMapStyleCommand}"
                                             Style="{DynamicResource Esri_Button}"
-                                            Padding="8,2"
-                                            FontSize="11"/>
+                                            Width="120"/>
                                     <Button Content="Apply to Map"
                                             Command="{Binding ApplyMapStyleCommand}"
                                             Style="{DynamicResource Esri_Button}"
-                                            Padding="8,2"
                                             Margin="6,0,0,0"
-                                            FontSize="11"
+                                            Width="120"
                                             ToolTip="Apply the selected style to layers already on the map"/>
+                                    <Button Content="Repair Symbology"
+                                            Command="{Binding RepairMapSymbologyCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Margin="6,0,0,0"
+                                            Width="120"
+                                            ToolTip="Re-apply style to existing Overture layers; uses selected style or Streets as fallback"/>
                                     <TextBlock Text="{Binding SelectedMapStyleDescription}"
                                                TextWrapping="Wrap"
                                                Margin="8,0,0,0"
@@ -314,7 +328,7 @@
                         <!-- Action Buttons -->
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
                             <Button Content="Cancel" Command="{Binding CancelCommand}" Style="{DynamicResource Esri_Button}" Margin="0,0,8,0" Width="80"/>
-                            <Button Content="Load Data" Command="{Binding LoadDataCommand}" Style="{DynamicResource Esri_Button}" Width="100"/>
+                            <Button Content="Load Data" Command="{Binding LoadDataCommand}" Style="{DynamicResource Esri_Button}" Width="120"/>
                         </StackPanel>
                     </StackPanel>
                 </ScrollViewer>

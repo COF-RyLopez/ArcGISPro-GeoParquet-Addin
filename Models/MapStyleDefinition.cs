@@ -12,12 +12,47 @@ namespace DuckDBGeoparquet.Models
         public string Id { get; set; }
         public string DisplayName { get; set; }
         public string Description { get; set; }
+        public string StylePackId { get; set; }
+        public string StylePackName { get; set; }
+        public string StyleCategory { get; set; }
+        public bool IsExperimental { get; set; }
         public string ThumbnailResourceKey { get; set; }
 
         /// <summary>
         /// Relative pack URI to the thumbnail image for XAML binding.
         /// </summary>
         public string ThumbnailUri { get; set; }
+
+        /// <summary>
+        /// When true, renderer symbols are sourced from a .stylx style file via ArcGIS Pro style APIs.
+        /// If symbol lookup fails, cartography falls back to the palette properties in this model.
+        /// </summary>
+        public bool UseStylxSymbols { get; set; }
+
+        /// <summary>
+        /// Absolute or relative path to a .stylx file (relative paths resolve from add-in output directory).
+        /// </summary>
+        public string StylxPath { get; set; }
+
+        /// <summary>
+        /// Optional symbol key map for layer-type and geometry combinations.
+        /// Key format: "{actualType}:{geometryGroup}" where geometryGroup is one of "point", "line", "polygon".
+        /// Example: "division_boundary:line" -> "Boundary".
+        /// </summary>
+        public Dictionary<string, string> StylxTypeGeometrySymbolKeys { get; set; }
+
+        /// <summary>
+        /// Optional segment class-to-symbol key mapping for "segment" line renderers.
+        /// Keys are Overture segment class values; values are symbol keys/names from the style.
+        /// </summary>
+        public Dictionary<string, string> StylxSegmentClassSymbolKeys { get; set; }
+
+        /// <summary>
+        /// Optional fallback symbol key names by geometry group.
+        /// </summary>
+        public string StylxDefaultPointSymbolKey { get; set; }
+        public string StylxDefaultLineSymbolKey { get; set; }
+        public string StylxDefaultPolygonSymbolKey { get; set; }
 
         // Land / background
         public string LandFillColor { get; set; }
@@ -95,5 +130,15 @@ namespace DuckDBGeoparquet.Models
         /// Road class-to-width mapping for line widths per road class.
         /// </summary>
         public Dictionary<string, double> RoadClassWidths { get; set; }
+
+        /// <summary>
+        /// Optional style-specific drawing ranks used to order layers in the map.
+        /// Higher values draw above lower values.
+        /// Key format supports:
+        /// - "{actualType}:{geometryGroup}" (e.g., "building:polygon")
+        /// - "{actualType}" (fallback by type)
+        /// Geometry group is one of: point, line, polygon.
+        /// </summary>
+        public Dictionary<string, int> DrawOrderRanks { get; set; }
     }
 }

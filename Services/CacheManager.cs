@@ -1,7 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using ArcGIS.Desktop.Core;
 
 namespace DuckDBGeoparquet.Services
 {
@@ -10,6 +10,43 @@ namespace DuckDBGeoparquet.Services
     /// </summary>
     public static class CacheManager
     {
+        private static IReadOnlyList<string> GetKnownCacheDirectories()
+        {
+            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+            var candidates = new[]
+            {
+                // ArcGIS Pro current docs (newer versions)
+                Path.Combine(localAppData, "ESRI", "Local Caches", "ParquetCacheV1"),
+                // ArcGIS Pro 3.5-era cache location used in this add-in previously
+                Path.Combine(localAppData, "Esri", "ArcGISPro", "Cache", "Parquet"),
+                // Alternate location seen in some builds
+                Path.Combine(localAppData, "Esri", "ArcGISPro", "Cache", "GeoParquet"),
+                // Older docs/examples
+                Path.Combine(documents, "ArcGIS", "ParquetCache")
+            };
+
+            return candidates
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Select(p => Path.GetFullPath(p))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static IReadOnlyList<string> GetExistingCacheDirectories() =>
+            GetKnownCacheDirectories().Where(Directory.Exists).ToList();
+
+        private static long GetDirectorySizeSafe(string path)
+        {
+            try { return GetDirectorySize(path); } catch { return 0; }
+        }
+
+        private static int GetDirectoryFileCountSafe(string path)
+        {
+            try { return Directory.GetFiles(path, "*", SearchOption.AllDirectories).Length; } catch { return 0; }
+        }
+
         /// <summary>
         /// Gets the cache directory path for ArcGIS Pro Parquet files
         /// </summary>
@@ -17,32 +54,18 @@ namespace DuckDBGeoparquet.Services
         {
             try
             {
-                // ArcGIS Pro 3.6 changed cache location
-                // Pro 3.5: %LOCALAPPDATA%\Esri\ArcGISPro\Cache\Parquet
-                // Pro 3.6: %LOCALAPPDATA%\Esri\ArcGISPro\Cache\Parquet (same location, but structure may differ)
-                
-                var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                var cachePath = Path.Combine(localAppData, "Esri", "ArcGISPro", "Cache", "Parquet");
-                
-                // Check if Pro 3.6+ has a different structure
-                if (ArcGISProVersionHelper.IsPro36OrLater)
+                var existing = GetExistingCacheDirectories();
+                if (existing.Count > 0)
                 {
-                    // Pro 3.6 may use a subdirectory structure
-                    // Try the standard location first
-                    if (Directory.Exists(cachePath))
-                    {
-                        return cachePath;
-                    }
-                    
-                    // Try alternative 3.6 location if it exists
-                    var altPath = Path.Combine(localAppData, "Esri", "ArcGISPro", "Cache", "GeoParquet");
-                    if (Directory.Exists(altPath))
-                    {
-                        return altPath;
-                    }
+                    // Prefer the cache that appears active (more files / larger size).
+                    return existing
+                        .OrderByDescending(GetDirectoryFileCountSafe)
+                        .ThenByDescending(GetDirectorySizeSafe)
+                        .First();
                 }
-                
-                return cachePath;
+
+                // If nothing exists yet, return the primary modern location.
+                return GetKnownCacheDirectories().FirstOrDefault() ?? string.Empty;
             }
             catch (Exception ex)
             {
@@ -58,13 +81,13 @@ namespace DuckDBGeoparquet.Services
         {
             try
             {
-                var cacheDir = GetCacheDirectory();
-                if (string.IsNullOrEmpty(cacheDir) || !Directory.Exists(cacheDir))
+                var existingDirs = GetExistingCacheDirectories();
+                if (existingDirs.Count == 0)
                 {
                     return 0;
                 }
 
-                return GetDirectorySize(cacheDir);
+                return existingDirs.Sum(GetDirectorySizeSafe);
             }
             catch (Exception ex)
             {
@@ -89,42 +112,19 @@ namespace DuckDBGeoparquet.Services
         {
             try
             {
-                var cacheDir = GetCacheDirectory();
-                if (string.IsNullOrEmpty(cacheDir) || !Directory.Exists(cacheDir))
+                var existingDirs = GetExistingCacheDirectories();
+                if (existingDirs.Count == 0)
                 {
                     return false;
                 }
 
-                // Delete all files and subdirectories
-                var files = Directory.GetFiles(cacheDir, "*", SearchOption.AllDirectories);
-                var dirs = Directory.GetDirectories(cacheDir, "*", SearchOption.AllDirectories);
-
-                foreach (var file in files)
+                bool anySuccess = false;
+                foreach (var cacheDir in existingDirs)
                 {
-                    try
-                    {
-                        File.Delete(file);
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Error deleting cache file {file}: {ex.Message}");
-                    }
+                    anySuccess |= ClearCacheDirectory(cacheDir);
                 }
 
-                // Delete directories in reverse order (deepest first)
-                foreach (var dir in dirs.OrderByDescending(d => d.Length))
-                {
-                    try
-                    {
-                        Directory.Delete(dir);
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Error deleting cache directory {dir}: {ex.Message}");
-                    }
-                }
-
-                return true;
+                return anySuccess;
             }
             catch (Exception ex)
             {
@@ -140,18 +140,73 @@ namespace DuckDBGeoparquet.Services
         {
             try
             {
-                var cacheDir = GetCacheDirectory();
-                if (string.IsNullOrEmpty(cacheDir) || !Directory.Exists(cacheDir))
+                var existingDirs = GetExistingCacheDirectories();
+                if (existingDirs.Count == 0)
                 {
                     return 0;
                 }
 
-                return Directory.GetFiles(cacheDir, "*", SearchOption.AllDirectories).Length;
+                return existingDirs.Sum(GetDirectoryFileCountSafe);
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Error counting cache files: {ex.Message}");
                 return 0;
+            }
+        }
+
+        private static bool ClearCacheDirectory(string cacheDir)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(cacheDir) || !Directory.Exists(cacheDir))
+                    return false;
+
+                bool hadErrors = false;
+                var files = Directory.GetFiles(cacheDir, "*", SearchOption.AllDirectories);
+                var dirs = Directory.GetDirectories(cacheDir, "*", SearchOption.AllDirectories);
+
+                foreach (var file in files)
+                {
+                    try
+                    {
+                        File.Delete(file);
+                    }
+                    catch (Exception ex)
+                    {
+                        hadErrors = true;
+                        System.Diagnostics.Debug.WriteLine($"Error deleting cache file {file}: {ex.Message}");
+                    }
+                }
+
+                foreach (var dir in dirs.OrderByDescending(d => d.Length))
+                {
+                    try
+                    {
+                        Directory.Delete(dir);
+                    }
+                    catch (Exception ex)
+                    {
+                        hadErrors = true;
+                        System.Diagnostics.Debug.WriteLine($"Error deleting cache directory {dir}: {ex.Message}");
+                    }
+                }
+
+                if (hadErrors)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Cache clear completed with warnings for {cacheDir}");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"Cache clear completed for {cacheDir}");
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error clearing cache directory {cacheDir}: {ex.Message}");
+                return false;
             }
         }
 

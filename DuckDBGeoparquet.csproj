@@ -23,6 +23,9 @@
 		<Resource Include="Images\Styles\streets_thumb.png" />
 		<Resource Include="Images\Styles\streets_night_thumb.png" />
 		<Resource Include="Images\Styles\light_gray_canvas_thumb.png" />
+		<Content Include="NewAmsterdam.stylx">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
 	</ItemGroup>
 	<ItemGroup>
 		<None Include="Properties\launchSettings.json" />

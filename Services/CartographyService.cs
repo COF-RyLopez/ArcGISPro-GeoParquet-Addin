@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using ArcGIS.Core.CIM;
 using ArcGIS.Core.Geometry;
+using ArcGIS.Desktop.Core;
 using ArcGIS.Desktop.Mapping;
 using DuckDBGeoparquet.Models;
 
@@ -15,6 +17,11 @@ namespace DuckDBGeoparquet.Services
     /// </summary>
     public static class CartographyService
     {
+        private static readonly Dictionary<string, string> _resolvedStylxPathCache = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, StyleProjectItem> _styleProjectItemCache = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, SymbolStyleItem> _symbolItemCache = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly bool VerboseStyleApplyLogging = false;
+
         /// <summary>
         /// Create a CIM renderer for the given Overture data type, geometry, and style.
         /// Returns null if the type is not recognized.
@@ -41,6 +48,10 @@ namespace DuckDBGeoparquet.Services
 
         private static CIMRenderer CreateRenderer(string actualType, string geometryType, MapStyleDefinition style)
         {
+            var stylxRenderer = TryCreateStylxRenderer(actualType, geometryType, style);
+            if (stylxRenderer != null)
+                return stylxRenderer;
+
             return actualType?.ToLowerInvariant() switch
             {
                 "building" or "building_part" => CreateBuildingRenderer(style),
@@ -257,6 +268,331 @@ namespace DuckDBGeoparquet.Services
             return CreateSimplePointRenderer(style.AddressPointColor, style.AddressPointSize);
         }
 
+        private static CIMRenderer TryCreateStylxRenderer(string actualType, string geometryType, MapStyleDefinition style)
+        {
+            if (style == null || !style.UseStylxSymbols || string.IsNullOrWhiteSpace(style.StylxPath))
+                return null;
+
+            try
+            {
+                var styleProjectItem = GetOrLoadStyleProjectItem(style.StylxPath);
+                if (styleProjectItem == null)
+                    return null;
+
+                string normalizedType = actualType?.ToLowerInvariant();
+                if (normalizedType == "segment" && IsLineGeometry(geometryType))
+                {
+                    return CreateStylxSegmentRenderer(styleProjectItem, geometryType, style);
+                }
+
+                string symbolKey = ResolveSymbolKeyForTypeGeometry(normalizedType, geometryType, style);
+                if (string.IsNullOrWhiteSpace(symbolKey))
+                    return null;
+
+                return CreateStylxSimpleRenderer(styleProjectItem, geometryType, symbolKey);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"CartographyService: stylx renderer fallback triggered ({ex.Message})");
+                return null;
+            }
+        }
+
+        private static CIMRenderer CreateStylxSegmentRenderer(StyleProjectItem styleProjectItem, string geometryType, MapStyleDefinition style)
+        {
+            var classes = new List<CIMUniqueValueClass>();
+
+            if (style?.StylxSegmentClassSymbolKeys != null)
+            {
+                foreach (var kvp in style.StylxSegmentClassSymbolKeys)
+                {
+                    if (string.IsNullOrWhiteSpace(kvp.Value))
+                        continue;
+
+                    var symbolRef = GetStylxSymbolReference(styleProjectItem, StyleItemType.LineSymbol, kvp.Value);
+                    if (symbolRef == null)
+                        continue;
+
+                    classes.Add(new CIMUniqueValueClass
+                    {
+                        Label = kvp.Key,
+                        Values = new[] { new CIMUniqueValue { FieldValues = new[] { kvp.Key } } },
+                        Symbol = symbolRef,
+                        Visible = true,
+                    });
+                }
+            }
+
+            if (!classes.Any())
+                return null;
+
+            var defaultLineKey = style.StylxDefaultLineSymbolKey;
+            if (string.IsNullOrWhiteSpace(defaultLineKey))
+                defaultLineKey = ResolveSymbolKeyForTypeGeometry("segment", geometryType, style);
+
+            var defaultSymbol = GetStylxSymbolReference(styleProjectItem, StyleItemType.LineSymbol, defaultLineKey)
+                ?? classes[0].Symbol;
+
+            return new CIMUniqueValueRenderer
+            {
+                Fields = new[] { "class" },
+                Groups = new[]
+                {
+                    new CIMUniqueValueGroup
+                    {
+                        Classes = classes.ToArray(),
+                        Heading = "Road Class",
+                    }
+                },
+                DefaultSymbol = defaultSymbol,
+                DefaultLabel = "Other",
+                UseDefaultSymbol = true,
+            };
+        }
+
+        private static CIMSimpleRenderer CreateStylxSimpleRenderer(StyleProjectItem styleProjectItem, string geometryType, string symbolKey)
+        {
+            string geometryGroup = GetGeometryGroup(geometryType);
+            StyleItemType itemType = geometryGroup switch
+            {
+                "point" => StyleItemType.PointSymbol,
+                "line" => StyleItemType.LineSymbol,
+                _ => StyleItemType.PolygonSymbol,
+            };
+
+            var symbolRef = GetStylxSymbolReference(styleProjectItem, itemType, symbolKey);
+            if (symbolRef == null)
+                return null;
+
+            return new CIMSimpleRenderer { Symbol = symbolRef };
+        }
+
+        private static CIMSymbolReference GetStylxSymbolReference(StyleProjectItem styleProjectItem, StyleItemType itemType, string symbolKey)
+        {
+            if (styleProjectItem == null || string.IsNullOrWhiteSpace(symbolKey))
+                return null;
+
+            string resolvedPath = ResolveStylxPath(styleProjectItem.Path) ?? styleProjectItem.Path ?? styleProjectItem.Name;
+            string cacheKey = $"{resolvedPath}|{itemType}|{symbolKey}".ToLowerInvariant();
+
+            if (!_symbolItemCache.TryGetValue(cacheKey, out SymbolStyleItem symbolItem))
+            {
+                symbolItem = FindSymbolStyleItem(styleProjectItem, itemType, symbolKey);
+                if (symbolItem != null)
+                    _symbolItemCache[cacheKey] = symbolItem;
+            }
+
+            if (symbolItem?.Symbol == null)
+                return null;
+
+            return new CIMSymbolReference
+            {
+                // Persist as inline symbol so map layers do not depend on external style-path resolution
+                // when reopening older projects.
+                Symbol = symbolItem.Symbol,
+            };
+        }
+
+        private static SymbolStyleItem FindSymbolStyleItem(StyleProjectItem styleProjectItem, StyleItemType itemType, string symbolKey)
+        {
+            StyleItem lookup = null;
+            try
+            {
+                lookup = StyleHelper.LookupItem(styleProjectItem, itemType, symbolKey);
+            }
+            catch
+            {
+                // Lookup can throw for missing keys depending on style implementation.
+            }
+
+            if (lookup is SymbolStyleItem lookupSymbol && lookupSymbol.Symbol != null)
+                return lookupSymbol;
+
+            var matches = StyleHelper.SearchSymbols(styleProjectItem, itemType, symbolKey);
+            if (matches == null || matches.Count == 0)
+                return null;
+
+            return matches.FirstOrDefault(s =>
+                    string.Equals(s.Key, symbolKey, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(s.Name, symbolKey, StringComparison.OrdinalIgnoreCase))
+                ?? matches.FirstOrDefault();
+        }
+
+        private static StyleProjectItem GetOrLoadStyleProjectItem(string stylxPath)
+        {
+            string resolvedPath = ResolveStylxPath(stylxPath);
+            if (string.IsNullOrWhiteSpace(resolvedPath))
+                return null;
+
+            if (_styleProjectItemCache.TryGetValue(resolvedPath, out StyleProjectItem cached) && cached != null)
+                return cached;
+
+            var project = Project.Current;
+            if (project == null)
+                return null;
+
+            StyleProjectItem styleProjectItem = project.GetItems<StyleProjectItem>().FirstOrDefault(item =>
+            {
+                var itemPath = NormalizePath(item.Path);
+                var sourceUriPath = NormalizePath(item.SourceUri);
+                return string.Equals(itemPath, resolvedPath, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(sourceUriPath, resolvedPath, StringComparison.OrdinalIgnoreCase);
+            });
+
+            if (styleProjectItem == null)
+            {
+                StyleHelper.AddStyle(project, resolvedPath);
+
+                styleProjectItem = project.GetItems<StyleProjectItem>().FirstOrDefault(item =>
+                {
+                    var itemPath = NormalizePath(item.Path);
+                    var sourceUriPath = NormalizePath(item.SourceUri);
+                    return string.Equals(itemPath, resolvedPath, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(sourceUriPath, resolvedPath, StringComparison.OrdinalIgnoreCase);
+                });
+            }
+
+            if (styleProjectItem != null)
+                _styleProjectItemCache[resolvedPath] = styleProjectItem;
+
+            return styleProjectItem;
+        }
+
+        private static string ResolveSymbolKeyForTypeGeometry(string actualType, string geometryType, MapStyleDefinition style)
+        {
+            if (style == null)
+                return null;
+
+            string normalizedType = actualType?.ToLowerInvariant();
+            string geometryGroup = GetGeometryGroup(geometryType);
+            string combinedKey = string.IsNullOrWhiteSpace(normalizedType) ? null : $"{normalizedType}:{geometryGroup}";
+
+            if (style.StylxTypeGeometrySymbolKeys != null)
+            {
+                if (!string.IsNullOrWhiteSpace(combinedKey) &&
+                    style.StylxTypeGeometrySymbolKeys.TryGetValue(combinedKey, out string combinedSymbol))
+                    return combinedSymbol;
+
+                if (!string.IsNullOrWhiteSpace(normalizedType) &&
+                    style.StylxTypeGeometrySymbolKeys.TryGetValue(normalizedType, out string typeOnlySymbol))
+                    return typeOnlySymbol;
+
+                if (style.StylxTypeGeometrySymbolKeys.TryGetValue(geometryGroup, out string geometryOnlySymbol))
+                    return geometryOnlySymbol;
+            }
+
+            return geometryGroup switch
+            {
+                "point" => style.StylxDefaultPointSymbolKey,
+                "line" => style.StylxDefaultLineSymbolKey,
+                _ => style.StylxDefaultPolygonSymbolKey,
+            };
+        }
+
+        private static string GetGeometryGroup(string geometryType)
+        {
+            if (geometryType != null &&
+                (geometryType.Equals("POINT", StringComparison.OrdinalIgnoreCase) ||
+                 geometryType.Equals("MULTIPOINT", StringComparison.OrdinalIgnoreCase)))
+            {
+                return "point";
+            }
+
+            return IsLineGeometry(geometryType) ? "line" : "polygon";
+        }
+
+        private static string ResolveStylxPath(string stylxPath)
+        {
+            if (string.IsNullOrWhiteSpace(stylxPath))
+                return null;
+
+            if (_resolvedStylxPathCache.TryGetValue(stylxPath, out string cached))
+                return cached;
+
+            string resolvedPath = stylxPath;
+            if (!Path.IsPathRooted(resolvedPath))
+            {
+                string assemblyDir = Path.GetDirectoryName(typeof(CartographyService).Assembly.Location)
+                    ?? AppDomain.CurrentDomain.BaseDirectory;
+                resolvedPath = Path.GetFullPath(Path.Combine(assemblyDir, resolvedPath));
+            }
+
+            if (!File.Exists(resolvedPath))
+            {
+                return null;
+            }
+
+            _resolvedStylxPathCache[stylxPath] = resolvedPath;
+            _resolvedStylxPathCache[resolvedPath] = resolvedPath;
+            return resolvedPath;
+        }
+
+        private static string NormalizePath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return null;
+
+            try
+            {
+                if (Uri.TryCreate(path, UriKind.Absolute, out Uri pathUri) && pathUri.IsFile)
+                    return Path.GetFullPath(pathUri.LocalPath);
+
+                return Path.GetFullPath(path);
+            }
+            catch
+            {
+                return path;
+            }
+        }
+
+        /// <summary>
+        /// Applies point-layer scale thresholds to reduce visual overload in dense urban extents.
+        /// Must be called on the MCT.
+        /// </summary>
+        public static void ApplyVisibilityDefaults(FeatureLayer featureLayer, string actualType, string geometryType)
+        {
+            if (featureLayer == null)
+                return;
+
+            bool isPoint = geometryType != null &&
+                (geometryType.Equals("POINT", StringComparison.OrdinalIgnoreCase) ||
+                 geometryType.Equals("MULTIPOINT", StringComparison.OrdinalIgnoreCase));
+            if (!isPoint)
+                return;
+
+            double minScale = GetRecommendedPointMinScale(actualType);
+            if (minScale <= 0)
+                return;
+
+            try
+            {
+                featureLayer.SetMinScale(minScale);
+                featureLayer.SetMaxScale(0);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"CartographyService: Failed setting visibility scale for '{featureLayer.Name}': {ex.Message}");
+            }
+        }
+
+        private static double GetRecommendedPointMinScale(string actualType)
+        {
+            if (string.IsNullOrWhiteSpace(actualType))
+                return 25000;
+
+            return actualType.ToLowerInvariant() switch
+            {
+                "address" => 6000,
+                "connector" => 12000,
+                "place" => 25000,
+                "division" => 40000,
+                "infrastructure" => 22000,
+                "land" => 28000,
+                _ => 25000
+            };
+        }
+
         private static bool IsLineGeometry(string geometryType) =>
             geometryType != null &&
             (geometryType.Equals("LINESTRING", StringComparison.OrdinalIgnoreCase) ||
@@ -316,8 +652,12 @@ namespace DuckDBGeoparquet.Services
                         }
                         if (labelsAdded)
                             featureLayer.SetLabelVisibility(true);
-                        System.Diagnostics.Debug.WriteLine(
-                            $"CartographyService: Re-styled '{featureLayer.Name}' with '{style.DisplayName}' (inferred type={actualType}, geom={geometryType})");
+                        ApplyVisibilityDefaults(featureLayer, actualType, geometryType);
+                        if (VerboseStyleApplyLogging)
+                        {
+                            System.Diagnostics.Debug.WriteLine(
+                                $"CartographyService: Re-styled '{featureLayer.Name}' with '{style.DisplayName}' (inferred type={actualType}, geom={geometryType})");
+                        }
                         return true;
                     }
                 }
@@ -396,7 +736,8 @@ namespace DuckDBGeoparquet.Services
                 case "place":
                     return "var n = $feature['names_primary']; return DefaultValue(n, '');";
                 case "address":
-                    return "var num = DefaultValue($feature['number'], ''); var street = DefaultValue($feature['street'], ''); if (IsEmpty(num)) return street; if (IsEmpty(street)) return Text(num); return num + ' ' + street;";
+                    // Address labels are very dense and can significantly impact draw performance.
+                    return null;
                 case "division":
                     if (!isPoint) return null;
                     return "var n = $feature['names_primary']; return DefaultValue(n, '');";
