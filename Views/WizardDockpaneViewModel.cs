@@ -13,6 +13,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Linq;
 using System.Data;
+using DuckDBGeoparquet.Models;
 using DuckDBGeoparquet.Services;
 using Microsoft.Win32;
 using ArcGIS.Desktop.Catalog;
@@ -427,9 +428,11 @@ namespace DuckDBGeoparquet.Views
                 try { this.Hide(); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Error closing dockpane: {ex.Message}"); }
             });
             SelectAllCommand = new RelayCommand(
-                () => IsSelectAllChecked = !IsSelectAllChecked, // Action: Toggle the IsSelectAllChecked property
-                () => Themes != null && Themes.Any(t => t.IsSelectable || t.SubItems.Any()) // CanExecute: If there are any selectable themes
+                () => IsSelectAllChecked = !IsSelectAllChecked,
+                () => Themes != null && Themes.Any(t => t.IsSelectable || t.SubItems.Any())
             );
+            ClearMapStyleCommand = new RelayCommand(() => SelectedMapStyle = null, () => SelectedMapStyle != null);
+            ApplyMapStyleCommand = new RelayCommand(async () => await ApplyMapStyleToExistingLayersAsync(), () => SelectedMapStyle != null);
 
             CustomExtentTool.ExtentCreatedStatic += OnExtentCreated;
 
@@ -743,6 +746,65 @@ namespace DuckDBGeoparquet.Views
         // Available compression options for binding
         public List<string> CompressionOptions => new List<string> { "ZSTD", "SNAPPY", "GZIP" };
 
+        // Map style / cartography properties
+        public List<MapStyleDefinition> AvailableMapStyles { get; } = MapStyleCatalog.AllStyles;
+
+        private MapStyleDefinition _selectedMapStyle;
+        /// <summary>
+        /// The user-selected cartographic style, or null for default ArcGIS Pro symbology.
+        /// </summary>
+        public MapStyleDefinition SelectedMapStyle
+        {
+            get => _selectedMapStyle;
+            set
+            {
+                if (_selectedMapStyle == value) return;
+                SetProperty(ref _selectedMapStyle, value);
+                NotifyPropertyChanged(nameof(IsMapStyleSelected));
+                NotifyPropertyChanged(nameof(SelectedMapStyleDescription));
+                (ClearMapStyleCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                (ApplyMapStyleCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            }
+        }
+
+        public bool IsMapStyleSelected => _selectedMapStyle != null;
+        public string SelectedMapStyleDescription => _selectedMapStyle?.Description ?? "No map style selected — layers will use default ArcGIS Pro symbology.";
+
+        public ICommand ClearMapStyleCommand { get; private set; }
+        public ICommand ApplyMapStyleCommand { get; private set; }
+
+        private async Task ApplyMapStyleToExistingLayersAsync()
+        {
+            var style = SelectedMapStyle;
+            if (style == null) return;
+
+            var mapView = MapView.Active;
+            if (mapView == null)
+            {
+                AddToLog("No active map view. Open a map first.");
+                return;
+            }
+
+            AddToLog($"Applying '{style.DisplayName}' style to existing layers...");
+
+            int applied = 0;
+            int skipped = 0;
+
+            await QueuedTask.Run(() =>
+            {
+                var map = mapView.Map;
+                foreach (var layer in map.GetLayersAsFlattenedList().OfType<FeatureLayer>())
+                {
+                    if (CartographyService.ApplyStyleToExistingLayer(layer, style))
+                        applied++;
+                    else
+                        skipped++;
+                }
+            });
+
+            AddToLog($"Style applied to {applied} layer(s). {skipped} layer(s) unchanged (non-Overture or unrecognized).");
+        }
+
         // Cache management properties
         private string _cacheLocation = "";
         public string CacheLocation
@@ -805,6 +867,9 @@ namespace DuckDBGeoparquet.Views
 
         // Track the last loaded data path for MFC creation
         private string _lastLoadedDataPath;
+
+        /// <summary>Saved map view extent (map's SR) before adding layers; restored after add to prevent zoom-out.</summary>
+        private Envelope _savedViewExtentForRestore;
 
         private bool _isSelectAllChecked;
         public bool IsSelectAllChecked
@@ -1607,6 +1672,7 @@ namespace DuckDBGeoparquet.Views
         private async Task<Envelope> GetLoadExtentAsync()
         {
             Envelope extent = null;
+            _savedViewExtentForRestore = null;
             await QueuedTask.Run(() =>
             {
                 SpatialReference wgs84 = SpatialReferenceBuilder.CreateSpatialReference(4326);
@@ -1616,6 +1682,8 @@ namespace DuckDBGeoparquet.Views
                     Envelope mapExtent = MapView.Active.Extent;
                     if (mapExtent != null)
                     {
+                        // Save view extent so we can restore it after adding layers (prevents zoom-out)
+                        _savedViewExtentForRestore = EnvelopeBuilderEx.CreateEnvelope(mapExtent.XMin, mapExtent.YMin, mapExtent.XMax, mapExtent.YMax, mapExtent.SpatialReference);
                         if (mapExtent.SpatialReference == null || mapExtent.SpatialReference.Wkid != 4326)
                         {
                             AddToLog($"Map extent SR is {mapExtent.SpatialReference?.Wkid.ToString() ?? "null"}, projecting to WGS84 (4326).");
@@ -1641,7 +1709,7 @@ namespace DuckDBGeoparquet.Views
                             extent = mapExtent;
                         }
                         AddToLog($"Using WGS84 extent from map: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
-                        System.Diagnostics.Debug.WriteLine($"WGS84 extent from map: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
+                        System.Diagnostics.Debug.WriteLine($"[GetLoadExtentAsync] WGS84 extent from map (MapView.Active.Extent): {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
                     }
                     else
                     {
@@ -1833,6 +1901,7 @@ namespace DuckDBGeoparquet.Views
                 StatusText = $"Loading {selectedLeafItems.Count} selected data types...";
                 AddToLog($"Starting to load {selectedLeafItems.Count} data type(s) from release {LatestRelease}");
 
+                AddToLog("Capturing current map extent once for this load (extent will not change if you zoom/pan during load).");
                 Envelope extent = await GetLoadExtentAsync();
 
                 if (cancellationToken.IsCancellationRequested)
@@ -1845,6 +1914,12 @@ namespace DuckDBGeoparquet.Views
                 string dataPath = DataOutputPath;
                 if (!await CheckAndReplaceExistingDataAsync(selectedLeafItems, dataPath))
                     return;
+
+                _dataProcessor.SelectedMapStyle = SelectedMapStyle;
+                if (SelectedMapStyle != null)
+                {
+                    AddToLog($"Map style: {SelectedMapStyle.DisplayName} — layers will receive themed cartography");
+                }
 
                 int totalDataTypesToProcess = selectedLeafItems.Count;
                 int processedDataTypes = 0;
@@ -1896,6 +1971,20 @@ namespace DuckDBGeoparquet.Views
 
                 await _dataProcessor.AddAllLayersToMapAsync(progressReporter);
 
+                // Restore map view to extent user had when they clicked Load (prevents zoom-out after adding layers)
+                if (_savedViewExtentForRestore != null)
+                {
+                    await QueuedTask.Run(() =>
+                    {
+                        if (MapView.Active != null)
+                        {
+                            MapView.Active.ZoomTo(_savedViewExtentForRestore);
+                            System.Diagnostics.Debug.WriteLine("[Load complete] Restored map view to saved extent.");
+                        }
+                        _savedViewExtentForRestore = null;
+                    });
+                }
+
                 // Store the data path for potential MFC creation later
                 _lastLoadedDataPath = DataOutputPath;
 
@@ -1930,7 +2019,8 @@ namespace DuckDBGeoparquet.Views
                 AddToLog("----------------");
                 if (extent != null)
                 {
-                    AddToLog($"Data for extent: {extent.XMin:F2}, {extent.YMin:F2}, {extent.XMax:F2}, {extent.YMax:F2}");
+                    AddToLog($"Data was loaded for this extent only: {extent.XMin:F2}, {extent.YMin:F2}, {extent.XMax:F2}, {extent.YMax:F2}");
+                    System.Diagnostics.Debug.WriteLine($"[Load complete] Extent used for this load: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
                     AddToLog("When you load data for a different extent, the existing data will be replaced.");
                     AddToLog("This ensures a clean folder structure for MFC creation.");
                     AddToLog("Rename the output folder OvertureProAddinData if you don't want to overwrite");

@@ -154,6 +154,112 @@
                                 </TextBlock>
                             </StackPanel>
                         </Border>
+                        <!-- 4. Choose Map Style -->
+                        <TextBlock Text="4. Choose Map Style" Margin="0,0,0,4"/>
+                        <Border 
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="2"
+                                Padding="8"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                           Style="{DynamicResource Esri_TextBlockH7}">
+                                    Choose a cartographic style for your layers, inspired by Esri Open Basemap themes. Select "None" to use default ArcGIS Pro symbology.
+                                </TextBlock>
+                                <ListBox ItemsSource="{Binding AvailableMapStyles}"
+                                         SelectedItem="{Binding SelectedMapStyle, Mode=TwoWay}"
+                                         BorderThickness="0"
+                                         Background="Transparent"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                         ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                                    <ListBox.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Horizontal"/>
+                                        </ItemsPanelTemplate>
+                                    </ListBox.ItemsPanel>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border x:Name="StyleCard"
+                                                    BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="3"
+                                                    Padding="6"
+                                                    Margin="0,0,6,0"
+                                                    Width="100"
+                                                    Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                                                    Cursor="Hand">
+                                                <StackPanel HorizontalAlignment="Center">
+                                                    <Border CornerRadius="2"
+                                                            Height="56" Width="84"
+                                                            Margin="0,0,0,4"
+                                                            HorizontalAlignment="Center"
+                                                            ClipToBounds="True">
+                                                        <Image Source="{Binding ThumbnailUri}"
+                                                               Stretch="UniformToFill"
+                                                               HorizontalAlignment="Center"
+                                                               VerticalAlignment="Center"/>
+                                                    </Border>
+                                                    <TextBlock Text="{Binding DisplayName}"
+                                                               HorizontalAlignment="Center"
+                                                               FontSize="11"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="Padding" Value="0"/>
+                                            <Setter Property="Margin" Value="0"/>
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="ListBoxItem">
+                                                        <Border x:Name="ItemBorder"
+                                                                BorderBrush="Transparent"
+                                                                BorderThickness="2"
+                                                                CornerRadius="4"
+                                                                Margin="0,0,2,0">
+                                                            <ContentPresenter/>
+                                                        </Border>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsSelected" Value="True">
+                                                                <Setter TargetName="ItemBorder" Property="BorderBrush" Value="{DynamicResource Esri_TextCaptionActiveBrush}"/>
+                                                            </Trigger>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Setter TargetName="ItemBorder" Property="BorderBrush" Value="{DynamicResource Esri_BorderHoverBrush}"/>
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                </ListBox>
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <Button Content="Clear Selection"
+                                            Command="{Binding ClearMapStyleCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Padding="8,2"
+                                            FontSize="11"/>
+                                    <Button Content="Apply to Map"
+                                            Command="{Binding ApplyMapStyleCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Padding="8,2"
+                                            Margin="6,0,0,0"
+                                            FontSize="11"
+                                            ToolTip="Apply the selected style to layers already on the map"/>
+                                    <TextBlock Text="{Binding SelectedMapStyleDescription}"
+                                               TextWrapping="Wrap"
+                                               Margin="8,0,0,0"
+                                               VerticalAlignment="Center"
+                                               Style="{DynamicResource Esri_TextBlockH7}"
+                                               Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
                         <!-- Selected Themes Preview -->
                         <TextBlock Text="Selected Themes Preview" Margin="0,0,0,4"/>
                         <Border 

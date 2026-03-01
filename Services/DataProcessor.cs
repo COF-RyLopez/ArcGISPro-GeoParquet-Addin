@@ -14,6 +14,7 @@ using ArcGIS.Desktop.Core.Geoprocessing;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
 using ArcGIS.Desktop.Mapping;
 using DuckDB.NET.Data;
+using DuckDBGeoparquet.Models;
 
 namespace DuckDBGeoparquet.Services
 {
@@ -73,6 +74,12 @@ namespace DuckDBGeoparquet.Services
 
         // Collection to store layer information for bulk creation
         private readonly List<LayerCreationInfo> _pendingLayers;
+
+        /// <summary>
+        /// When set, layers added to the map will receive cartographic symbology
+        /// matching this style definition instead of default ArcGIS Pro symbology.
+        /// </summary>
+        public MapStyleDefinition SelectedMapStyle { get; set; }
 
         public DataProcessor()
         {
@@ -283,30 +290,19 @@ namespace DuckDBGeoparquet.Services
                     string xMaxStr = ((double)extent.XMax).ToString("G", CultureInfo.InvariantCulture);
                     string yMaxStr = ((double)extent.YMax).ToString("G", CultureInfo.InvariantCulture);
                     
-                    // Two-stage spatial filtering for accuracy and performance:
-                    // 1. Bbox overlap filter (fast pre-filter to reduce data)
-                    // 2. Clip geometries to extent (keeps all intersecting features, clips to extent)
-                    // Also exclude features with extremely large bounding boxes (likely global/error data)
-                    const double MAX_BBOX_WIDTH = 10.0;  // degrees longitude
-                    const double MAX_BBOX_HEIGHT = 5.0; // degrees latitude
-                    string maxBboxWidthStr = MAX_BBOX_WIDTH.ToString("G", CultureInfo.InvariantCulture);
-                    string maxBboxHeightStr = MAX_BBOX_HEIGHT.ToString("G", CultureInfo.InvariantCulture);
-                    
                     // Create a polygon from the extent for clipping
                     // Format: POLYGON((xmin ymin, xmax ymin, xmax ymax, xmin ymax, xmin ymin))
-                    // Note: ST_GeomFromText in DuckDB doesn't accept SRID parameter - geometries are assumed to be in the same CRS as the data
                     extentPolygon = $"ST_GeomFromText('POLYGON(({xMinStr} {yMinStr}, {xMaxStr} {yMinStr}, {xMaxStr} {yMaxStr}, {xMinStr} {yMaxStr}, {xMinStr} {yMinStr}))')";
-                    
+
+                    // Bbox overlap first (pushdown), then ST_Intersects so only features whose geometry
+                    // actually intersects the extent are kept — prevents data extending beyond the frame.
                     spatialFilter = $@"
                         WHERE bbox.xmin <= {xMaxStr}
                           AND bbox.xmax >= {xMinStr}
                           AND bbox.ymin <= {yMaxStr}
                           AND bbox.ymax >= {yMinStr}
-                          AND (bbox.xmax - bbox.xmin) <= {maxBboxWidthStr}
-                          AND (bbox.ymax - bbox.ymin) <= {maxBboxHeightStr}";
-                    
-                    System.Diagnostics.Debug.WriteLine($"Spatial filter applied: extent=({xMinStr}, {yMinStr}) to ({xMaxStr}, {yMaxStr}), max bbox size=({maxBboxWidthStr}, {maxBboxHeightStr}), geometries will be clipped to extent");
-                    
+                          AND ST_Intersects(geometry, {extentPolygon})";
+                    System.Diagnostics.Debug.WriteLine($"[{actualS3Type}] Spatial filter: requested extent=({xMinStr}, {yMinStr}) to ({xMaxStr}, {yMaxStr}), bbox overlap + ST_Intersects");
                     progress?.Report($"Applying spatial filter for current map extent...");
                 }
                 else
@@ -336,8 +332,7 @@ namespace DuckDBGeoparquet.Services
                                 ELSE NULL
                             END as geometry
                         FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
-                        {spatialFilter}
-                        AND ST_Intersects(geometry, {extentPolygon})";
+                        {spatialFilter}";
                 }
                 else
                 {
@@ -368,7 +363,7 @@ namespace DuckDBGeoparquet.Services
                 command.CommandText = "SELECT COUNT(*) FROM current_table";
                 var count = await command.ExecuteScalarAsync(CancellationToken.None);
                 progress?.Report($"Successfully loaded {count:N0} rows from S3");
-                System.Diagnostics.Debug.WriteLine($"Loaded {count} rows");
+                System.Diagnostics.Debug.WriteLine($"[{actualS3Type}] Loaded {count} rows");
 
                 // Early exit for empty datasets to avoid unnecessary processing
                 if (Convert.ToInt64(count) == 0)
@@ -378,6 +373,39 @@ namespace DuckDBGeoparquet.Services
                     return false; // Indicate no data to process
                 }
 
+                // Diagnostic: log result data bbox vs requested extent to spot layers returning data beyond extent
+                if (extent != null)
+                {
+                    try
+                    {
+                        command.CommandText = @"
+                            SELECT MIN(ST_XMin(geometry)), MAX(ST_XMax(geometry)), MIN(ST_YMin(geometry)), MAX(ST_YMax(geometry))
+                            FROM current_table WHERE geometry IS NOT NULL";
+                        using (var r = await command.ExecuteReaderAsync(CancellationToken.None))
+                        {
+                            if (await r.ReadAsync() && !r.IsDBNull(0))
+                            {
+                                double rxmin = r.GetDouble(0);
+                                double rxmax = r.GetDouble(1);
+                                double rymin = r.GetDouble(2);
+                                double rymax = r.GetDouble(3);
+                                double exMin = (double)extent.XMin;
+                                double exMax = (double)extent.XMax;
+                                double eyMin = (double)extent.YMin;
+                                double eyMax = (double)extent.YMax;
+                                double padLon = (exMax - exMin) * 0.01;
+                                double padLat = (eyMax - eyMin) * 0.01;
+                                bool outside = rxmin < exMin - padLon || rxmax > exMax + padLon || rymin < eyMin - padLat || rymax > eyMax + padLat;
+                                System.Diagnostics.Debug.WriteLine($"[{actualS3Type}] Requested extent=({exMin:G6}, {eyMin:G6}) to ({exMax:G6}, {eyMax:G6}); result data bbox=({rxmin:G6}, {rymin:G6}) to ({rxmax:G6}, {rymax:G6}){(outside ? " *** RESULT EXTENDS BEYOND REQUESTED EXTENT ***" : "")}");
+                            }
+                        }
+                    }
+                    catch (Exception diagEx)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[{actualS3Type}] Diagnostic bbox check failed: {diagEx.Message}");
+                    }
+                }
+
                 return true;
             }
             catch (Exception ex)
@@ -385,6 +413,31 @@ namespace DuckDBGeoparquet.Services
                 System.Diagnostics.Debug.WriteLine($"Query error: {ex.Message}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Infer ISO 3166-1 alpha-2 country code from extent center (WGS84) for filtering address data.
+        /// Returns null if extent center is not in a known bounding box. Reduces address load from global to one country.
+        /// </summary>
+        private static string TryGetCountryCodeFromExtent(dynamic extent)
+        {
+            if (extent == null) return null;
+            double midLon = (double)((extent.XMin + extent.XMax) / 2.0);
+            double midLat = (double)((extent.YMin + extent.YMax) / 2.0);
+            // Rough bounding boxes (lon min, lat min, lon max, lat max) for countries with large Overture address counts
+            if (midLon >= -125 && midLon <= -66 && midLat >= 24 && midLat <= 50) return "US";
+            if (midLon >= -141 && midLon <= -52 && midLat >= 41 && midLat <= 84) return "CA";
+            if (midLon >= -118 && midLon <= -86 && midLat >= 14 && midLat <= 33) return "MX";
+            if (midLon >= -75 && midLon <= -34 && midLat >= -34 && midLat <= 5) return "BR";
+            if (midLon >= -5 && midLon <= 10 && midLat >= 41 && midLat <= 52) return "FR";
+            if (midLon >= -10 && midLon <= 5 && midLat >= 50 && midLat <= 61) return "GB";
+            if (midLon >= 6 && midLon <= 15 && midLat >= 47 && midLat <= 55) return "DE";
+            if (midLon >= 10 && midLon <= 19 && midLat >= 36 && midLat <= 47) return "IT";
+            if (midLon >= -4 && midLon <= 5 && midLat >= 35 && midLat <= 44) return "ES";
+            if (midLon >= 124 && midLon <= 154 && midLat >= -44 && midLat <= -10) return "AU";
+            if (midLon >= 165 && midLon <= 180 && midLat >= -48 && midLat <= -34) return "NZ";
+            if (midLon >= -180 && midLon <= -165 && midLat >= -48 && midLat <= -34) return "NZ";
+            return null;
         }
 
         /// <summary>
@@ -1228,6 +1281,7 @@ namespace DuckDBGeoparquet.Services
 
             var uris = new List<Uri>();
             var layerNames = new List<string>();
+            var validLayerInfos = new List<LayerCreationInfo>();
             int validFiles = 0;
 
             foreach (var layerInfo in sortedLayers)
@@ -1236,6 +1290,7 @@ namespace DuckDBGeoparquet.Services
                 {
                     uris.Add(new Uri(layerInfo.FilePath));
                     layerNames.Add(layerInfo.LayerName);
+                    validLayerInfos.Add(layerInfo);
                     validFiles++;
                     System.Diagnostics.Debug.WriteLine($"Valid file for {layerInfo.LayerName}: {layerInfo.FilePath}");
                 }
@@ -1267,7 +1322,18 @@ namespace DuckDBGeoparquet.Services
 
                     if (layers[i] is FeatureLayer featureLayer)
                     {
-                        ApplyLayerSettings(featureLayer);
+                        CIMRenderer renderer = null;
+                        var layerInfo = i < validLayerInfos.Count ? validLayerInfos[i] : null;
+                        if (SelectedMapStyle != null && layerInfo != null)
+                        {
+                            renderer = CartographyService.CreateRendererForLayer(layerInfo, SelectedMapStyle);
+                        }
+                        ApplyLayerSettings(featureLayer, renderer, layerInfo, SelectedMapStyle);
+
+                        if (renderer != null)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"CartographyService: Applied '{SelectedMapStyle.DisplayName}' style to layer '{featureLayer.Name}' (type={layerInfo.ActualType}, geom={layerInfo.GeometryType})");
+                        }
                     }
 
                     if (i % 3 == 0 || i == layers.Count - 1)
@@ -1406,7 +1472,17 @@ namespace DuckDBGeoparquet.Services
 
                         if (newLayer is FeatureLayer featureLayer)
                         {
-                            ApplyLayerSettings(featureLayer);
+                            CIMRenderer renderer = null;
+                            if (SelectedMapStyle != null)
+                            {
+                                renderer = CartographyService.CreateRendererForLayer(layerInfo, SelectedMapStyle);
+                            }
+                            ApplyLayerSettings(featureLayer, renderer, layerInfo, SelectedMapStyle);
+
+                            if (renderer != null)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"CartographyService: Applied '{SelectedMapStyle.DisplayName}' style to layer '{featureLayer.Name}' (type={layerInfo.ActualType}, geom={layerInfo.GeometryType})");
+                            }
                         }
 
                         progress?.Report($"Successfully added layer: {newLayer?.Name ?? layerInfo.LayerName}");
@@ -1465,33 +1541,54 @@ namespace DuckDBGeoparquet.Services
 
         /// <summary>
         /// Applies consistent settings to feature layers (cache, feature reduction, etc.)
+        /// Optionally sets a CIM renderer and label classes in the same definition update.
         /// Note: In Pro 3.5, accessing layer definitions for Parquet files may trigger domain lookups that fail
         /// </summary>
-        private static void ApplyLayerSettings(FeatureLayer featureLayer)
+        private static void ApplyLayerSettings(FeatureLayer featureLayer, CIMRenderer renderer = null, LayerCreationInfo layerInfo = null, MapStyleDefinition mapStyle = null)
         {
             try
             {
                 if (featureLayer.GetDefinition() is CIMFeatureLayer layerDef)
                 {
-                    // Set cache settings for performance
                     layerDef.DisplayCacheType = ArcGIS.Core.CIM.DisplayCacheType.None;
                     layerDef.FeatureCacheType = ArcGIS.Core.CIM.FeatureCacheType.None;
 
-                    // Disable feature binning/reduction for better data visibility
                     if (layerDef.FeatureReduction is CIMBinningFeatureReduction binningReduction && binningReduction.Enabled)
                     {
                         binningReduction.Enabled = false;
                         System.Diagnostics.Debug.WriteLine($"Disabled feature binning for layer: {featureLayer.Name}");
                     }
 
+                    if (renderer != null)
+                    {
+                        layerDef.Renderer = renderer;
+                    }
+
+                    bool labelsAdded = false;
+                    if (layerInfo != null)
+                    {
+                        labelsAdded = CartographyService.ApplyLabelClasses(layerDef, layerInfo.ActualType, layerInfo.GeometryType, mapStyle);
+                    }
+
                     featureLayer.SetDefinition(layerDef);
-                    System.Diagnostics.Debug.WriteLine($"Applied settings to layer: {featureLayer.Name}");
+                    if (renderer != null)
+                    {
+                        try
+                        {
+                            featureLayer.SetRenderer(renderer);
+                        }
+                        catch (Exception rendererEx)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Warning: SetRenderer failed for {featureLayer.Name}: {rendererEx.Message}");
+                        }
+                    }
+                    if (labelsAdded)
+                        featureLayer.SetLabelVisibility(true);
+                    System.Diagnostics.Debug.WriteLine($"Applied settings{(renderer != null ? " + renderer" : "")}{(layerInfo != null ? " + labels" : "")} to layer: {featureLayer.Name}");
                 }
             }
             catch (ArgumentException ex) when (ex.Message.Contains("domain") || ex.Message.Contains("Domain") || ex.Message.Contains("not supported"))
             {
-                // Pro 3.5 limitation: Parquet files don't support domains
-                // Layer is still usable without these settings
                 System.Diagnostics.Debug.WriteLine($"Info: Skipping layer settings for {featureLayer.Name} (domain access not supported for Parquet in Pro 3.5): {ex.Message}");
             }
             catch (Exception ex)
