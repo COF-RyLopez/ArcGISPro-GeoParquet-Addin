@@ -14,6 +14,7 @@ using ArcGIS.Desktop.Core.Geoprocessing;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
 using ArcGIS.Desktop.Mapping;
 using DuckDB.NET.Data;
+using DuckDBGeoparquet.Models;
 
 namespace DuckDBGeoparquet.Services
 {
@@ -64,6 +65,49 @@ namespace DuckDBGeoparquet.Services
             { "water", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } }
         };
 
+        // Default draw order fallback used when a style does not provide explicit draw ranks.
+        // Higher rank draws above lower rank.
+        private static readonly Dictionary<string, int> DefaultDrawOrderRanks = new(StringComparer.OrdinalIgnoreCase)
+        {
+            // Point overlays
+            { "place:point", 330 },
+            { "division:point", 326 },
+            { "address:point", 318 },
+            { "connector:point", 314 },
+            { "infrastructure:point", 312 },
+            { "land:point", 308 },
+            { "water:point", 306 },
+
+            // Linear networks and boundaries
+            { "segment:line", 304 },
+            { "division_boundary:line", 300 },
+            { "infrastructure:line", 296 },
+            { "water:line", 294 },
+            { "land_use:line", 292 },
+            { "land:line", 290 },
+
+            // Polygonal layers (buildings above polygons, water at the bottom)
+            { "building:polygon", 286 },
+            { "building_part:polygon", 284 },
+            { "infrastructure:polygon", 278 },
+            { "division_area:polygon", 276 },
+            { "division:polygon", 274 },
+            { "land_use:polygon", 272 },
+            { "land_cover:polygon", 268 },
+            { "land:polygon", 264 },
+            { "bathymetry:polygon", 260 },
+            { "water:polygon", 256 },
+
+            // Type-only fallbacks
+            { "building", 286 },
+            { "building_part", 284 },
+            { "segment", 304 },
+            { "address", 318 },
+            { "place", 330 },
+            { "water", 256 },
+            { "bathymetry", 260 },
+        };
+
         // Add a class-level field to store the current extent
         private dynamic _currentExtent;
 
@@ -73,11 +117,31 @@ namespace DuckDBGeoparquet.Services
 
         // Collection to store layer information for bulk creation
         private readonly List<LayerCreationInfo> _pendingLayers;
+        private string _outputSessionSuffix = DateTime.UtcNow.ToString("yyyyMMddHHmmssfff", CultureInfo.InvariantCulture);
+        private static readonly bool VerbosePerLayerDebugLogging = false;
+
+        /// <summary>
+        /// When set, layers added to the map will receive cartographic symbology
+        /// matching this style definition instead of default ArcGIS Pro symbology.
+        /// </summary>
+        public MapStyleDefinition SelectedMapStyle { get; set; }
+
+        public int LastAddedLayerCount { get; private set; }
+        public string LastAppliedStyleName { get; private set; } = "default";
 
         public DataProcessor()
         {
             _connection = new DuckDBConnection("DataSource=:memory:");
             _pendingLayers = new List<LayerCreationInfo>();
+        }
+
+        /// <summary>
+        /// Starts a new output session so exported parquet file paths are unique per load.
+        /// This prevents ArcGIS from reusing stale cache metadata tied to a previous file path.
+        /// </summary>
+        public void BeginNewOutputSession()
+        {
+            _outputSessionSuffix = DateTime.UtcNow.ToString("yyyyMMddHHmmssfff", CultureInfo.InvariantCulture);
         }
 
         public async Task InitializeDuckDBAsync()
@@ -283,30 +347,19 @@ namespace DuckDBGeoparquet.Services
                     string xMaxStr = ((double)extent.XMax).ToString("G", CultureInfo.InvariantCulture);
                     string yMaxStr = ((double)extent.YMax).ToString("G", CultureInfo.InvariantCulture);
                     
-                    // Two-stage spatial filtering for accuracy and performance:
-                    // 1. Bbox overlap filter (fast pre-filter to reduce data)
-                    // 2. Clip geometries to extent (keeps all intersecting features, clips to extent)
-                    // Also exclude features with extremely large bounding boxes (likely global/error data)
-                    const double MAX_BBOX_WIDTH = 10.0;  // degrees longitude
-                    const double MAX_BBOX_HEIGHT = 5.0; // degrees latitude
-                    string maxBboxWidthStr = MAX_BBOX_WIDTH.ToString("G", CultureInfo.InvariantCulture);
-                    string maxBboxHeightStr = MAX_BBOX_HEIGHT.ToString("G", CultureInfo.InvariantCulture);
-                    
                     // Create a polygon from the extent for clipping
                     // Format: POLYGON((xmin ymin, xmax ymin, xmax ymax, xmin ymax, xmin ymin))
-                    // Note: ST_GeomFromText in DuckDB doesn't accept SRID parameter - geometries are assumed to be in the same CRS as the data
                     extentPolygon = $"ST_GeomFromText('POLYGON(({xMinStr} {yMinStr}, {xMaxStr} {yMinStr}, {xMaxStr} {yMaxStr}, {xMinStr} {yMaxStr}, {xMinStr} {yMinStr}))')";
-                    
+
+                    // Bbox overlap first (pushdown), then ST_Intersects so only features whose geometry
+                    // actually intersects the extent are kept — prevents data extending beyond the frame.
                     spatialFilter = $@"
                         WHERE bbox.xmin <= {xMaxStr}
                           AND bbox.xmax >= {xMinStr}
                           AND bbox.ymin <= {yMaxStr}
                           AND bbox.ymax >= {yMinStr}
-                          AND (bbox.xmax - bbox.xmin) <= {maxBboxWidthStr}
-                          AND (bbox.ymax - bbox.ymin) <= {maxBboxHeightStr}";
-                    
-                    System.Diagnostics.Debug.WriteLine($"Spatial filter applied: extent=({xMinStr}, {yMinStr}) to ({xMaxStr}, {yMaxStr}), max bbox size=({maxBboxWidthStr}, {maxBboxHeightStr}), geometries will be clipped to extent");
-                    
+                          AND ST_Intersects(geometry, {extentPolygon})";
+                    System.Diagnostics.Debug.WriteLine($"[{actualS3Type}] Spatial filter: requested extent=({xMinStr}, {yMinStr}) to ({xMaxStr}, {yMaxStr}), bbox overlap + ST_Intersects");
                     progress?.Report($"Applying spatial filter for current map extent...");
                 }
                 else
@@ -318,15 +371,56 @@ namespace DuckDBGeoparquet.Services
                 string query;
                 // Determine which columns to project (if any) while always retaining geometry
                 var projectedColumnList = projectedColumns ?? "*";
+                bool hasBboxColumn = columnNames.Any(c => c.Equals(BBOX_COLUMN, StringComparison.OrdinalIgnoreCase));
                 var projectedColumnsWithoutGeometry = projectedColumns != null
                     ? string.Join(", ", projectedColumns.Split(',').Select(c => c.Trim()).Where(c => !c.Equals("geometry", StringComparison.OrdinalIgnoreCase)))
                     : "* EXCLUDE(geometry)";
+                var projectedColumnsWithoutGeometryOrBbox = projectedColumns != null
+                    ? string.Join(", ", projectedColumns.Split(',').Select(c => c.Trim()).Where(c =>
+                        !c.Equals("geometry", StringComparison.OrdinalIgnoreCase) &&
+                        !c.Equals(BBOX_COLUMN, StringComparison.OrdinalIgnoreCase)))
+                    : (hasBboxColumn ? "* EXCLUDE(geometry, bbox)" : "* EXCLUDE(geometry)");
+                if (string.IsNullOrWhiteSpace(projectedColumnsWithoutGeometry))
+                    projectedColumnsWithoutGeometry = "* EXCLUDE(geometry)";
+                if (string.IsNullOrWhiteSpace(projectedColumnsWithoutGeometryOrBbox))
+                    projectedColumnsWithoutGeometryOrBbox = hasBboxColumn ? "* EXCLUDE(geometry, bbox)" : "* EXCLUDE(geometry)";
 
                 if (extent != null && !string.IsNullOrEmpty(extentPolygon))
                 {
                     // Clip geometries to extent - this keeps all intersecting features but clips them to the extent
                     // Use ST_Intersection to clip, and only include features that actually intersect
-                    query = $@"
+                    if (hasBboxColumn)
+                    {
+                        query = $@"
+                        CREATE OR REPLACE TABLE current_table AS 
+                        WITH clipped AS (
+                            SELECT
+                                {projectedColumnsWithoutGeometryOrBbox},
+                                CASE
+                                    WHEN ST_Intersects(geometry, {extentPolygon})
+                                    THEN ST_Intersection(geometry, {extentPolygon})
+                                    ELSE NULL
+                                END AS clipped_geometry
+                            FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
+                            {spatialFilter}
+                        )
+                        SELECT
+                            * EXCLUDE(clipped_geometry),
+                            clipped_geometry AS geometry,
+                            CASE
+                                WHEN clipped_geometry IS NOT NULL THEN struct_pack(
+                                    xmin := ST_XMin(clipped_geometry),
+                                    ymin := ST_YMin(clipped_geometry),
+                                    xmax := ST_XMax(clipped_geometry),
+                                    ymax := ST_YMax(clipped_geometry)
+                                )
+                                ELSE NULL
+                            END AS bbox
+                        FROM clipped";
+                    }
+                    else
+                    {
+                        query = $@"
                         CREATE OR REPLACE TABLE current_table AS 
                         SELECT 
                             {projectedColumnsWithoutGeometry},
@@ -336,8 +430,8 @@ namespace DuckDBGeoparquet.Services
                                 ELSE NULL
                             END as geometry
                         FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
-                        {spatialFilter}
-                        AND ST_Intersects(geometry, {extentPolygon})";
+                        {spatialFilter}";
+                    }
                 }
                 else
                 {
@@ -368,7 +462,7 @@ namespace DuckDBGeoparquet.Services
                 command.CommandText = "SELECT COUNT(*) FROM current_table";
                 var count = await command.ExecuteScalarAsync(CancellationToken.None);
                 progress?.Report($"Successfully loaded {count:N0} rows from S3");
-                System.Diagnostics.Debug.WriteLine($"Loaded {count} rows");
+                System.Diagnostics.Debug.WriteLine($"[{actualS3Type}] Loaded {count} rows");
 
                 // Early exit for empty datasets to avoid unnecessary processing
                 if (Convert.ToInt64(count) == 0)
@@ -385,6 +479,31 @@ namespace DuckDBGeoparquet.Services
                 System.Diagnostics.Debug.WriteLine($"Query error: {ex.Message}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Infer ISO 3166-1 alpha-2 country code from extent center (WGS84) for filtering address data.
+        /// Returns null if extent center is not in a known bounding box. Reduces address load from global to one country.
+        /// </summary>
+        private static string TryGetCountryCodeFromExtent(dynamic extent)
+        {
+            if (extent == null) return null;
+            double midLon = (double)((extent.XMin + extent.XMax) / 2.0);
+            double midLat = (double)((extent.YMin + extent.YMax) / 2.0);
+            // Rough bounding boxes (lon min, lat min, lon max, lat max) for countries with large Overture address counts
+            if (midLon >= -125 && midLon <= -66 && midLat >= 24 && midLat <= 50) return "US";
+            if (midLon >= -141 && midLon <= -52 && midLat >= 41 && midLat <= 84) return "CA";
+            if (midLon >= -118 && midLon <= -86 && midLat >= 14 && midLat <= 33) return "MX";
+            if (midLon >= -75 && midLon <= -34 && midLat >= -34 && midLat <= 5) return "BR";
+            if (midLon >= -5 && midLon <= 10 && midLat >= 41 && midLat <= 52) return "FR";
+            if (midLon >= -10 && midLon <= 5 && midLat >= 50 && midLat <= 61) return "GB";
+            if (midLon >= 6 && midLon <= 15 && midLat >= 47 && midLat <= 55) return "DE";
+            if (midLon >= 10 && midLon <= 19 && midLat >= 36 && midLat <= 47) return "IT";
+            if (midLon >= -4 && midLon <= 5 && midLat >= 35 && midLat <= 44) return "ES";
+            if (midLon >= 124 && midLon <= 154 && midLat >= -44 && midLat <= -10) return "AU";
+            if (midLon >= 165 && midLon <= 180 && midLat >= -48 && midLat <= -34) return "NZ";
+            if (midLon >= -180 && midLon <= -165 && midLat >= -48 && midLat <= -34) return "NZ";
+            return null;
         }
 
         /// <summary>
@@ -868,52 +987,10 @@ namespace DuckDBGeoparquet.Services
 
             System.Diagnostics.Debug.WriteLine($"Processing {geometryTypes.Count} geometry types: {string.Join(", ", geometryTypes)}");
 
-            // Prepare a one-pass partitioned export by geometry type
-            string stagingFolder = Path.Combine(themeTypeSpecificOutputFolder, "__geom_partitions");
-            if (Directory.Exists(stagingFolder))
-            {
-                Directory.Delete(stagingFolder, recursive: true);
-            }
-            Directory.CreateDirectory(stagingFolder);
-
-            string validCompression = compression?.ToUpperInvariant() switch
-            {
-                "SNAPPY" => "SNAPPY",
-                "GZIP" => "GZIP",
-                "ZSTD" => "ZSTD",
-                _ => "ZSTD"
-            };
-
-            int rowGroupSize = 250000;
-
-            string partitionedCopy = $@"
-                COPY (
-                    SELECT 
-                        * EXCLUDE (geometry),
-                        geometry,
-                        ST_GeometryType(geometry) AS geom_type
-                    FROM current_table
-                    WHERE geometry IS NOT NULL
-                ) TO '{stagingFolder.Replace('\\', '/')}' 
-                WITH (
-                    FORMAT 'PARQUET',
-                    PARTITION_BY (geom_type),
-                    ROW_GROUP_SIZE {rowGroupSize},
-                    COMPRESSION '{validCompression}'
-                );";
-
-            try
-            {
-                command.CommandText = partitionedCopy;
-                await command.ExecuteNonQueryAsync(CancellationToken.None);
-                progress?.Report($"Exported all geometry types for {layerNameBase} in one pass");
-            }
-            catch (Exception ex)
-            {
-                progress?.Report($"Error during partitioned export: {ex.Message}");
-                System.Diagnostics.Debug.WriteLine($"Error during partitioned export for {layerNameBase}: {ex.Message}");
-                throw;
-            }
+            // Determine whether current_table has a bbox column so we can keep bbox synchronized with geometry.
+            command.CommandText = "SELECT COUNT(*) FROM pragma_table_info('current_table') WHERE lower(name) = 'bbox'";
+            var bboxColCount = Convert.ToInt32(await command.ExecuteScalarAsync(CancellationToken.None));
+            bool currentTableHasBbox = bboxColCount > 0;
 
             int typeIndex = 0;
             foreach (var geomType in geometryTypes)
@@ -926,36 +1003,37 @@ namespace DuckDBGeoparquet.Services
 
                 string descriptiveGeomType = GetDescriptiveGeometryType(geomType);
                 string finalLayerName = geometryTypes.Count > 1 ? $"{layerNameBase} ({descriptiveGeomType})" : layerNameBase;
-                string outputFileName = $"{MfcUtility.SanitizeFileName(finalLayerName)}.parquet";
+                string outputFileName = $"{MfcUtility.SanitizeFileName(finalLayerName)}_{_outputSessionSuffix}.parquet";
                 string finalOutputPath = Path.Combine(themeTypeSpecificOutputFolder, outputFileName);
 
-                string partitionDir = Path.Combine(stagingFolder, $"geom_type={geomType}");
                 try
                 {
-                    if (!Directory.Exists(partitionDir))
-                    {
-                        progress?.Report($"Warning: No data found for geometry type {geomType}");
-                        System.Diagnostics.Debug.WriteLine($"Partition directory not found for {geomType}: {partitionDir}");
-                        continue;
-                    }
-
-                    var partitionFiles = Directory.GetFiles(partitionDir, "*.parquet");
-                    if (partitionFiles.Length == 0)
-                    {
-                        progress?.Report($"Warning: No Parquet files produced for {geomType}");
-                        System.Diagnostics.Debug.WriteLine($"No parquet files in {partitionDir} for {geomType}");
-                        continue;
-                    }
-
-                    // Use the first file for this geometry type (DuckDB emits one per partition by default)
-                    string partitionFile = partitionFiles[0];
-
-                    // Ensure destination folder exists
                     Directory.CreateDirectory(Path.GetDirectoryName(finalOutputPath));
 
-                    // Overwrite if it exists from prior runs with retries; if still locked, fall back to unique name
-                    string targetPath = await EnsureTargetFileAvailableAsync(finalOutputPath);
-                    File.Move(partitionFile, targetPath);
+                    string escapedGeomType = geomType.Replace("'", "''");
+                    string exportSelect = currentTableHasBbox
+                        ? $@"
+                            SELECT
+                                * EXCLUDE(geometry, bbox),
+                                geometry,
+                                struct_pack(
+                                    xmin := ST_XMin(geometry),
+                                    ymin := ST_YMin(geometry),
+                                    xmax := ST_XMax(geometry),
+                                    ymax := ST_YMax(geometry)
+                                ) AS bbox
+                            FROM current_table
+                            WHERE geometry IS NOT NULL
+                              AND ST_GeometryType(geometry) = '{escapedGeomType}'"
+                        : $@"
+                            SELECT
+                                * EXCLUDE(geometry),
+                                geometry
+                            FROM current_table
+                            WHERE geometry IS NOT NULL
+                              AND ST_GeometryType(geometry) = '{escapedGeomType}'";
+
+                    string targetPath = await ExportToGeoParquet(exportSelect, finalOutputPath, finalLayerName, progress, compression);
 
                     var layerInfo = new LayerCreationInfo
                     {
@@ -973,22 +1051,9 @@ namespace DuckDBGeoparquet.Services
                 }
                 catch (Exception ex)
                 {
-                    progress?.Report($"Error handling partition for {geomType}: {ex.Message}");
-                    System.Diagnostics.Debug.WriteLine($"Error handling partition {geomType}: {ex.Message}");
+                    progress?.Report($"Error exporting {geomType}: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Error exporting {geomType}: {ex.Message}");
                 }
-            }
-
-            // Clean up staging folder
-            try
-            {
-                if (Directory.Exists(stagingFolder))
-                {
-                    Directory.Delete(stagingFolder, recursive: true);
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Warning: Could not delete staging folder {stagingFolder}: {ex.Message}");
             }
 
             progress?.Report($"Finished processing all geometry types for {layerNameBase}.");
@@ -1140,18 +1205,30 @@ namespace DuckDBGeoparquet.Services
         {
             if (!_pendingLayers.Any())
             {
+                LastAddedLayerCount = 0;
                 progress?.Report("No layers to add to map.");
                 return;
             }
 
-            var sortedLayers = SortLayersByGeometryPriority(_pendingLayers);
+            var sortedLayers = SortLayersByGeometryPriority(_pendingLayers, SelectedMapStyle);
 
             progress?.Report($"Preparing to add {sortedLayers.Count} layers with optimal stacking order...");
-            System.Diagnostics.Debug.WriteLine($"Adding {sortedLayers.Count} layers in optimal stacking order (points → lines → polygons, with buildings at top of polygons):");
+            string styleName = SelectedMapStyle?.DisplayName ?? "default";
+            LastAddedLayerCount = sortedLayers.Count;
+            LastAppliedStyleName = styleName;
+            System.Diagnostics.Debug.WriteLine($"Adding {sortedLayers.Count} layers using style-aware stacking order ({styleName}):");
+            System.Diagnostics.Debug.WriteLine(
+                $"Draw order rank source: style map count={SelectedMapStyle?.DrawOrderRanks?.Count ?? 0}, fallback map count={DefaultDrawOrderRanks.Count}");
 
-            foreach (var layer in sortedLayers)
+            if (VerbosePerLayerDebugLogging)
             {
-                System.Diagnostics.Debug.WriteLine($"  {layer.LayerName} ({layer.GeometryType}, priority {layer.StackingPriority})");
+                foreach (var layer in sortedLayers)
+                {
+                    int drawRank = GetLayerDrawingRank(layer, SelectedMapStyle);
+                    string resolvedType = ResolveLayerType(layer);
+                    System.Diagnostics.Debug.WriteLine(
+                        $"  {layer.LayerName} ({layer.GeometryType}, type={resolvedType ?? "unknown"}, draw rank {drawRank}, base priority {layer.StackingPriority})");
+                }
             }
 
             int pointCount = sortedLayers.Count(l => l.StackingPriority == 3);
@@ -1201,25 +1278,125 @@ namespace DuckDBGeoparquet.Services
                 }
             }
 
+            await QueuedTask.Run(() =>
+            {
+                var map = MapView.Active?.Map;
+                if (map != null)
+                {
+                    EnforceLayerDrawOrder(map, sortedLayers, progress);
+                }
+            });
+
             _pendingLayers.Clear();
         }
 
-        private static List<LayerCreationInfo> SortLayersByGeometryPriority(List<LayerCreationInfo> layers)
+        private static List<LayerCreationInfo> SortLayersByGeometryPriority(List<LayerCreationInfo> layers, MapStyleDefinition style)
         {
-            var sorted = layers
-                .OrderByDescending(layer => layer.StackingPriority)
-                .ThenByDescending(layer => layer.LayerName.Contains("Building", StringComparison.OrdinalIgnoreCase))
+            return layers
+                .OrderByDescending(layer => GetLayerDrawingRank(layer, style))
                 .ThenBy(layer => layer.ParentTheme)
                 .ThenBy(layer => layer.ActualType)
+                .ThenBy(layer => layer.LayerName)
                 .ToList();
+        }
 
-            var pointLayers = sorted.Where(l => l.StackingPriority == 3).ToList();
-            var lineLayers = sorted.Where(l => l.StackingPriority == 2).ToList();
-            var polygonLayers = sorted.Where(l => l.StackingPriority == 1).ToList();
+        private static int GetLayerDrawingRank(LayerCreationInfo layerInfo, MapStyleDefinition style)
+        {
+            if (layerInfo == null)
+                return 0;
 
-            polygonLayers.Reverse();
+            string actualType = ResolveLayerType(layerInfo);
+            string geometryGroup = GetGeometryGroup(layerInfo.GeometryType);
+            var styleOrder = style?.DrawOrderRanks;
+            string exactKey = string.IsNullOrWhiteSpace(actualType) ? null : $"{actualType}:{geometryGroup}";
 
-            return pointLayers.Concat(lineLayers).Concat(polygonLayers).ToList();
+            if (!string.IsNullOrWhiteSpace(exactKey))
+            {
+                if (styleOrder != null && styleOrder.TryGetValue(exactKey, out int exactStyleRank))
+                    return exactStyleRank;
+
+                if (DefaultDrawOrderRanks.TryGetValue(exactKey, out int exactFallbackRank))
+                    return exactFallbackRank;
+            }
+
+            if (!string.IsNullOrWhiteSpace(actualType))
+            {
+                if (styleOrder != null && styleOrder.TryGetValue(actualType, out int typeStyleRank))
+                    return typeStyleRank;
+
+                if (DefaultDrawOrderRanks.TryGetValue(actualType, out int typeFallbackRank))
+                    return typeFallbackRank;
+            }
+
+            // Final geometry-based fallback with explicit separation to avoid same-rank tie churn.
+            return geometryGroup switch
+            {
+                "point" => 300,
+                "line" => 200,
+                _ => 100
+            };
+        }
+
+        private static string ResolveLayerType(LayerCreationInfo layerInfo)
+        {
+            if (layerInfo == null)
+                return null;
+
+            if (!string.IsNullOrWhiteSpace(layerInfo.ActualType))
+                return layerInfo.ActualType.Trim().ToLowerInvariant();
+
+            if (!string.IsNullOrWhiteSpace(layerInfo.ParentTheme))
+                return layerInfo.ParentTheme.Trim().ToLowerInvariant();
+
+            string layerName = layerInfo.LayerName?.ToLowerInvariant() ?? string.Empty;
+            if (layerName.Contains("building part"))
+                return "building_part";
+            if (layerName.Contains("building"))
+                return "building";
+            if (layerName.Contains("land use"))
+                return "land_use";
+            if (layerName.Contains("land cover"))
+                return "land_cover";
+            if (layerName.Contains("division boundary"))
+                return "division_boundary";
+            if (layerName.Contains("division area"))
+                return "division_area";
+            if (layerName.Contains("infrastructure"))
+                return "infrastructure";
+            if (layerName.Contains("bathymetry"))
+                return "bathymetry";
+            if (layerName.Contains("water"))
+                return "water";
+            if (layerName.Contains("land"))
+                return "land";
+            if (layerName.Contains("segment"))
+                return "segment";
+            if (layerName.Contains("connector"))
+                return "connector";
+            if (layerName.Contains("address"))
+                return "address";
+            if (layerName.Contains("place"))
+                return "place";
+            if (layerName.Contains("division"))
+                return "division";
+
+            return null;
+        }
+
+        private static string GetGeometryGroup(string geometryType)
+        {
+            if (string.IsNullOrWhiteSpace(geometryType))
+                return "polygon";
+
+            if (geometryType.Equals("POINT", StringComparison.OrdinalIgnoreCase) ||
+                geometryType.Equals("MULTIPOINT", StringComparison.OrdinalIgnoreCase))
+                return "point";
+
+            if (geometryType.Equals("LINESTRING", StringComparison.OrdinalIgnoreCase) ||
+                geometryType.Equals("MULTILINESTRING", StringComparison.OrdinalIgnoreCase))
+                return "line";
+
+            return "polygon";
         }
 
         private List<LayerCreationInfo> AddLayerBatch(Map map, List<LayerCreationInfo> sortedLayers, IProgress<string> progress)
@@ -1228,6 +1405,7 @@ namespace DuckDBGeoparquet.Services
 
             var uris = new List<Uri>();
             var layerNames = new List<string>();
+            var validLayerInfos = new List<LayerCreationInfo>();
             int validFiles = 0;
 
             foreach (var layerInfo in sortedLayers)
@@ -1236,8 +1414,12 @@ namespace DuckDBGeoparquet.Services
                 {
                     uris.Add(new Uri(layerInfo.FilePath));
                     layerNames.Add(layerInfo.LayerName);
+                    validLayerInfos.Add(layerInfo);
                     validFiles++;
-                    System.Diagnostics.Debug.WriteLine($"Valid file for {layerInfo.LayerName}: {layerInfo.FilePath}");
+                    if (VerbosePerLayerDebugLogging)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Valid file for {layerInfo.LayerName}: {layerInfo.FilePath}");
+                    }
                 }
                 else
                 {
@@ -1250,6 +1432,14 @@ namespace DuckDBGeoparquet.Services
 
             if (!uris.Any())
                 return null;
+
+            // Defensive cleanup: remove any existing layers/tables referencing the same parquet files
+            // before bulk creation. This avoids ArcGIS reusing stale datasource state/extents.
+            int removedExisting = RemoveExistingMembersForTargetParquetFiles(map, validLayerInfos);
+            if (removedExisting > 0)
+            {
+                progress?.Report($"Removed {removedExisting} existing map member(s) that used the same output files.");
+            }
 
             progress?.Report("Executing bulk layer creation (this may take a moment)...");
 
@@ -1267,21 +1457,36 @@ namespace DuckDBGeoparquet.Services
 
                     if (layers[i] is FeatureLayer featureLayer)
                     {
-                        ApplyLayerSettings(featureLayer);
+                        CIMRenderer renderer = null;
+                        var layerInfo = i < validLayerInfos.Count ? validLayerInfos[i] : null;
+                        if (SelectedMapStyle != null && layerInfo != null)
+                        {
+                            renderer = CartographyService.CreateRendererForLayer(layerInfo, SelectedMapStyle);
+                        }
+                        ApplyLayerSettings(featureLayer, renderer, layerInfo, SelectedMapStyle);
+
+                        if (renderer != null)
+                        {
+                            if (VerbosePerLayerDebugLogging)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"CartographyService: Applied '{SelectedMapStyle.DisplayName}' style to layer '{featureLayer.Name}' (type={layerInfo.ActualType}, geom={layerInfo.GeometryType})");
+                            }
+                        }
                     }
 
                     if (i % 3 == 0 || i == layers.Count - 1)
                     {
                         progress?.Report($"Configured layer {i + 1} of {layers.Count}: {layerNames[i]}");
                     }
-                    System.Diagnostics.Debug.WriteLine($"Successfully added layer: {layerNames[i]}");
+                    if (VerbosePerLayerDebugLogging)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Successfully added layer: {layerNames[i]}");
+                    }
                 }
             }
 
             progress?.Report($"✅ Successfully added {layers.Count} layers with optimal stacking order!");
             System.Diagnostics.Debug.WriteLine($"Bulk layer creation completed. Added {layers.Count} layers.");
-
-            RepositionBuildingsLayer(map, sortedLayers, progress);
 
             if (layers.Count < uris.Count)
             {
@@ -1297,62 +1502,191 @@ namespace DuckDBGeoparquet.Services
             return null;
         }
 
-        private static void RepositionBuildingsLayer(Map map, List<LayerCreationInfo> sortedLayers, IProgress<string> progress)
+        /// <summary>
+        /// Enforces deterministic top-to-bottom draw order for the newly loaded Overture layers.
+        /// This corrects any ordering drift introduced by bulk layer creation.
+        /// Must be called on the MCT.
+        /// </summary>
+        private static void EnforceLayerDrawOrder(Map map, List<LayerCreationInfo> desiredOrder, IProgress<string> progress)
         {
-            var buildingsLayer = map.Layers.FirstOrDefault(l => l != null && l.Name.Contains("Building", StringComparison.OrdinalIgnoreCase));
-
-            if (buildingsLayer == null)
+            if (map == null || desiredOrder == null || desiredOrder.Count == 0)
                 return;
 
-            var lineLayerNames = sortedLayers
-                .Where(l => l.StackingPriority == 2)
-                .Select(l => l.LayerName)
+            // Desired order is top -> bottom.
+            var desiredNames = desiredOrder
+                .Select(l => l?.LayerName)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
                 .ToList();
 
-            var firstLineLayer = map.Layers.FirstOrDefault(l => l != null && lineLayerNames.Contains(l.Name));
+            if (desiredNames.Count == 0)
+                return;
 
-            if (firstLineLayer != null)
+            var liveLayerMap = map.Layers
+                .Where(l => l != null)
+                .GroupBy(l => l.Name, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+            var presentLayers = desiredNames
+                .Where(name => liveLayerMap.ContainsKey(name))
+                .Select(name => liveLayerMap[name])
+                .ToList();
+
+            if (presentLayers.Count <= 1)
+                return;
+
+            int targetStartIndex = presentLayers
+                .Select(l => map.Layers.IndexOf(l))
+                .Where(i => i >= 0)
+                .DefaultIfEmpty(0)
+                .Min();
+
+            // Move in reverse so final visual order is desired top -> bottom.
+            for (int i = desiredNames.Count - 1; i >= 0; i--)
             {
-                int firstLineIndex = map.Layers.IndexOf(firstLineLayer);
-                int buildingsIndex = map.Layers.IndexOf(buildingsLayer);
+                string layerName = desiredNames[i];
+                if (!liveLayerMap.TryGetValue(layerName, out Layer layerToMove) || layerToMove == null)
+                    continue;
 
-                if (buildingsIndex != firstLineIndex - 1)
+                map.MoveLayer(layerToMove, targetStartIndex);
+            }
+
+            System.Diagnostics.Debug.WriteLine($"Enforced deterministic draw order for {presentLayers.Count} loaded layer(s) starting at index {targetStartIndex}.");
+            progress?.Report("Applied deterministic layer draw order");
+        }
+
+        private static int RemoveExistingMembersForTargetParquetFiles(Map map, IEnumerable<LayerCreationInfo> targetLayers)
+        {
+            if (map == null || targetLayers == null)
+                return 0;
+
+            var targetLayerList = targetLayers.Where(t => t != null).ToList();
+            if (!targetLayerList.Any())
+                return 0;
+
+            var targetFilePaths = new HashSet<string>(
+                targetLayerList
+                    .Select(t => NormalizeToParquetFilePath(t.FilePath))
+                    .Where(p => !string.IsNullOrWhiteSpace(p)),
+                StringComparer.OrdinalIgnoreCase);
+
+            var targetLayerNames = new HashSet<string>(
+                targetLayerList
+                    .Select(t => t.LayerName)
+                    .Where(n => !string.IsNullOrWhiteSpace(n)),
+                StringComparer.OrdinalIgnoreCase);
+
+            var membersToRemove = new List<MapMember>();
+
+            foreach (var layer in map.GetLayersAsFlattenedList().OfType<FeatureLayer>())
+            {
+                bool removeByPath = false;
+                bool pathCheckFailed = false;
+
+                try
                 {
-                    try
-                    {
-                        int targetIndex = firstLineIndex - 1;
-                        map.MoveLayer(buildingsLayer, targetIndex);
-                        System.Diagnostics.Debug.WriteLine($"Moved Buildings layer from index {buildingsIndex} to {targetIndex} (right before first line layer at {firstLineIndex})");
-                        progress?.Report($"Moved Buildings layer to top of polygon layers");
-                    }
-                    catch (Exception moveEx)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Warning: Could not move Buildings layer: {moveEx.Message}");
-                    }
+                    using var fc = layer.GetFeatureClass();
+                    var pathUri = fc?.GetPath();
+                    var normalizedLayerPath = NormalizeToParquetFilePath(pathUri != null
+                        ? (pathUri.IsFile ? pathUri.LocalPath : pathUri.OriginalString)
+                        : null);
+
+                    if (!string.IsNullOrWhiteSpace(normalizedLayerPath) && targetFilePaths.Contains(normalizedLayerPath))
+                        removeByPath = true;
                 }
-                else
+                catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"Buildings layer already in correct position (index {buildingsIndex}, right before first line at {firstLineIndex})");
+                    pathCheckFailed = true;
+                    System.Diagnostics.Debug.WriteLine($"RemoveExistingMembersForTargetParquetFiles: Failed to inspect layer path for '{layer.Name}': {ex.Message}");
+                }
+
+                if (removeByPath || (pathCheckFailed && targetLayerNames.Contains(layer.Name)))
+                {
+                    membersToRemove.Add(layer);
                 }
             }
-            else
-            {
-                int buildingsIndex = map.Layers.IndexOf(buildingsLayer);
-                int lastIndex = map.Layers.Count - 1;
 
-                if (buildingsIndex != lastIndex)
+            foreach (var table in map.GetStandaloneTablesAsFlattenedList().OfType<StandaloneTable>())
+            {
+                bool removeByPath = false;
+                bool pathCheckFailed = false;
+
+                try
                 {
-                    try
+                    using var tbl = table.GetTable();
+                    var pathUri = tbl?.GetPath();
+                    var normalizedTablePath = NormalizeToParquetFilePath(pathUri != null
+                        ? (pathUri.IsFile ? pathUri.LocalPath : pathUri.OriginalString)
+                        : null);
+
+                    if (!string.IsNullOrWhiteSpace(normalizedTablePath) && targetFilePaths.Contains(normalizedTablePath))
+                        removeByPath = true;
+                }
+                catch (Exception ex)
+                {
+                    pathCheckFailed = true;
+                    System.Diagnostics.Debug.WriteLine($"RemoveExistingMembersForTargetParquetFiles: Failed to inspect table path for '{table.Name}': {ex.Message}");
+                }
+
+                if (removeByPath || (pathCheckFailed && targetLayerNames.Contains(table.Name)))
+                {
+                    membersToRemove.Add(table);
+                }
+            }
+
+            int removedCount = 0;
+            foreach (var member in membersToRemove.Distinct())
+            {
+                try
+                {
+                    if (member is Layer layer)
                     {
-                        map.MoveLayer(buildingsLayer, lastIndex);
-                        System.Diagnostics.Debug.WriteLine($"Moved Buildings layer from index {buildingsIndex} to {lastIndex} (last layer)");
-                        progress?.Report($"Moved Buildings layer to top of polygon layers");
+                        map.RemoveLayer(layer);
+                        (layer as IDisposable)?.Dispose();
+                        removedCount++;
+                        System.Diagnostics.Debug.WriteLine($"Removed existing layer before re-create: {member.Name}");
                     }
-                    catch (Exception moveEx)
+                    else if (member is StandaloneTable table)
                     {
-                        System.Diagnostics.Debug.WriteLine($"Warning: Could not move Buildings layer: {moveEx.Message}");
+                        map.RemoveStandaloneTable(table);
+                        (table as IDisposable)?.Dispose();
+                        removedCount++;
+                        System.Diagnostics.Debug.WriteLine($"Removed existing standalone table before re-create: {member.Name}");
                     }
                 }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"RemoveExistingMembersForTargetParquetFiles: Failed removing '{member.Name}': {ex.Message}");
+                }
+            }
+
+            if (removedCount > 0)
+            {
+                System.Diagnostics.Debug.WriteLine($"Removed {removedCount} existing map member(s) that matched target parquet paths.");
+            }
+
+            return removedCount;
+        }
+
+        private static string NormalizeToParquetFilePath(string rawPath)
+        {
+            if (string.IsNullOrWhiteSpace(rawPath))
+                return null;
+
+            try
+            {
+                string fullPath = Path.GetFullPath(rawPath);
+                string lowerPath = fullPath.ToLowerInvariant();
+                int parquetIndex = lowerPath.IndexOf(".parquet", StringComparison.OrdinalIgnoreCase);
+                if (parquetIndex >= 0)
+                {
+                    return fullPath[..(parquetIndex + ".parquet".Length)].ToLowerInvariant();
+                }
+
+                return fullPath.ToLowerInvariant();
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -1406,7 +1740,20 @@ namespace DuckDBGeoparquet.Services
 
                         if (newLayer is FeatureLayer featureLayer)
                         {
-                            ApplyLayerSettings(featureLayer);
+                            CIMRenderer renderer = null;
+                            if (SelectedMapStyle != null)
+                            {
+                                renderer = CartographyService.CreateRendererForLayer(layerInfo, SelectedMapStyle);
+                            }
+                            ApplyLayerSettings(featureLayer, renderer, layerInfo, SelectedMapStyle);
+
+                            if (renderer != null)
+                            {
+                                if (VerbosePerLayerDebugLogging)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"CartographyService: Applied '{SelectedMapStyle.DisplayName}' style to layer '{featureLayer.Name}' (type={layerInfo.ActualType}, geom={layerInfo.GeometryType})");
+                                }
+                            }
                         }
 
                         progress?.Report($"Successfully added layer: {newLayer?.Name ?? layerInfo.LayerName}");
@@ -1465,33 +1812,81 @@ namespace DuckDBGeoparquet.Services
 
         /// <summary>
         /// Applies consistent settings to feature layers (cache, feature reduction, etc.)
+        /// Optionally sets a CIM renderer and label classes in the same definition update.
         /// Note: In Pro 3.5, accessing layer definitions for Parquet files may trigger domain lookups that fail
         /// </summary>
-        private static void ApplyLayerSettings(FeatureLayer featureLayer)
+        private static void ApplyLayerSettings(FeatureLayer featureLayer, CIMRenderer renderer = null, LayerCreationInfo layerInfo = null, MapStyleDefinition mapStyle = null)
         {
             try
             {
                 if (featureLayer.GetDefinition() is CIMFeatureLayer layerDef)
                 {
-                    // Set cache settings for performance
                     layerDef.DisplayCacheType = ArcGIS.Core.CIM.DisplayCacheType.None;
                     layerDef.FeatureCacheType = ArcGIS.Core.CIM.FeatureCacheType.None;
 
-                    // Disable feature binning/reduction for better data visibility
                     if (layerDef.FeatureReduction is CIMBinningFeatureReduction binningReduction && binningReduction.Enabled)
                     {
-                        binningReduction.Enabled = false;
-                        System.Diagnostics.Debug.WriteLine($"Disabled feature binning for layer: {featureLayer.Name}");
+                        bool isPointLayer =
+                            layerInfo != null &&
+                            (string.Equals(layerInfo.GeometryType, "POINT", StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(layerInfo.GeometryType, "MULTIPOINT", StringComparison.OrdinalIgnoreCase));
+
+                        if (!isPointLayer)
+                        {
+                            binningReduction.Enabled = false;
+                            if (VerbosePerLayerDebugLogging)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"Disabled feature binning for layer: {featureLayer.Name}");
+                            }
+                        }
+                        else
+                        {
+                            if (VerbosePerLayerDebugLogging)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"Kept feature binning enabled for dense point layer: {featureLayer.Name}");
+                            }
+                        }
+                    }
+
+                    if (renderer != null)
+                    {
+                        layerDef.Renderer = renderer;
+                    }
+
+                    bool labelsAdded = false;
+                    if (layerInfo != null)
+                    {
+                        labelsAdded = CartographyService.ApplyLabelClasses(layerDef, layerInfo.ActualType, layerInfo.GeometryType, mapStyle);
                     }
 
                     featureLayer.SetDefinition(layerDef);
-                    System.Diagnostics.Debug.WriteLine($"Applied settings to layer: {featureLayer.Name}");
+                    if (renderer != null)
+                    {
+                        try
+                        {
+                            featureLayer.SetRenderer(renderer);
+                        }
+                        catch (Exception rendererEx)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Warning: SetRenderer failed for {featureLayer.Name}: {rendererEx.Message}");
+                        }
+                    }
+                    if (labelsAdded)
+                        featureLayer.SetLabelVisibility(true);
+
+                    if (layerInfo != null)
+                    {
+                        CartographyService.ApplyVisibilityDefaults(featureLayer, layerInfo.ActualType, layerInfo.GeometryType);
+                    }
+
+                    if (VerbosePerLayerDebugLogging)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Applied settings{(renderer != null ? " + renderer" : "")}{(layerInfo != null ? " + labels" : "")} to layer: {featureLayer.Name}");
+                    }
                 }
             }
             catch (ArgumentException ex) when (ex.Message.Contains("domain") || ex.Message.Contains("Domain") || ex.Message.Contains("not supported"))
             {
-                // Pro 3.5 limitation: Parquet files don't support domains
-                // Layer is still usable without these settings
                 System.Diagnostics.Debug.WriteLine($"Info: Skipping layer settings for {featureLayer.Name} (domain access not supported for Parquet in Pro 3.5): {ex.Message}");
             }
             catch (Exception ex)
@@ -1628,11 +2023,21 @@ namespace DuckDBGeoparquet.Services
                                 // Specifically check for CIMBinningFeatureReduction
                                 if (layerDef.FeatureReduction is CIMBinningFeatureReduction binningReduction)
                                 {
+                                    bool isPointLayer = featureLayer.ShapeType == esriGeometryType.esriGeometryPoint
+                                        || featureLayer.ShapeType == esriGeometryType.esriGeometryMultipoint;
+
                                     if (binningReduction.Enabled) // Only disable if it's currently enabled
                                     {
-                                        binningReduction.Enabled = false;
-                                        featureLayer.SetDefinition(layerDef); // Apply the change
-                                        System.Diagnostics.Debug.WriteLine($"Disabled feature binning for layer: {featureLayer.Name}");
+                                        if (!isPointLayer)
+                                        {
+                                            binningReduction.Enabled = false;
+                                            featureLayer.SetDefinition(layerDef); // Apply the change
+                                            System.Diagnostics.Debug.WriteLine($"Disabled feature binning for layer: {featureLayer.Name}");
+                                        }
+                                        else
+                                        {
+                                            System.Diagnostics.Debug.WriteLine($"Kept feature binning enabled for dense point layer: {featureLayer.Name}");
+                                        }
                                     }
                                     else
                                     {

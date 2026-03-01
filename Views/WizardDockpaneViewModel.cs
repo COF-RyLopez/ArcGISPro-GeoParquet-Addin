@@ -13,6 +13,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Linq;
 using System.Data;
+using DuckDBGeoparquet.Models;
 using DuckDBGeoparquet.Services;
 using Microsoft.Win32;
 using ArcGIS.Desktop.Catalog;
@@ -24,6 +25,8 @@ using System.Windows.Forms;
 using System.Threading;
 using ArcGIS.Desktop.Core;
 using System.Net;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 namespace DuckDBGeoparquet.Views
 {
@@ -209,6 +212,10 @@ namespace DuckDBGeoparquet.Views
         private const string RELEASE_URL = "https://labs.overturemaps.org/data/releases.json";
         private const string S3_BASE_PATH = "s3://overturemaps-us-west-2/release";
         private const string ADDIN_DATA_SUBFOLDER = "OvertureProAddinData"; // Define a subfolder name
+        private const uint FILE_DELETE_ACCESS = 0x00010000;
+        private const int ERROR_SHARING_VIOLATION = 32;
+        private const int ERROR_LOCK_VIOLATION = 33;
+        private const int ERROR_ACCESS_DENIED = 5;
 
         // Add CancellationTokenSource for cancelling operations
         private CancellationTokenSource _cts;
@@ -218,6 +225,19 @@ namespace DuckDBGeoparquet.Views
         {
             PropertyNameCaseInsensitive = true
         };
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(
+            string lpFileName,
+            uint dwDesiredAccess,
+            FileShare dwShareMode,
+            IntPtr lpSecurityAttributes,
+            FileMode dwCreationDisposition,
+            FileAttributes dwFlagsAndAttributes,
+            IntPtr hTemplateFile);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool DeleteFileW(string lpFileName);
 
         // Centralized logic for Default MFC Base Path
         private static string DeterminedDefaultMfcBasePath
@@ -427,9 +447,12 @@ namespace DuckDBGeoparquet.Views
                 try { this.Hide(); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Error closing dockpane: {ex.Message}"); }
             });
             SelectAllCommand = new RelayCommand(
-                () => IsSelectAllChecked = !IsSelectAllChecked, // Action: Toggle the IsSelectAllChecked property
-                () => Themes != null && Themes.Any(t => t.IsSelectable || t.SubItems.Any()) // CanExecute: If there are any selectable themes
+                () => IsSelectAllChecked = !IsSelectAllChecked,
+                () => Themes != null && Themes.Any(t => t.IsSelectable || t.SubItems.Any())
             );
+            ClearMapStyleCommand = new RelayCommand(() => SelectedMapStyle = null, () => SelectedMapStyle != null);
+            ApplyMapStyleCommand = new RelayCommand(async () => await ApplyMapStyleToExistingLayersAsync(), () => SelectedMapStyle != null);
+            RepairMapSymbologyCommand = new RelayCommand(async () => await RepairMapSymbologyAsync());
 
             CustomExtentTool.ExtentCreatedStatic += OnExtentCreated;
 
@@ -743,6 +766,127 @@ namespace DuckDBGeoparquet.Views
         // Available compression options for binding
         public List<string> CompressionOptions => new List<string> { "ZSTD", "SNAPPY", "GZIP" };
 
+        // Map style / cartography properties
+        public List<MapStyleDefinition> AvailableMapStyles { get; } = MapStyleCatalog.AllStyles;
+        public List<string> MapStyleCategoryFilters { get; } = new() { "All", "Official", "Experimental" };
+
+        private string _selectedMapStyleCategory = "All";
+        public string SelectedMapStyleCategory
+        {
+            get => _selectedMapStyleCategory;
+            set
+            {
+                if (SetProperty(ref _selectedMapStyleCategory, value))
+                {
+                    NotifyPropertyChanged(nameof(FilteredMapStyles));
+                }
+            }
+        }
+
+        public List<MapStyleDefinition> FilteredMapStyles =>
+            string.Equals(SelectedMapStyleCategory, "All", StringComparison.OrdinalIgnoreCase)
+                ? AvailableMapStyles
+                : AvailableMapStyles
+                    .Where(s => string.Equals(s.StyleCategory, SelectedMapStyleCategory, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+        private MapStyleDefinition _selectedMapStyle;
+        /// <summary>
+        /// The user-selected cartographic style, or null for default ArcGIS Pro symbology.
+        /// </summary>
+        public MapStyleDefinition SelectedMapStyle
+        {
+            get => _selectedMapStyle;
+            set
+            {
+                if (_selectedMapStyle == value) return;
+                SetProperty(ref _selectedMapStyle, value);
+                NotifyPropertyChanged(nameof(IsMapStyleSelected));
+                NotifyPropertyChanged(nameof(SelectedMapStyleDescription));
+                (ClearMapStyleCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                (ApplyMapStyleCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                (RepairMapSymbologyCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            }
+        }
+
+        public bool IsMapStyleSelected => _selectedMapStyle != null;
+        public string SelectedMapStyleDescription => _selectedMapStyle?.Description ?? "No map style selected — layers will use default ArcGIS Pro symbology.";
+
+        public ICommand ClearMapStyleCommand { get; private set; }
+        public ICommand ApplyMapStyleCommand { get; private set; }
+        public ICommand RepairMapSymbologyCommand { get; private set; }
+
+        private async Task ApplyMapStyleToExistingLayersAsync()
+        {
+            var style = SelectedMapStyle;
+            if (style == null) return;
+
+            var mapView = MapView.Active;
+            if (mapView == null)
+            {
+                AddToLog("No active map view. Open a map first.");
+                return;
+            }
+
+            AddToLog($"Applying '{style.DisplayName}' style to existing layers...");
+
+            int applied = 0;
+            int skipped = 0;
+
+            await QueuedTask.Run(() =>
+            {
+                var map = mapView.Map;
+                foreach (var layer in map.GetLayersAsFlattenedList().OfType<FeatureLayer>())
+                {
+                    if (CartographyService.ApplyStyleToExistingLayer(layer, style))
+                        applied++;
+                    else
+                        skipped++;
+                }
+            });
+
+            AddToLog($"Style applied to {applied} layer(s). {skipped} layer(s) unchanged (non-Overture or unrecognized).");
+        }
+
+        private async Task RepairMapSymbologyAsync()
+        {
+            var mapView = MapView.Active;
+            if (mapView == null)
+            {
+                AddToLog("No active map view. Open a map first.");
+                return;
+            }
+
+            var style = SelectedMapStyle
+                        ?? AvailableMapStyles.FirstOrDefault(s => string.Equals(s.Id, "streets", StringComparison.OrdinalIgnoreCase))
+                        ?? AvailableMapStyles.FirstOrDefault();
+
+            if (style == null)
+            {
+                AddToLog("No map styles are available to repair symbology.");
+                return;
+            }
+
+            AddToLog($"Repairing map symbology with '{style.DisplayName}' style...");
+
+            int applied = 0;
+            int skipped = 0;
+
+            await QueuedTask.Run(() =>
+            {
+                var map = mapView.Map;
+                foreach (var layer in map.GetLayersAsFlattenedList().OfType<FeatureLayer>())
+                {
+                    if (CartographyService.ApplyStyleToExistingLayer(layer, style))
+                        applied++;
+                    else
+                        skipped++;
+                }
+            });
+
+            AddToLog($"Symbology repair complete. Applied to {applied} layer(s). {skipped} layer(s) unchanged.");
+        }
+
         // Cache management properties
         private string _cacheLocation = "";
         public string CacheLocation
@@ -805,6 +949,9 @@ namespace DuckDBGeoparquet.Views
 
         // Track the last loaded data path for MFC creation
         private string _lastLoadedDataPath;
+
+        /// <summary>Saved map view extent (map's SR) before adding layers; restored after add to prevent zoom-out.</summary>
+        private Envelope _savedViewExtentForRestore;
 
         private bool _isSelectAllChecked;
         public bool IsSelectAllChecked
@@ -1432,49 +1579,106 @@ namespace DuckDBGeoparquet.Views
                     await Task.Delay(100);
                 }
 
+                // ArcGIS may still hold file handles briefly after layer removal/disposal.
+                // Force a quick GC cycle and short pause before deleting files/folders.
+                await Task.Run(() =>
+                {
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect();
+                });
+                await Task.Delay(1000);
+
                 StatusText = "Deleting existing data folders...";
                 AddToLog("All layers removed. Now deleting data folders...");
 
-                // Now delete the folders asynchronously
+                // Best-effort cleanup of old parquet files.
+                // With per-load unique output filenames, full recursive deletion is no longer required.
                 for (int i = 0; i < typeFoldersToDelete.Count; i++)
                 {
                     var folderPath = typeFoldersToDelete[i];
                     var folderName = Path.GetFileName(folderPath);
 
-                    StatusText = $"Deleting {folderName} folder ({i + 1}/{typeFoldersToDelete.Count})...";
-                    AddToLog($"Deleting folder: {folderName}");
+                    StatusText = $"Cleaning old files in {folderName} ({i + 1}/{typeFoldersToDelete.Count})...";
+                    AddToLog($"Cleaning old files in folder: {folderName}");
 
-                    // Delete folder asynchronously with retries to prevent UI blocking
-                    await Task.Run(async () =>
+                    // Delete unlocked files quickly; skip locked files and continue.
+                    await Task.Run(() =>
                     {
-                        const int maxAttempts = 3;
-                        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+                        try
                         {
-                            try
+                            if (!Directory.Exists(folderPath))
+                                return;
+
+                            int deletedFiles = 0;
+                            int lockedFiles = 0;
+                            int failedFiles = 0;
+
+                            foreach (var file in Directory.EnumerateFiles(folderPath, "*.parquet", SearchOption.AllDirectories))
                             {
-                                if (Directory.Exists(folderPath))
+                                var deleteResult = TryDeleteParquetFileQuiet(file);
+                                switch (deleteResult)
                                 {
-                                    Directory.Delete(folderPath, recursive: true);
-                                    System.Diagnostics.Debug.WriteLine($"Successfully deleted folder: {folderPath}");
+                                    case FileDeleteResult.Deleted:
+                                        deletedFiles++;
+                                        break;
+                                    case FileDeleteResult.Locked:
+                                        lockedFiles++;
+                                        break;
+                                    default:
+                                        failedFiles++;
+                                        break;
                                 }
-                                return;
                             }
-                            catch (IOException ex) when (attempt < maxAttempts)
+
+                            // Remove now-empty subdirectories.
+                            foreach (var dir in Directory.GetDirectories(folderPath, "*", SearchOption.AllDirectories)
+                                .OrderByDescending(d => d.Length))
                             {
-                                System.Diagnostics.Debug.WriteLine($"Attempt {attempt} to delete folder {folderPath} failed: {ex.Message}. Retrying...");
-                                await Task.Delay(attempt * 200);
+                                try
+                                {
+                                    if (!Directory.EnumerateFileSystemEntries(dir).Any())
+                                        Directory.Delete(dir);
+                                }
+                                catch
+                                {
+                                    // Best effort only.
+                                }
                             }
-                            catch (Exception ex)
+
+                            System.Diagnostics.Debug.WriteLine($"Cleanup {folderPath}: deleted {deletedFiles} parquet file(s), skipped {lockedFiles} locked file(s), failed {failedFiles} file(s).");
+                            if (lockedFiles > 0)
                             {
-                                System.Diagnostics.Debug.WriteLine($"Error deleting folder {folderPath}: {ex.Message}");
-                                return;
+                                AddToLog($"Skipped {lockedFiles} locked file(s) in {folderName}; they will be cleaned when released.");
                             }
+                            if (failedFiles > 0)
+                            {
+                                AddToLog($"Could not delete {failedFiles} file(s) in {folderName} due to non-lock errors.");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Error cleaning folder {folderPath}: {ex.Message}");
                         }
                     });
 
                     // Small delay to allow UI updates
                     await Task.Delay(50);
                 }
+
+                // Clear ArcGIS Pro Parquet cache to prevent stale metadata/extents from reused file paths.
+                StatusText = "Clearing ArcGIS Pro Parquet cache...";
+                AddToLog("Clearing ArcGIS Pro Parquet cache to avoid stale layer metadata...");
+                bool cacheCleared = await Task.Run(() => CacheManager.ClearCache());
+                if (cacheCleared)
+                {
+                    AddToLog("ArcGIS Pro Parquet cache cleared.");
+                }
+                else
+                {
+                    AddToLog("Could not fully clear ArcGIS Pro Parquet cache (some files may be in use).");
+                }
+                RefreshCacheInfo();
 
                 StatusText = "Data cleanup completed. Ready to load new data...";
                 AddToLog("Bulk folder deletion completed successfully");
@@ -1485,6 +1689,52 @@ namespace DuckDBGeoparquet.Views
                 StatusText = "Cleanup completed with warnings. Continuing with data load...";
                 System.Diagnostics.Debug.WriteLine($"Error in PerformBulkDataReplacementAsync: {ex.Message}");
             }
+        }
+
+        private enum FileDeleteResult
+        {
+            Deleted,
+            Locked,
+            Failed
+        }
+
+        private static FileDeleteResult TryDeleteParquetFileQuiet(string filePath)
+        {
+            if (!File.Exists(filePath))
+            {
+                return FileDeleteResult.Deleted;
+            }
+
+            using (var handle = CreateFileW(
+                filePath,
+                FILE_DELETE_ACCESS,
+                FileShare.None,
+                IntPtr.Zero,
+                FileMode.Open,
+                FileAttributes.Normal,
+                IntPtr.Zero))
+            {
+                if (handle.IsInvalid)
+                {
+                    int openError = Marshal.GetLastWin32Error();
+                    return IsLockWin32Error(openError) ? FileDeleteResult.Locked : FileDeleteResult.Failed;
+                }
+            }
+
+            if (DeleteFileW(filePath))
+            {
+                return FileDeleteResult.Deleted;
+            }
+
+            int deleteError = Marshal.GetLastWin32Error();
+            return IsLockWin32Error(deleteError) ? FileDeleteResult.Locked : FileDeleteResult.Failed;
+        }
+
+        private static bool IsLockWin32Error(int errorCode)
+        {
+            return errorCode == ERROR_SHARING_VIOLATION
+                   || errorCode == ERROR_LOCK_VIOLATION
+                   || errorCode == ERROR_ACCESS_DENIED;
         }
 
         /// <summary>
@@ -1504,20 +1754,39 @@ namespace DuckDBGeoparquet.Views
                     var allTables = map.GetStandaloneTablesAsFlattenedList().ToList();
 
                     string normalizedFolderPath = Path.GetFullPath(folderPath).ToLowerInvariant();
+                    if (!normalizedFolderPath.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+                    {
+                        normalizedFolderPath += Path.DirectorySeparatorChar;
+                    }
+
+                    // Normalize datasource paths to actual parquet file path when possible.
+                    static string NormalizeToParquetFilePath(string rawPath)
+                    {
+                        if (string.IsNullOrWhiteSpace(rawPath)) return null;
+                        try
+                        {
+                            string fullPath = Path.GetFullPath(rawPath);
+                            string lowerPath = fullPath.ToLowerInvariant();
+                            int parquetIndex = lowerPath.IndexOf(".parquet", StringComparison.OrdinalIgnoreCase);
+                            if (parquetIndex >= 0)
+                            {
+                                return fullPath[..(parquetIndex + ".parquet".Length)].ToLowerInvariant();
+                            }
+                            return fullPath.ToLowerInvariant();
+                        }
+                        catch
+                        {
+                            return null;
+                        }
+                    }
 
                     // Helper to check if a file path is within the target folder
                     bool IsFileInTargetFolder(string filePath)
                     {
                         if (string.IsNullOrEmpty(filePath)) return false;
-                        try
-                        {
-                            string normalizedFilePath = Path.GetFullPath(filePath).ToLowerInvariant();
-                            return normalizedFilePath.StartsWith(normalizedFolderPath, StringComparison.OrdinalIgnoreCase);
-                        }
-                        catch
-                        {
-                            return false;
-                        }
+                        string normalizedFilePath = NormalizeToParquetFilePath(filePath);
+                        return !string.IsNullOrEmpty(normalizedFilePath) &&
+                               normalizedFilePath.StartsWith(normalizedFolderPath, StringComparison.OrdinalIgnoreCase);
                     }
 
                     // Check layers
@@ -1531,12 +1800,12 @@ namespace DuckDBGeoparquet.Views
                                 if (fc != null)
                                 {
                                     var fcPathUri = fc.GetPath();
-                                    if (fcPathUri != null && fcPathUri.IsFile)
+                                    if (fcPathUri != null)
                                     {
-                                        if (IsFileInTargetFolder(fcPathUri.LocalPath))
+                                        string rawPath = fcPathUri.IsFile ? fcPathUri.LocalPath : fcPathUri.OriginalString;
+                                        if (IsFileInTargetFolder(rawPath))
                                         {
                                             membersToRemove.Add(featureLayer);
-                                            System.Diagnostics.Debug.WriteLine($"Marked layer '{featureLayer.Name}' for removal (folder cleanup)");
                                         }
                                     }
                                 }
@@ -1559,12 +1828,12 @@ namespace DuckDBGeoparquet.Views
                                 if (tbl != null)
                                 {
                                     var tblPathUri = tbl.GetPath();
-                                    if (tblPathUri != null && tblPathUri.IsFile)
+                                    if (tblPathUri != null)
                                     {
-                                        if (IsFileInTargetFolder(tblPathUri.LocalPath))
+                                        string rawPath = tblPathUri.IsFile ? tblPathUri.LocalPath : tblPathUri.OriginalString;
+                                        if (IsFileInTargetFolder(rawPath))
                                         {
                                             membersToRemove.Add(standaloneTable);
-                                            System.Diagnostics.Debug.WriteLine($"Marked table '{standaloneTable.Name}' for removal (folder cleanup)");
                                         }
                                     }
                                 }
@@ -1607,6 +1876,7 @@ namespace DuckDBGeoparquet.Views
         private async Task<Envelope> GetLoadExtentAsync()
         {
             Envelope extent = null;
+            _savedViewExtentForRestore = null;
             await QueuedTask.Run(() =>
             {
                 SpatialReference wgs84 = SpatialReferenceBuilder.CreateSpatialReference(4326);
@@ -1616,6 +1886,8 @@ namespace DuckDBGeoparquet.Views
                     Envelope mapExtent = MapView.Active.Extent;
                     if (mapExtent != null)
                     {
+                        // Save view extent so we can restore it after adding layers (prevents zoom-out)
+                        _savedViewExtentForRestore = EnvelopeBuilderEx.CreateEnvelope(mapExtent.XMin, mapExtent.YMin, mapExtent.XMax, mapExtent.YMax, mapExtent.SpatialReference);
                         if (mapExtent.SpatialReference == null || mapExtent.SpatialReference.Wkid != 4326)
                         {
                             AddToLog($"Map extent SR is {mapExtent.SpatialReference?.Wkid.ToString() ?? "null"}, projecting to WGS84 (4326).");
@@ -1641,7 +1913,7 @@ namespace DuckDBGeoparquet.Views
                             extent = mapExtent;
                         }
                         AddToLog($"Using WGS84 extent from map: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
-                        System.Diagnostics.Debug.WriteLine($"WGS84 extent from map: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
+                        System.Diagnostics.Debug.WriteLine($"[GetLoadExtentAsync] WGS84 extent from map (MapView.Active.Extent): {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
                     }
                     else
                     {
@@ -1832,7 +2104,9 @@ namespace DuckDBGeoparquet.Views
 
                 StatusText = $"Loading {selectedLeafItems.Count} selected data types...";
                 AddToLog($"Starting to load {selectedLeafItems.Count} data type(s) from release {LatestRelease}");
+                DateTime loadStartUtc = DateTime.UtcNow;
 
+                AddToLog("Capturing current map extent once for this load (extent will not change if you zoom/pan during load).");
                 Envelope extent = await GetLoadExtentAsync();
 
                 if (cancellationToken.IsCancellationRequested)
@@ -1845,6 +2119,13 @@ namespace DuckDBGeoparquet.Views
                 string dataPath = DataOutputPath;
                 if (!await CheckAndReplaceExistingDataAsync(selectedLeafItems, dataPath))
                     return;
+
+                _dataProcessor.BeginNewOutputSession();
+                _dataProcessor.SelectedMapStyle = SelectedMapStyle;
+                if (SelectedMapStyle != null)
+                {
+                    AddToLog($"Map style: {SelectedMapStyle.DisplayName} — layers will receive themed cartography");
+                }
 
                 int totalDataTypesToProcess = selectedLeafItems.Count;
                 int processedDataTypes = 0;
@@ -1896,8 +2177,31 @@ namespace DuckDBGeoparquet.Views
 
                 await _dataProcessor.AddAllLayersToMapAsync(progressReporter);
 
+                // Restore map view to extent user had when they clicked Load (prevents zoom-out after adding layers)
+                if (_savedViewExtentForRestore != null)
+                {
+                    await QueuedTask.Run(() =>
+                    {
+                        if (MapView.Active != null)
+                        {
+                            MapView.Active.ZoomTo(_savedViewExtentForRestore);
+                            System.Diagnostics.Debug.WriteLine("[Load complete] Restored map view to saved extent.");
+                        }
+                        _savedViewExtentForRestore = null;
+                    });
+                }
+
                 // Store the data path for potential MFC creation later
                 _lastLoadedDataPath = DataOutputPath;
+
+                var loadElapsed = DateTime.UtcNow - loadStartUtc;
+                string summaryStyle = SelectedMapStyle?.DisplayName ?? "Default";
+                string summaryExtent = extent != null
+                    ? $"{extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}"
+                    : "none";
+                string loadSummary = $"Load summary: layers={_dataProcessor.LastAddedLayerCount}, style={summaryStyle}, elapsed={loadElapsed:hh\\:mm\\:ss}, extent={summaryExtent}";
+                AddToLog(loadSummary);
+                System.Diagnostics.Debug.WriteLine($"[Load summary] {loadSummary}");
 
                 // Now that the data is loaded, inform the user they can create an MFC if desired
                 AddToLog("----------------");
@@ -1930,7 +2234,8 @@ namespace DuckDBGeoparquet.Views
                 AddToLog("----------------");
                 if (extent != null)
                 {
-                    AddToLog($"Data for extent: {extent.XMin:F2}, {extent.YMin:F2}, {extent.XMax:F2}, {extent.YMax:F2}");
+                    AddToLog($"Data was loaded for this extent only: {extent.XMin:F2}, {extent.YMin:F2}, {extent.XMax:F2}, {extent.YMax:F2}");
+                    System.Diagnostics.Debug.WriteLine($"[Load complete] Extent used for this load: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
                     AddToLog("When you load data for a different extent, the existing data will be replaced.");
                     AddToLog("This ensures a clean folder structure for MFC creation.");
                     AddToLog("Rename the output folder OvertureProAddinData if you don't want to overwrite");
