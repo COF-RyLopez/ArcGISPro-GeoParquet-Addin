@@ -461,16 +461,21 @@ namespace DuckDBGeoparquet.Views
         {
             try
             {
-                AddToLog("Async Initialization: Initializing DuckDB");
-                await _dataProcessor.InitializeDuckDBAsync();
+                // Populate UI elements first so themes are always visible,
+                // even if the DuckDB connection fails to initialize.
                 AddToLog("Async Initialization: Establishing release value (cached/default)");
                 var cachedRelease = LoadCachedLatestRelease();
                 LatestRelease = !string.IsNullOrWhiteSpace(cachedRelease) ? cachedRelease : (LatestRelease ?? "latest");
                 NotifyPropertyChanged(nameof(LatestRelease));
                 AddToLog($"Async Initialization: Latest release set to: {LatestRelease} (cached or default)");
 
-                InitializeThemes(); // Populate Themes collection
+                InitializeThemes();
                 AddToLog("Async Initialization: Themes initialized");
+
+                var defaultBasePath = DeterminedDefaultMfcBasePath;
+                DataOutputPath = Path.Combine(defaultBasePath, "Data", LatestRelease ?? "latest");
+                NotifyPropertyChanged(nameof(DataOutputPath));
+                AddToLog($"Async Initialization: DataOutputPath updated to: {DataOutputPath}");
 
                 // Initialize cache info if Pro 3.6+
                 if (ArcGISProVersionHelper.IsPro36OrLater)
@@ -478,10 +483,10 @@ namespace DuckDBGeoparquet.Views
                     RefreshCacheInfo();
                 }
 
-                var defaultBasePath = DeterminedDefaultMfcBasePath;
-                DataOutputPath = Path.Combine(defaultBasePath, "Data", LatestRelease ?? "latest");
-                NotifyPropertyChanged(nameof(DataOutputPath));
-                AddToLog($"Async Initialization: DataOutputPath updated to: {DataOutputPath}");
+                // DuckDB init happens after UI is ready so a failure here
+                // does not prevent the user from seeing/selecting themes.
+                AddToLog("Async Initialization: Initializing DuckDB");
+                await _dataProcessor.InitializeDuckDBAsync();
 
                 // Refresh latest release in background without blocking UI
                 _ = RefreshLatestReleaseAsync();

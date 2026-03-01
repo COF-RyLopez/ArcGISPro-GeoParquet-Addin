@@ -148,8 +148,8 @@ namespace DuckDBGeoparquet.Services
                         $"Failed to load DuckDB extensions: {ex.Message}\n\n" +
                         "To resolve this issue:\n" +
                         "1. Make sure the add-in's Extensions folder contains spatial.duckdb_extension and httpfs.duckdb_extension\n" +
-                        "2. The extensions must match your DuckDB version (1.2.0)\n" +
-                        "3. Download extensions from https://github.com/duckdb/duckdb/releases/tag/v1.2.0\n" +
+                        "2. The extensions must match your DuckDB version\n" +
+                        "3. Download extensions from https://github.com/duckdb/duckdb/releases\n" +
                         $"4. Current extension search path: {extensionsPath}", ex);
                 }
 
