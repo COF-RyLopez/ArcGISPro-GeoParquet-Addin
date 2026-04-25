@@ -17,6 +17,13 @@ namespace DuckDBGeoparquet.Services
     /// </summary>
     public static class CartographyService
     {
+        // Shared Arcade expression used for all segment labeling to prefer primary names
+        // and fall back to common names when primary is absent.
+        private const string SegmentNameArcadeExpression =
+            "var n = Trim(Text(DefaultValue($feature['names_primary'], ''))); " +
+            "if (IsEmpty(n)) { var c = Trim(Text(DefaultValue($feature['names_common_key_value_value'], ''))); if (!IsEmpty(c)) n = c; } " +
+            "return IIf(IsEmpty(n), '', n);";
+
         private static readonly Dictionary<string, string> _resolvedStylxPathCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, StyleProjectItem> _styleProjectItemCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, SymbolStyleItem> _symbolItemCache = new(StringComparer.OrdinalIgnoreCase);
@@ -56,13 +63,23 @@ namespace DuckDBGeoparquet.Services
             {
                 "building" or "building_part" => CreateBuildingRenderer(style),
                 "water" => CreatePolygonOrLineRenderer(geometryType, style.WaterFillColor, style.WaterOutlineColor, style.WaterLineColor, 1.0),
-                "land" => CreateSimplePolygonRenderer(style.LandFillColor, style.LandOutlineColor),
-                "land_use" => CreateLandUseRenderer(style),
-                "land_cover" => CreateLandCoverRenderer(style),
+                "land" => IsPointGeometry(geometryType)
+                    ? CreateSimplePointRenderer(style.LandOutlineColor ?? style.LandFillColor, 2.0, 82)
+                    : CreateSimplePolygonRenderer(style.LandFillColor, style.LandOutlineColor),
+                "land_use" => IsPointGeometry(geometryType)
+                    ? CreateSimplePointRenderer(style.ParkFillColor ?? style.ResidentialFillColor, 2.0, 82)
+                    : CreateLandUseRenderer(style),
+                "land_cover" => IsPointGeometry(geometryType)
+                    ? CreateSimplePointRenderer(style.ForestFillColor ?? style.GrassFillColor, 2.0, 80)
+                    : CreateLandCoverRenderer(style),
                 "segment" => CreateSegmentRenderer(geometryType, style),
                 "connector" => CreateConnectorRenderer(style),
                 "place" => CreatePlaceRenderer(style),
-                "division" => IsLineGeometry(geometryType) ? null : (geometryType != null && (geometryType.Equals("POINT", StringComparison.OrdinalIgnoreCase) || geometryType.Equals("MULTIPOINT", StringComparison.OrdinalIgnoreCase)) ? CreateSimplePointRenderer(style.PlaceDefaultColor, style.PlaceDefaultSize) : CreateDivisionPolygonRenderer(style)),
+                "division" => IsLineGeometry(geometryType)
+                    ? null
+                    : (IsPointGeometry(geometryType)
+                        ? CreateSimplePointRenderer(style.PlaceDefaultColor, style.PlaceDefaultSize, 88)
+                        : CreateDivisionPolygonRenderer(style)),
                 "division_boundary" => CreateBoundaryRenderer(style),
                 "division_area" => CreateDivisionPolygonRenderer(style),
                 "infrastructure" => CreateInfrastructureRenderer(geometryType, style),
@@ -89,6 +106,12 @@ namespace DuckDBGeoparquet.Services
             {
                 return CreateSimpleLineRenderer(lineColor, lineWidth);
             }
+
+            if (IsPointGeometry(geometryType))
+            {
+                return CreateSimplePointRenderer(lineColor ?? outlineColor ?? fillColor, 2.2, 80);
+            }
+
             return CreateSimplePolygonRenderer(fillColor, outlineColor);
         }
 
@@ -126,10 +149,11 @@ namespace DuckDBGeoparquet.Services
             return new CIMSimpleRenderer { Symbol = symbol.MakeSymbolReference() };
         }
 
-        private static CIMSimpleRenderer CreateSimplePointRenderer(string color, double size)
+        private static CIMSimpleRenderer CreateSimplePointRenderer(string color, double size, int alpha = 100)
         {
+            double markerSize = size > 0 ? size : 2.0;
             var symbol = SymbolFactory.Instance.ConstructPointSymbol(
-                ParseColor(color), size, SimpleMarkerStyle.Circle);
+                ParseColor(color, alpha), markerSize, SimpleMarkerStyle.Circle);
 
             return new CIMSimpleRenderer { Symbol = symbol.MakeSymbolReference() };
         }
@@ -240,12 +264,12 @@ namespace DuckDBGeoparquet.Services
 
         private static CIMSimpleRenderer CreateConnectorRenderer(MapStyleDefinition style)
         {
-            return CreateSimplePointRenderer(style.ConnectorColor, style.ConnectorSize);
+            return CreateSimplePointRenderer(style.ConnectorColor, style.ConnectorSize, 78);
         }
 
         private static CIMSimpleRenderer CreatePlaceRenderer(MapStyleDefinition style)
         {
-            return CreateSimplePointRenderer(style.PlaceDefaultColor, style.PlaceDefaultSize);
+            return CreateSimplePointRenderer(style.PlaceDefaultColor, style.PlaceDefaultSize, 88);
         }
 
         private static CIMSimpleRenderer CreateBoundaryRenderer(MapStyleDefinition style)
@@ -258,6 +282,9 @@ namespace DuckDBGeoparquet.Services
 
         private static CIMRenderer CreateInfrastructureRenderer(string geometryType, MapStyleDefinition style)
         {
+            if (IsPointGeometry(geometryType))
+                return CreateSimplePointRenderer(style.InfrastructureLineColor ?? style.ConnectorColor, Math.Max(2.0, style.ConnectorSize), 82);
+
             if (IsLineGeometry(geometryType))
                 return CreateSimpleLineRenderer(style.InfrastructureLineColor, 0.8);
             return CreateSimplePolygonRenderer(style.InfrastructureFillColor, style.InfrastructureLineColor);
@@ -265,7 +292,7 @@ namespace DuckDBGeoparquet.Services
 
         private static CIMSimpleRenderer CreateAddressRenderer(MapStyleDefinition style)
         {
-            return CreateSimplePointRenderer(style.AddressPointColor, style.AddressPointSize);
+            return CreateSimplePointRenderer(style.AddressPointColor, style.AddressPointSize, 70);
         }
 
         private static CIMRenderer TryCreateStylxRenderer(string actualType, string geometryType, MapStyleDefinition style)
@@ -491,13 +518,8 @@ namespace DuckDBGeoparquet.Services
 
         private static string GetGeometryGroup(string geometryType)
         {
-            if (geometryType != null &&
-                (geometryType.Equals("POINT", StringComparison.OrdinalIgnoreCase) ||
-                 geometryType.Equals("MULTIPOINT", StringComparison.OrdinalIgnoreCase)))
-            {
+            if (IsPointGeometry(geometryType))
                 return "point";
-            }
-
             return IsLineGeometry(geometryType) ? "line" : "polygon";
         }
 
@@ -554,9 +576,7 @@ namespace DuckDBGeoparquet.Services
             if (featureLayer == null)
                 return;
 
-            bool isPoint = geometryType != null &&
-                (geometryType.Equals("POINT", StringComparison.OrdinalIgnoreCase) ||
-                 geometryType.Equals("MULTIPOINT", StringComparison.OrdinalIgnoreCase));
+            bool isPoint = IsPointGeometry(geometryType);
             if (!isPoint)
                 return;
 
@@ -585,7 +605,7 @@ namespace DuckDBGeoparquet.Services
             {
                 "address" => 6000,
                 "connector" => 12000,
-                "place" => 25000,
+                "place" => 10000,
                 "division" => 40000,
                 "infrastructure" => 22000,
                 "land" => 28000,
@@ -597,6 +617,11 @@ namespace DuckDBGeoparquet.Services
             geometryType != null &&
             (geometryType.Equals("LINESTRING", StringComparison.OrdinalIgnoreCase) ||
              geometryType.Equals("MULTILINESTRING", StringComparison.OrdinalIgnoreCase));
+
+        private static bool IsPointGeometry(string geometryType) =>
+            geometryType != null &&
+            (geometryType.Equals("POINT", StringComparison.OrdinalIgnoreCase) ||
+             geometryType.Equals("MULTIPOINT", StringComparison.OrdinalIgnoreCase));
 
         /// <summary>
         /// Apply a style to an existing feature layer by inferring the Overture type from the layer name.
@@ -650,8 +675,14 @@ namespace DuckDBGeoparquet.Services
                         {
                             System.Diagnostics.Debug.WriteLine($"CartographyService: SetRenderer failed for '{featureLayer.Name}': {rendererEx.Message}");
                         }
+                        featureLayer.SetLabelVisibility(labelsAdded);
                         if (labelsAdded)
+                        {
+                            // Force immediate label redraw in Pro after CIM label-class updates.
+                            // Without this, some sessions require manual UI interaction before labels appear.
+                            featureLayer.SetLabelVisibility(false);
                             featureLayer.SetLabelVisibility(true);
+                        }
                         ApplyVisibilityDefaults(featureLayer, actualType, geometryType);
                         if (VerboseStyleApplyLogging)
                         {
@@ -690,7 +721,7 @@ namespace DuckDBGeoparquet.Services
         };
 
         /// <summary>
-        /// Adds basemap-style label classes to the layer definition for point layers that have name fields.
+        /// Adds basemap-style label classes to the layer definition for layers that have name fields.
         /// Call this before SetDefinition so labels are applied in the same CIM update as the renderer.
         /// Returns true if at least one label class was added (caller should call featureLayer.SetLabelVisibility(true)).
         /// </summary>
@@ -699,22 +730,59 @@ namespace DuckDBGeoparquet.Services
             if (layerDef == null || string.IsNullOrEmpty(actualType))
                 return false;
 
-            bool isPoint = geometryType != null &&
-                (geometryType.Equals("POINT", StringComparison.OrdinalIgnoreCase) ||
-                 geometryType.Equals("MULTIPOINT", StringComparison.OrdinalIgnoreCase));
+            bool isPoint = IsPointGeometry(geometryType);
+            bool isLine = IsLineGeometry(geometryType);
 
-            string arcadeExpression = GetLabelExpressionForType(actualType, isPoint);
+            string normalizedType = actualType.ToLowerInvariant();
+            string arcadeExpression = GetLabelExpressionForType(normalizedType, isPoint, isLine);
             if (arcadeExpression == null)
+            {
+                // Clear stale label classes when this layer type should not be labeled.
+                layerDef.LabelClasses = System.Array.Empty<CIMLabelClass>();
                 return false;
+            }
 
-            CIMColor labelColor = style?.PlaceDefaultColor != null ? ParseColor(style.PlaceDefaultColor) : new CIMRGBColor { R = 50, G = 50, B = 50, Alpha = 100 };
-            CIMTextSymbol textSymbol = SymbolFactory.Instance.ConstructTextSymbol(labelColor, 8.5, "Arial");
+            string labelColorHex = normalizedType == "division"
+                ? (style?.DivisionLabelColor ?? style?.LabelColor ?? style?.PlaceDefaultColor)
+                : (style?.LabelColor ?? style?.PlaceDefaultColor);
+            string labelFont = !string.IsNullOrWhiteSpace(style?.LabelFontFamily) ? style.LabelFontFamily : "Arial";
+            double labelSize = style?.LabelSize > 0 ? style.LabelSize : 8.5;
+
+            CIMColor labelColor = !string.IsNullOrWhiteSpace(labelColorHex)
+                ? ParseColor(labelColorHex)
+                : new CIMRGBColor { R = 50, G = 50, B = 50, Alpha = 100 };
+            CIMTextSymbol textSymbol = SymbolFactory.Instance.ConstructTextSymbol(labelColor, labelSize, labelFont);
+            var placementProps = new CIMStandardLabelPlacementProperties
+            {
+                FeatureType = isLine ? LabelFeatureType.Line : (isPoint ? LabelFeatureType.Point : LabelFeatureType.Polygon),
+                NumLabelsOption = StandardNumLabelsOption.OneLabelPerName,
+                AllowOverlappingLabels = false,
+            };
+            if (isLine)
+            {
+                placementProps.LineLabelPosition = new CIMStandardLineLabelPosition
+                {
+                    InLine = true,
+                    Parallel = true,
+                    ProduceCurvedLabels = true,
+                };
+            }
+
+            if (normalizedType == "segment" && isLine)
+            {
+                var segmentClasses = CreateSegmentLineLabelClasses(textSymbol.MakeSymbolReference(), placementProps);
+                layerDef.LabelClasses = segmentClasses;
+                return segmentClasses.Length > 0;
+            }
+
             CIMLabelClass labelClass = new CIMLabelClass
             {
                 Name = "Overture Labels",
                 Expression = arcadeExpression,
                 ExpressionEngine = LabelExpressionEngine.Arcade,
-                ExpressionTitle = "Arcade",
+                ExpressionTitle = GetLabelExpressionTitle(),
+                FeaturesToLabel = FeaturesToLabel.AllVisibleFeatures,
+                StandardLabelPlacementProperties = placementProps,
                 TextSymbol = textSymbol.MakeSymbolReference(),
                 Visibility = true
             };
@@ -723,10 +791,59 @@ namespace DuckDBGeoparquet.Services
             return true;
         }
 
+        private static CIMLabelClass[] CreateSegmentLineLabelClasses(CIMSymbolReference textSymbol, CIMStandardLabelPlacementProperties placementProps)
+        {
+            if (textSymbol == null)
+                return System.Array.Empty<CIMLabelClass>();
+
+            return new[]
+            {
+                CreateLabelClass(
+                    name: "Overture Labels - Primary",
+                    expression: SegmentNameArcadeExpression,
+                    textSymbol: textSymbol,
+                    placementProps: placementProps,
+                    whereClause: "(class IN ('motorway','trunk','primary','secondary','tertiary')) AND (names_primary IS NOT NULL OR names_common_key_value_value IS NOT NULL)",
+                    maxScale: 0),
+                CreateLabelClass(
+                    name: "Overture Labels - Local",
+                    expression: SegmentNameArcadeExpression,
+                    textSymbol: textSymbol,
+                    placementProps: placementProps,
+                    whereClause: "(class IN ('residential','service','living_street','pedestrian','track','unclassified')) AND (names_primary IS NOT NULL OR names_common_key_value_value IS NOT NULL)",
+                    maxScale: 18000) // show locals only when zoomed in (~1:18k and larger scales)
+            };
+        }
+
+        private static CIMLabelClass CreateLabelClass(
+            string name,
+            string expression,
+            CIMSymbolReference textSymbol,
+            CIMStandardLabelPlacementProperties placementProps,
+            string whereClause = null,
+            double minScale = 0,
+            double maxScale = 0)
+        {
+            return new CIMLabelClass
+            {
+                Name = name,
+                Expression = expression,
+                ExpressionEngine = LabelExpressionEngine.Arcade,
+                ExpressionTitle = GetLabelExpressionTitle(),
+                FeaturesToLabel = FeaturesToLabel.AllVisibleFeatures,
+                StandardLabelPlacementProperties = placementProps,
+                TextSymbol = textSymbol,
+                WhereClause = whereClause,
+                MinimumScale = minScale,
+                MaximumScale = maxScale,
+                Visibility = true
+            };
+        }
+
         /// <summary>
         /// Returns Arcade expression for the layer type, or null if no labels.
         /// </summary>
-        private static string GetLabelExpressionForType(string actualType, bool isPoint)
+        private static string GetLabelExpressionForType(string actualType, bool isPoint, bool isLine)
         {
             if (string.IsNullOrEmpty(actualType))
                 return null;
@@ -734,10 +851,16 @@ namespace DuckDBGeoparquet.Services
             switch (actualType.ToLowerInvariant())
             {
                 case "place":
-                    return "var n = $feature['names_primary']; return DefaultValue(n, '');";
+                    // Place labels are extremely dense for Overture POI datasets and can overwhelm the map.
+                    // Keep off by default; users still get point symbols and can add labels manually if needed.
+                    return null;
                 case "address":
                     // Address labels are very dense and can significantly impact draw performance.
                     return null;
+                case "segment":
+                    if (!isLine) return null;
+                    // Segment line labels handled by dedicated CIM label classes above.
+                    return SegmentNameArcadeExpression;
                 case "division":
                     if (!isPoint) return null;
                     return "var n = $feature['names_primary']; return DefaultValue(n, '');";
@@ -748,6 +871,11 @@ namespace DuckDBGeoparquet.Services
                 default:
                     return null; // connector and others: no labels
             }
+        }
+
+        private static string GetLabelExpressionTitle()
+        {
+            return "Overture Arcade";
         }
 
         /// <summary>
@@ -797,3 +925,4 @@ namespace DuckDBGeoparquet.Services
         }
     }
 }
+

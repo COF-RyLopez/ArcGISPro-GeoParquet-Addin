@@ -1,0 +1,154 @@
+<UserControl x:Class="DuckDBGeoparquet.Views.OvertureGeocoderDockpaneView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:extensions="clr-namespace:ArcGIS.Desktop.Extensions;assembly=ArcGIS.Desktop.Extensions"
+             xmlns:local="clr-namespace:DuckDBGeoparquet.Views"
+             mc:Ignorable="d"
+             d:DesignHeight="500"
+             d:DesignWidth="400"
+             d:DataContext="{d:DesignInstance local:OvertureGeocoderDockpaneViewModel, IsDesignTimeCreatable=True}">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <extensions:DesignOnlyResourceDictionary Source="pack://application:,,,/ArcGIS.Desktop.Framework;component\Themes\Default.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        </ResourceDictionary>
+    </UserControl.Resources>
+    <Grid Margin="16,12,16,12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                BorderThickness="1"
+                CornerRadius="2"
+                Padding="8"
+                Margin="0,0,0,10">
+            <StackPanel>
+                <TextBlock Text="How to use this geocoder"
+                           FontWeight="SemiBold"
+                           Margin="0,0,0,4"/>
+                <TextBlock Text="1) Open Overture Maps Data Loader and load at least Addresses and Places for your area."
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                <TextBlock Text="2) Return here, enter an address/place name, then click Search."
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                <TextBlock Text="3) Select a result and click Zoom To Selected."
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox Grid.Column="0"
+                     Margin="0,0,8,0"
+                     Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}" />
+            <Button Grid.Column="1"
+                    Content="Search"
+                    Width="80"
+                    Command="{Binding SearchAddressCommand}"
+                    Style="{DynamicResource Esri_Button}" />
+        </Grid>
+
+        <Border Grid.Row="2"
+                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                BorderThickness="1"
+                CornerRadius="2"
+                Padding="8"
+                Margin="0,0,0,10">
+            <StackPanel>
+                <CheckBox Content="Prefer ArcGIS Locator search when available"
+                          IsChecked="{Binding UseLocatorSearch}"
+                          Margin="0,0,0,6"/>
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="Build Locator"
+                            Width="100"
+                            Command="{Binding BuildLocatorCommand}"
+                            Style="{DynamicResource Esri_Button}" />
+                    <Button Content="Rebuild Locator"
+                            Width="110"
+                            Margin="8,0,0,0"
+                            Command="{Binding RebuildLocatorCommand}"
+                            Style="{DynamicResource Esri_Button}" />
+                    <Button Content="Refresh Status"
+                            Width="105"
+                            Margin="8,0,0,0"
+                            Command="{Binding RefreshLocatorStatusCommand}"
+                            Style="{DynamicResource Esri_Button}" />
+                </StackPanel>
+                <TextBlock Margin="0,6,0,0"
+                           Text="{Binding LocatorStatusText}"
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+            </StackPanel>
+        </Border>
+
+        <Border Grid.Row="3"
+                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                BorderThickness="1"
+                CornerRadius="2"
+                Padding="8">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <ListBox Grid.Row="0"
+                         ItemsSource="{Binding Results}"
+                         SelectedItem="{Binding SelectedCandidate, Mode=TwoWay}">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="0,2,0,4">
+                                <TextBlock Text="{Binding DisplayLabel}"
+                                           TextWrapping="Wrap"
+                                           FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding MatchTier, StringFormat='Match: {0}'}"
+                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                <TextBlock Text="{Binding SourceType, StringFormat='Source: {0}'}"
+                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                <TextBlock Text="{Binding ConfidenceTier, StringFormat='Confidence: {0}'}"
+                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock Grid.Row="1"
+                           Margin="0,8,0,0"
+                           Text="No candidates yet. Search for an address to start."
+                           Visibility="{Binding IsResultListEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"
+                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="4" Margin="0,10,0,0">
+            <StackPanel Orientation="Horizontal">
+                <Button Content="Zoom To Selected"
+                        Width="130"
+                        Command="{Binding ZoomToSelectedCommand}"
+                        Style="{DynamicResource Esri_Button}" />
+                <Button Content="Clear Results"
+                        Width="110"
+                        Margin="8,0,0,0"
+                        Command="{Binding ClearResultsCommand}"
+                        Style="{DynamicResource Esri_Button}" />
+            </StackPanel>
+            <TextBlock Margin="0,8,0,0"
+                       Text="{Binding StatusText}"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+        </StackPanel>
+    </Grid>
+</UserControl>

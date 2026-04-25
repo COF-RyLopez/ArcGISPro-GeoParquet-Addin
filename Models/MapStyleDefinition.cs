@@ -120,6 +120,12 @@ namespace DuckDBGeoparquet.Models
         public string AddressPointColor { get; set; }
         public double AddressPointSize { get; set; }
 
+        // Labels
+        public string LabelColor { get; set; }
+        public string DivisionLabelColor { get; set; }
+        public string LabelFontFamily { get; set; }
+        public double LabelSize { get; set; }
+
         /// <summary>
         /// Road class-to-color mapping for CIMUniqueValueRenderer on the "class" field.
         /// Keys are Overture segment class values; values are hex color strings.

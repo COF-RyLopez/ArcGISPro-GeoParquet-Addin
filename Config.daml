@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <ArcGIS defaultAssembly="DuckDBGeoparquet.dll" defaultNamespace="DuckDBGeoparquet" xmlns="http://schemas.esri.com/DADF/Registry" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 	<AddInInfo id="{9e44d8fc-6e1a-4513-9992-85c2de3e2d61}" version="0.2.3" desktopVersion="3.5">
 		<Name>DuckDBGeoparquet</Name>
@@ -22,6 +22,7 @@
 				<group id="DuckDBGeoparquet_Group2" caption="Overture Maps" appearsOnAddInTab="false" keytip="M">
 					<labelControl refID="DuckDBGeoparquet_OvertureMapDescription" />
 					<button refID="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" size="large" />
+					<button refID="DuckDBGeoparquet_Views_OvertureGeocoderDockpane_ShowButton" size="large" />
 				</group>
 			</groups>
 			<controls>
@@ -30,6 +31,11 @@
 					<tooltip heading="Overture Maps Data Loader">
                         Download Overture Maps data as GeoParquet files
 						<disabledText>Unable to launch Overture Maps Data Loader at this time</disabledText></tooltip>
+				</button>
+				<button id="DuckDBGeoparquet_Views_OvertureGeocoderDockpane_ShowButton" caption="Overture Geocoder" className="DuckDBGeoparquet.Views.OvertureGeocoderShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="G" condition="esri_mapping_mapPane" extendedCaption="Search Overture ROI Address and Place Data">
+					<tooltip heading="Overture ROI Geocoder">
+                        Search loaded Overture address and place data in your region of interest
+						<disabledText>Unable to open Overture ROI Geocoder at this time</disabledText></tooltip>
 				</button>
 				<!-- Custom Extent Tool -->
 				<tool id="DuckDBGeoparquet_CustomExtentTool" className="DuckDBGeoparquet.Views.CustomExtentTool" caption="Draw Custom Extent" loadOnClick="true" smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool16.png" largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool32.png" condition="esri_mapping_mapPane" keytip="E">
@@ -41,6 +47,9 @@
 			<dockPanes>
 				<dockPane id="DuckDBGeoparquet_Views_WizardDockpane" caption="Overture Maps Data Loader" className="DuckDBGeoparquet.Views.WizardDockpaneViewModel" dock="right" dockWith="esri_core_contentsDockPane">
 					<content className="DuckDBGeoparquet.Views.WizardDockpaneView" />
+				</dockPane>
+				<dockPane id="DuckDBGeoparquet_Views_OvertureGeocoderDockpane" caption="Overture ROI Geocoder" className="DuckDBGeoparquet.Views.OvertureGeocoderDockpaneViewModel" dock="right" dockWith="esri_core_contentsDockPane">
+					<content className="DuckDBGeoparquet.Views.OvertureGeocoderDockpaneView" />
 				</dockPane>
 			</dockPanes>
 		</insertModule>

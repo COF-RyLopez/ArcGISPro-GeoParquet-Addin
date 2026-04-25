@@ -175,17 +175,17 @@
                                                Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
                                     <ComboBox ItemsSource="{Binding MapStyleCategoryFilters}"
                                               SelectedItem="{Binding SelectedMapStyleCategory, Mode=TwoWay}"
-                                              Width="130"/>
+                                              Width="150"/>
                                 </StackPanel>
                                 <ListBox ItemsSource="{Binding FilteredMapStyles}"
                                          SelectedItem="{Binding SelectedMapStyle, Mode=TwoWay}"
                                          BorderThickness="0"
                                          Background="Transparent"
-                                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                         ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto">
                                     <ListBox.ItemsPanel>
                                         <ItemsPanelTemplate>
-                                            <StackPanel Orientation="Horizontal"/>
+                                            <WrapPanel Orientation="Horizontal"/>
                                         </ItemsPanelTemplate>
                                     </ListBox.ItemsPanel>
                                     <ListBox.ItemTemplate>
@@ -196,9 +196,12 @@
                                                     CornerRadius="3"
                                                     Padding="6"
                                                     Margin="0,0,6,0"
-                                                    Width="100"
+                                                    Width="112"
                                                     Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
                                                     Cursor="Hand">
+                                                <Border.ToolTip>
+                                                    <TextBlock Text="{Binding Description}" TextWrapping="Wrap" MaxWidth="260"/>
+                                                </Border.ToolTip>
                                                 <StackPanel HorizontalAlignment="Center">
                                                     <Border CornerRadius="2"
                                                             Height="56" Width="84"
@@ -213,8 +216,19 @@
                                                     <TextBlock Text="{Binding DisplayName}"
                                                                HorizontalAlignment="Center"
                                                                FontSize="11"
+                                                               FontWeight="SemiBold"
                                                                TextTrimming="CharacterEllipsis"
                                                                Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
+                                                    <TextBlock Text="{Binding StylePackName}"
+                                                               HorizontalAlignment="Center"
+                                                               FontSize="10"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                                    <TextBlock Text="Experimental"
+                                                               HorizontalAlignment="Center"
+                                                               FontSize="10"
+                                                               Foreground="{DynamicResource Esri_TextCaptionActiveBrush}"
+                                                               Visibility="{Binding IsExperimental, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                                 </StackPanel>
                                             </Border>
                                         </DataTemplate>
@@ -248,27 +262,33 @@
                                         </Style>
                                     </ListBox.ItemContainerStyle>
                                 </ListBox>
-                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                    <Button Content="Clear Selection"
-                                            Command="{Binding ClearMapStyleCommand}"
-                                            Style="{DynamicResource Esri_Button}"
-                                            Width="120"/>
-                                    <Button Content="Apply to Map"
-                                            Command="{Binding ApplyMapStyleCommand}"
-                                            Style="{DynamicResource Esri_Button}"
-                                            Margin="6,0,0,0"
-                                            Width="120"
-                                            ToolTip="Apply the selected style to layers already on the map"/>
-                                    <Button Content="Repair Symbology"
-                                            Command="{Binding RepairMapSymbologyCommand}"
-                                            Style="{DynamicResource Esri_Button}"
-                                            Margin="6,0,0,0"
-                                            Width="120"
-                                            ToolTip="Re-apply style to existing Overture layers; uses selected style or Streets as fallback"/>
+                                <StackPanel Margin="0,8,0,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="Clear Selection"
+                                                Command="{Binding ClearMapStyleCommand}"
+                                                Style="{DynamicResource Esri_Button}"
+                                                Width="120"/>
+                                        <Button Content="Apply to Map"
+                                                Command="{Binding ApplyMapStyleCommand}"
+                                                Style="{DynamicResource Esri_Button}"
+                                                Margin="6,0,0,0"
+                                                Width="120"
+                                                ToolTip="Apply the selected style to layers already on the map"/>
+                                        <Button Content="Repair Symbology"
+                                                Command="{Binding RepairMapSymbologyCommand}"
+                                                Style="{DynamicResource Esri_Button}"
+                                                Margin="6,0,0,0"
+                                                Width="120"
+                                                ToolTip="Re-apply style to existing Overture layers; uses selected style or Streets as fallback"/>
+                                    </StackPanel>
                                     <TextBlock Text="{Binding SelectedMapStyleDescription}"
                                                TextWrapping="Wrap"
-                                               Margin="8,0,0,0"
-                                               VerticalAlignment="Center"
+                                               Margin="0,6,0,0"
+                                               Style="{DynamicResource Esri_TextBlockH7}"
+                                               Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                    <TextBlock Text="{Binding SelectedMapStyleCaption}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,2,0,0"
                                                Style="{DynamicResource Esri_TextBlockH7}"
                                                Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
                                 </StackPanel>

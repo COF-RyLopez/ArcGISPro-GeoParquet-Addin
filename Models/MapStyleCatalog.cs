@@ -153,6 +153,12 @@ namespace DuckDBGeoparquet.Models
                 AddressPointColor = "#7A7A7A",
                 AddressPointSize = 3.0,
 
+                // Label profile aligned to Esri Open Basemap Streets (WGS84) style layer.
+                LabelColor = "#343434",
+                DivisionLabelColor = "#686868",
+                LabelFontFamily = "Arial Unicode MS",
+                LabelSize = 9.0,
+
                 RoadClassColors = roadClassColors,
                 RoadClassWidths = roadClassWidths,
             };
@@ -250,6 +256,12 @@ namespace DuckDBGeoparquet.Models
 
                 AddressPointColor = "#888899",
                 AddressPointSize = 3.0,
+
+                // Label profile aligned to Esri Open Basemap Streets Night (WGS84) style layer.
+                LabelColor = "#AAAAAA",
+                DivisionLabelColor = "#877899",
+                LabelFontFamily = "Arial Unicode MS",
+                LabelSize = 9.0,
 
                 RoadClassColors = roadClassColors,
                 RoadClassWidths = roadClassWidths,
@@ -349,6 +361,12 @@ namespace DuckDBGeoparquet.Models
                 AddressPointColor = "#A0A0A0",
                 AddressPointSize = 2.5,
 
+                // Label profile aligned to Esri Open Basemap Light Gray Canvas reference style layer.
+                LabelColor = "#35334B",
+                DivisionLabelColor = "#959996",
+                LabelFontFamily = "Arial Unicode MS",
+                LabelSize = 9.0,
+
                 RoadClassColors = roadClassColors,
                 RoadClassWidths = roadClassWidths,
             };
@@ -404,6 +422,8 @@ namespace DuckDBGeoparquet.Models
             style.ConnectorSize = 1.8;
             style.PlaceDefaultColor = "#6E5842";
             style.PlaceDefaultSize = 3.0;
+            style.LabelColor = "#6E5842";
+            style.DivisionLabelColor = "#6E5842";
 
             return style;
         }

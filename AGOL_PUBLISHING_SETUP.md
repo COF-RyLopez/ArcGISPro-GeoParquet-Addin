@@ -94,6 +94,17 @@ You can also set these optional secrets for more control:
 - `AGOL_DESCRIPTION` - Custom description for the add-in item
 - `AGOL_TAGS` - Comma-separated tags (default: `ArcGIS Pro,Add-in,GeoParquet`)
 
+### Hybrid Locator Publishing (Optional)
+
+To publish a locator package (`.gcpk`) alongside the add-in artifact, set:
+
+- `LOCATOR_ITEM_ID` - Existing ArcGIS Online/Portal item id for locator package updates
+- `LOCATOR_TITLE` - Optional title override for locator item
+- `LOCATOR_TAGS` - Optional comma-separated locator tags
+
+The workflow looks for a `.gcpk` file under `release/` and, when found, runs
+`.github/workflows/publish-locator-item.py` to update that item.
+
 ## How It Works
 
 1. **Create a production release tag** (e.g., `v0.1.4`)
@@ -101,7 +112,8 @@ You can also set these optional secrets for more control:
    - Updates Config.daml version
    - Builds the add-in
    - Creates GitHub release
-   - **Publishes to ArcGIS Online** (if credentials are configured)
+   - **Publishes add-in to ArcGIS Online** (if credentials are configured)
+   - Optionally publishes locator package item when `.gcpk` artifact exists
 
 ## Testing
 

@@ -770,7 +770,7 @@ namespace DuckDBGeoparquet.Views
         public List<MapStyleDefinition> AvailableMapStyles { get; } = MapStyleCatalog.AllStyles;
         public List<string> MapStyleCategoryFilters { get; } = new() { "All", "Official", "Experimental" };
 
-        private string _selectedMapStyleCategory = "All";
+        private string _selectedMapStyleCategory = "Official";
         public string SelectedMapStyleCategory
         {
             get => _selectedMapStyleCategory;
@@ -779,6 +779,11 @@ namespace DuckDBGeoparquet.Views
                 if (SetProperty(ref _selectedMapStyleCategory, value))
                 {
                     NotifyPropertyChanged(nameof(FilteredMapStyles));
+                    if (SelectedMapStyle != null &&
+                        !FilteredMapStyles.Any(s => string.Equals(s.Id, SelectedMapStyle.Id, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        SelectedMapStyle = null;
+                    }
                 }
             }
         }
@@ -786,8 +791,13 @@ namespace DuckDBGeoparquet.Views
         public List<MapStyleDefinition> FilteredMapStyles =>
             string.Equals(SelectedMapStyleCategory, "All", StringComparison.OrdinalIgnoreCase)
                 ? AvailableMapStyles
+                    .OrderBy(s => s.IsExperimental)
+                    .ThenBy(s => s.StylePackName)
+                    .ThenBy(s => s.DisplayName)
+                    .ToList()
                 : AvailableMapStyles
                     .Where(s => string.Equals(s.StyleCategory, SelectedMapStyleCategory, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(s => s.DisplayName)
                     .ToList();
 
         private MapStyleDefinition _selectedMapStyle;
@@ -803,6 +813,7 @@ namespace DuckDBGeoparquet.Views
                 SetProperty(ref _selectedMapStyle, value);
                 NotifyPropertyChanged(nameof(IsMapStyleSelected));
                 NotifyPropertyChanged(nameof(SelectedMapStyleDescription));
+                NotifyPropertyChanged(nameof(SelectedMapStyleCaption));
                 (ClearMapStyleCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 (ApplyMapStyleCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 (RepairMapSymbologyCommand as RelayCommand)?.RaiseCanExecuteChanged();
@@ -810,7 +821,38 @@ namespace DuckDBGeoparquet.Views
         }
 
         public bool IsMapStyleSelected => _selectedMapStyle != null;
-        public string SelectedMapStyleDescription => _selectedMapStyle?.Description ?? "No map style selected — layers will use default ArcGIS Pro symbology.";
+        public string SelectedMapStyleDescription
+        {
+            get
+            {
+                if (_selectedMapStyle == null)
+                    return "No map style selected. Layers will use default ArcGIS Pro symbology.";
+
+                if (_selectedMapStyle.IsExperimental)
+                    return $"{_selectedMapStyle.Description} Experimental style mappings may evolve in future releases.";
+
+                return _selectedMapStyle.Description;
+            }
+        }
+
+        public string SelectedMapStyleCaption
+        {
+            get
+            {
+                if (_selectedMapStyle == null)
+                    return "Tip: Official styles are recommended for production and public-facing map products.";
+
+                string packName = string.IsNullOrWhiteSpace(_selectedMapStyle.StylePackName)
+                    ? "Unspecified pack"
+                    : _selectedMapStyle.StylePackName;
+
+                string category = string.IsNullOrWhiteSpace(_selectedMapStyle.StyleCategory)
+                    ? "Uncategorized"
+                    : _selectedMapStyle.StyleCategory;
+
+                return $"Pack: {packName} ({category})";
+            }
+        }
 
         public ICommand ClearMapStyleCommand { get; private set; }
         public ICommand ApplyMapStyleCommand { get; private set; }

@@ -298,3 +298,64 @@ jobs:
         AGOL_TITLE: ${{ secrets.AGOL_TITLE }}
         AGOL_DESCRIPTION: ${{ secrets.AGOL_DESCRIPTION }}
         AGOL_TAGS: ${{ secrets.AGOL_TAGS }}
+
+    - name: Find locator package artifact (optional)
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
+      id: find_locator_package
+      shell: powershell
+      run: |
+        $locatorPackage = Get-ChildItem -Path "release" -Filter "*.gcpk" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($locatorPackage) {
+          Write-Host "Found locator package: $($locatorPackage.FullName)"
+          echo "LOCATOR_PACKAGE=$($locatorPackage.FullName)" >> $env:GITHUB_OUTPUT
+        } else {
+          Write-Host "No locator package found in release folder. Skipping locator publish."
+        }
+
+    - name: Publish locator package to ArcGIS Online/Portal (optional)
+      if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev')
+      shell: bash
+      run: |
+        LOCATOR_PACKAGE="${{ steps.find_locator_package.outputs.LOCATOR_PACKAGE }}"
+        if [ -z "$LOCATOR_PACKAGE" ]; then
+          echo "No locator package detected. Skipping locator publish."
+          exit 0
+        fi
+        if [ -z "$LOCATOR_ITEM_ID" ]; then
+          echo "LOCATOR_ITEM_ID secret not configured. Skipping locator publish."
+          exit 0
+        fi
+
+        if [ -n "$AGOL_CLIENT_ID" ] && [ -n "$AGOL_CLIENT_SECRET" ]; then
+          python ./.github/workflows/publish-locator-item.py \
+            --auth-method token \
+            --client-id "$AGOL_CLIENT_ID" \
+            --client-secret "$AGOL_CLIENT_SECRET" \
+            --portal-url "${AGOL_PORTAL_URL:-https://www.arcgis.com}" \
+            --locator-package "$LOCATOR_PACKAGE" \
+            --item-id "$LOCATOR_ITEM_ID" \
+            ${LOCATOR_TITLE:+--title "$LOCATOR_TITLE"} \
+            ${LOCATOR_TAGS:+--tags "$LOCATOR_TAGS"}
+        elif [ -n "$AGOL_USERNAME" ] && [ -n "$AGOL_PASSWORD" ]; then
+          python ./.github/workflows/publish-locator-item.py \
+            --auth-method username \
+            --username "$AGOL_USERNAME" \
+            --password "$AGOL_PASSWORD" \
+            --portal-url "${AGOL_PORTAL_URL:-https://www.arcgis.com}" \
+            --locator-package "$LOCATOR_PACKAGE" \
+            --item-id "$LOCATOR_ITEM_ID" \
+            ${LOCATOR_TITLE:+--title "$LOCATOR_TITLE"} \
+            ${LOCATOR_TAGS:+--tags "$LOCATOR_TAGS"}
+        else
+          echo "No AGOL auth credentials configured for locator publish."
+          exit 0
+        fi
+      env:
+        AGOL_CLIENT_ID: ${{ secrets.AGOL_CLIENT_ID }}
+        AGOL_CLIENT_SECRET: ${{ secrets.AGOL_CLIENT_SECRET }}
+        AGOL_USERNAME: ${{ secrets.AGOL_USERNAME }}
+        AGOL_PASSWORD: ${{ secrets.AGOL_PASSWORD }}
+        AGOL_PORTAL_URL: ${{ secrets.AGOL_PORTAL_URL }}
+        LOCATOR_ITEM_ID: ${{ secrets.LOCATOR_ITEM_ID }}
+        LOCATOR_TITLE: ${{ secrets.LOCATOR_TITLE }}
+        LOCATOR_TAGS: ${{ secrets.LOCATOR_TAGS }}
