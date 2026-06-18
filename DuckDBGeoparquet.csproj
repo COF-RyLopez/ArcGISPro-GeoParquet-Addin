@@ -23,6 +23,10 @@
 		<Resource Include="Images\Styles\streets_thumb.png" />
 		<Resource Include="Images\Styles\streets_night_thumb.png" />
 		<Resource Include="Images\Styles\light_gray_canvas_thumb.png" />
+		<Resource Include="Images\Styles\analyst_canvas_thumb.png" />
+		<Resource Include="Images\Styles\mobility_focus_thumb.png" />
+		<Resource Include="Images\Styles\urban_form_thumb.png" />
+		<Resource Include="Images\Styles\environment_thumb.png" />
 		<Content Include="NewAmsterdam.stylx">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</Content>

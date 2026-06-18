@@ -450,8 +450,8 @@ namespace DuckDBGeoparquet.Views
                 () => IsSelectAllChecked = !IsSelectAllChecked,
                 () => Themes != null && Themes.Any(t => t.IsSelectable || t.SubItems.Any())
             );
-            ClearMapStyleCommand = new RelayCommand(() => SelectedMapStyle = null, () => SelectedMapStyle != null);
-            ApplyMapStyleCommand = new RelayCommand(async () => await ApplyMapStyleToExistingLayersAsync(), () => SelectedMapStyle != null);
+            ClearMapStyleCommand = new RelayCommand(() => SelectedCartographicProfile = null, () => SelectedCartographicProfile != null);
+            ApplyMapStyleCommand = new RelayCommand(async () => await ApplyMapStyleToExistingLayersAsync(), () => SelectedCartographicProfile != null);
             RepairMapSymbologyCommand = new RelayCommand(async () => await RepairMapSymbologyAsync());
 
             CustomExtentTool.ExtentCreatedStatic += OnExtentCreated;
@@ -766,51 +766,20 @@ namespace DuckDBGeoparquet.Views
         // Available compression options for binding
         public List<string> CompressionOptions => new List<string> { "ZSTD", "SNAPPY", "GZIP" };
 
-        // Map style / cartography properties
-        public List<MapStyleDefinition> AvailableMapStyles { get; } = MapStyleCatalog.AllStyles;
-        public List<string> MapStyleCategoryFilters { get; } = new() { "All", "Official", "Experimental" };
+        // Map purpose / cartography properties
+        public List<CartographicProfile> AvailableCartographicProfiles { get; } = CartographicProfileCatalog.AllProfiles;
 
-        private string _selectedMapStyleCategory = "Official";
-        public string SelectedMapStyleCategory
-        {
-            get => _selectedMapStyleCategory;
-            set
-            {
-                if (SetProperty(ref _selectedMapStyleCategory, value))
-                {
-                    NotifyPropertyChanged(nameof(FilteredMapStyles));
-                    if (SelectedMapStyle != null &&
-                        !FilteredMapStyles.Any(s => string.Equals(s.Id, SelectedMapStyle.Id, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        SelectedMapStyle = null;
-                    }
-                }
-            }
-        }
-
-        public List<MapStyleDefinition> FilteredMapStyles =>
-            string.Equals(SelectedMapStyleCategory, "All", StringComparison.OrdinalIgnoreCase)
-                ? AvailableMapStyles
-                    .OrderBy(s => s.IsExperimental)
-                    .ThenBy(s => s.StylePackName)
-                    .ThenBy(s => s.DisplayName)
-                    .ToList()
-                : AvailableMapStyles
-                    .Where(s => string.Equals(s.StyleCategory, SelectedMapStyleCategory, StringComparison.OrdinalIgnoreCase))
-                    .OrderBy(s => s.DisplayName)
-                    .ToList();
-
-        private MapStyleDefinition _selectedMapStyle;
+        private CartographicProfile _selectedCartographicProfile;
         /// <summary>
-        /// The user-selected cartographic style, or null for default ArcGIS Pro symbology.
+        /// The user-selected map purpose profile, or null for default ArcGIS Pro symbology.
         /// </summary>
-        public MapStyleDefinition SelectedMapStyle
+        public CartographicProfile SelectedCartographicProfile
         {
-            get => _selectedMapStyle;
+            get => _selectedCartographicProfile;
             set
             {
-                if (_selectedMapStyle == value) return;
-                SetProperty(ref _selectedMapStyle, value);
+                if (_selectedCartographicProfile == value) return;
+                SetProperty(ref _selectedCartographicProfile, value);
                 NotifyPropertyChanged(nameof(IsMapStyleSelected));
                 NotifyPropertyChanged(nameof(SelectedMapStyleDescription));
                 NotifyPropertyChanged(nameof(SelectedMapStyleCaption));
@@ -820,18 +789,15 @@ namespace DuckDBGeoparquet.Views
             }
         }
 
-        public bool IsMapStyleSelected => _selectedMapStyle != null;
+        public bool IsMapStyleSelected => _selectedCartographicProfile != null;
         public string SelectedMapStyleDescription
         {
             get
             {
-                if (_selectedMapStyle == null)
-                    return "No map style selected. Layers will use default ArcGIS Pro symbology.";
+                if (_selectedCartographicProfile == null)
+                    return "No map purpose selected. Layers will use default ArcGIS Pro symbology.";
 
-                if (_selectedMapStyle.IsExperimental)
-                    return $"{_selectedMapStyle.Description} Experimental style mappings may evolve in future releases.";
-
-                return _selectedMapStyle.Description;
+                return _selectedCartographicProfile.Description;
             }
         }
 
@@ -839,18 +805,20 @@ namespace DuckDBGeoparquet.Views
         {
             get
             {
-                if (_selectedMapStyle == null)
-                    return "Tip: Official styles are recommended for production and public-facing map products.";
+                if (_selectedCartographicProfile == null)
+                    return "Tip: Choose a map purpose when you want Overture layers styled around a specific cartographic focus.";
 
-                string packName = string.IsNullOrWhiteSpace(_selectedMapStyle.StylePackName)
-                    ? "Unspecified pack"
-                    : _selectedMapStyle.StylePackName;
+                string baseStyleName = MapStyleCatalog.AllStyles
+                    .FirstOrDefault(style => string.Equals(style.Id, _selectedCartographicProfile.BaseStyleId, StringComparison.OrdinalIgnoreCase))
+                    ?.DisplayName
+                    ?? _selectedCartographicProfile.BaseStyleId
+                    ?? "Default";
 
-                string category = string.IsNullOrWhiteSpace(_selectedMapStyle.StyleCategory)
-                    ? "Uncategorized"
-                    : _selectedMapStyle.StyleCategory;
+                string category = string.IsNullOrWhiteSpace(_selectedCartographicProfile.Category)
+                    ? "Purpose"
+                    : _selectedCartographicProfile.Category;
 
-                return $"Pack: {packName} ({category})";
+                return $"Purpose: {category}. Foundation: {baseStyleName}.";
             }
         }
 
@@ -860,8 +828,8 @@ namespace DuckDBGeoparquet.Views
 
         private async Task ApplyMapStyleToExistingLayersAsync()
         {
-            var style = SelectedMapStyle;
-            if (style == null) return;
+            var profile = SelectedCartographicProfile;
+            if (profile == null) return;
 
             var mapView = MapView.Active;
             if (mapView == null)
@@ -870,7 +838,7 @@ namespace DuckDBGeoparquet.Views
                 return;
             }
 
-            AddToLog($"Applying '{style.DisplayName}' style to existing layers...");
+            AddToLog($"Applying '{profile.DisplayName}' map purpose to existing layers...");
 
             int applied = 0;
             int skipped = 0;
@@ -880,14 +848,14 @@ namespace DuckDBGeoparquet.Views
                 var map = mapView.Map;
                 foreach (var layer in map.GetLayersAsFlattenedList().OfType<FeatureLayer>())
                 {
-                    if (CartographyService.ApplyStyleToExistingLayer(layer, style))
+                    if (CartographyService.ApplyStyleToExistingLayer(layer, profile))
                         applied++;
                     else
                         skipped++;
                 }
             });
 
-            AddToLog($"Style applied to {applied} layer(s). {skipped} layer(s) unchanged (non-Overture or unrecognized).");
+            AddToLog($"Map purpose applied to {applied} layer(s). {skipped} layer(s) unchanged (non-Overture or unrecognized).");
         }
 
         private async Task RepairMapSymbologyAsync()
@@ -899,17 +867,17 @@ namespace DuckDBGeoparquet.Views
                 return;
             }
 
-            var style = SelectedMapStyle
-                        ?? AvailableMapStyles.FirstOrDefault(s => string.Equals(s.Id, "streets", StringComparison.OrdinalIgnoreCase))
-                        ?? AvailableMapStyles.FirstOrDefault();
+            var profile = SelectedCartographicProfile
+                          ?? CartographicProfileCatalog.GetById("analyst_canvas")
+                          ?? AvailableCartographicProfiles.FirstOrDefault();
 
-            if (style == null)
+            if (profile == null)
             {
-                AddToLog("No map styles are available to repair symbology.");
+                AddToLog("No map purposes are available to repair symbology.");
                 return;
             }
 
-            AddToLog($"Repairing map symbology with '{style.DisplayName}' style...");
+            AddToLog($"Repairing map symbology with '{profile.DisplayName}' map purpose...");
 
             int applied = 0;
             int skipped = 0;
@@ -919,7 +887,7 @@ namespace DuckDBGeoparquet.Views
                 var map = mapView.Map;
                 foreach (var layer in map.GetLayersAsFlattenedList().OfType<FeatureLayer>())
                 {
-                    if (CartographyService.ApplyStyleToExistingLayer(layer, style))
+                    if (CartographyService.ApplyStyleToExistingLayer(layer, profile))
                         applied++;
                     else
                         skipped++;
@@ -2163,10 +2131,11 @@ namespace DuckDBGeoparquet.Views
                     return;
 
                 _dataProcessor.BeginNewOutputSession();
-                _dataProcessor.SelectedMapStyle = SelectedMapStyle;
-                if (SelectedMapStyle != null)
+                _dataProcessor.SelectedCartographicProfile = SelectedCartographicProfile;
+                _dataProcessor.SelectedMapStyle = null;
+                if (SelectedCartographicProfile != null)
                 {
-                    AddToLog($"Map style: {SelectedMapStyle.DisplayName} — layers will receive themed cartography");
+                    AddToLog($"Map purpose: {SelectedCartographicProfile.DisplayName} — layers will receive intent-driven cartography");
                 }
 
                 int totalDataTypesToProcess = selectedLeafItems.Count;
@@ -2237,11 +2206,11 @@ namespace DuckDBGeoparquet.Views
                 _lastLoadedDataPath = DataOutputPath;
 
                 var loadElapsed = DateTime.UtcNow - loadStartUtc;
-                string summaryStyle = SelectedMapStyle?.DisplayName ?? "Default";
+                string summaryStyle = SelectedCartographicProfile?.DisplayName ?? "Default";
                 string summaryExtent = extent != null
                     ? $"{extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}"
                     : "none";
-                string loadSummary = $"Load summary: layers={_dataProcessor.LastAddedLayerCount}, style={summaryStyle}, elapsed={loadElapsed:hh\\:mm\\:ss}, extent={summaryExtent}";
+                string loadSummary = $"Load summary: layers={_dataProcessor.LastAddedLayerCount}, map purpose={summaryStyle}, elapsed={loadElapsed:hh\\:mm\\:ss}, extent={summaryExtent}";
                 AddToLog(loadSummary);
                 System.Diagnostics.Debug.WriteLine($"[Load summary] {loadSummary}");
 

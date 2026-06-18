@@ -125,6 +125,16 @@ namespace DuckDBGeoparquet.Services
         /// matching this style definition instead of default ArcGIS Pro symbology.
         /// </summary>
         public MapStyleDefinition SelectedMapStyle { get; set; }
+        public CartographicProfile SelectedCartographicProfile { get; set; }
+
+        private bool HasSelectedCartography => SelectedCartographicProfile != null || SelectedMapStyle != null;
+
+        private MapStyleDefinition GetEffectiveSelectedStyle()
+        {
+            return HasSelectedCartography
+                ? CartographicProfileRules.ResolveStyle(SelectedCartographicProfile, SelectedMapStyle)
+                : null;
+        }
 
         public int LastAddedLayerCount { get; private set; }
         public string LastAppliedStyleName { get; private set; } = "default";
@@ -1210,21 +1220,24 @@ namespace DuckDBGeoparquet.Services
                 return;
             }
 
-            var sortedLayers = SortLayersByGeometryPriority(_pendingLayers, SelectedMapStyle);
+            var effectiveStyle = GetEffectiveSelectedStyle();
+            var sortedLayers = SortLayersByGeometryPriority(_pendingLayers, effectiveStyle);
 
             progress?.Report($"Preparing to add {sortedLayers.Count} layers with optimal stacking order...");
-            string styleName = SelectedMapStyle?.DisplayName ?? "default";
+            string styleName = HasSelectedCartography
+                ? CartographicProfileRules.GetDisplayName(SelectedCartographicProfile, SelectedMapStyle)
+                : "default";
             LastAddedLayerCount = sortedLayers.Count;
             LastAppliedStyleName = styleName;
             System.Diagnostics.Debug.WriteLine($"Adding {sortedLayers.Count} layers using style-aware stacking order ({styleName}):");
             System.Diagnostics.Debug.WriteLine(
-                $"Draw order rank source: style map count={SelectedMapStyle?.DrawOrderRanks?.Count ?? 0}, fallback map count={DefaultDrawOrderRanks.Count}");
+                $"Draw order rank source: style map count={effectiveStyle?.DrawOrderRanks?.Count ?? 0}, fallback map count={DefaultDrawOrderRanks.Count}");
 
             if (VerbosePerLayerDebugLogging)
             {
                 foreach (var layer in sortedLayers)
                 {
-                    int drawRank = GetLayerDrawingRank(layer, SelectedMapStyle);
+                    int drawRank = GetLayerDrawingRank(layer, effectiveStyle);
                     string resolvedType = ResolveLayerType(layer);
                     System.Diagnostics.Debug.WriteLine(
                         $"  {layer.LayerName} ({layer.GeometryType}, type={resolvedType ?? "unknown"}, draw rank {drawRank}, base priority {layer.StackingPriority})");
@@ -1448,6 +1461,8 @@ namespace DuckDBGeoparquet.Services
 
             progress?.Report($"Bulk creation completed. Applying settings to {layers.Count} layers...");
             System.Diagnostics.Debug.WriteLine($"Bulk creation result: {layers.Count} layers created from {uris.Count} URIs");
+            MapStyleDefinition effectiveStyle = GetEffectiveSelectedStyle();
+            string effectiveCartographyName = CartographicProfileRules.GetDisplayName(SelectedCartographicProfile, effectiveStyle);
 
             for (int i = 0; i < layers.Count && i < layerNames.Count; i++)
             {
@@ -1459,17 +1474,17 @@ namespace DuckDBGeoparquet.Services
                     {
                         CIMRenderer renderer = null;
                         var layerInfo = i < validLayerInfos.Count ? validLayerInfos[i] : null;
-                        if (SelectedMapStyle != null && layerInfo != null)
+                        if (effectiveStyle != null && layerInfo != null)
                         {
-                            renderer = CartographyService.CreateRendererForLayer(layerInfo, SelectedMapStyle);
+                            renderer = CartographyService.CreateRendererForLayer(layerInfo, effectiveStyle);
                         }
-                        ApplyLayerSettings(featureLayer, renderer, layerInfo, SelectedMapStyle);
+                        ApplyLayerSettings(featureLayer, renderer, layerInfo, effectiveStyle, SelectedCartographicProfile);
 
                         if (renderer != null)
                         {
                             if (VerbosePerLayerDebugLogging)
                             {
-                                System.Diagnostics.Debug.WriteLine($"CartographyService: Applied '{SelectedMapStyle.DisplayName}' style to layer '{featureLayer.Name}' (type={layerInfo.ActualType}, geom={layerInfo.GeometryType})");
+                                System.Diagnostics.Debug.WriteLine($"CartographyService: Applied '{effectiveCartographyName}' cartography to layer '{featureLayer.Name}' (type={layerInfo.ActualType}, geom={layerInfo.GeometryType})");
                             }
                         }
                     }
@@ -1718,6 +1733,9 @@ namespace DuckDBGeoparquet.Services
                     return;
                 }
 
+                MapStyleDefinition effectiveStyle = GetEffectiveSelectedStyle();
+                string effectiveCartographyName = CartographicProfileRules.GetDisplayName(SelectedCartographicProfile, effectiveStyle);
+
                 foreach (var layerInfo in layers)
                 {
                     if (!File.Exists(layerInfo.FilePath))
@@ -1741,17 +1759,17 @@ namespace DuckDBGeoparquet.Services
                         if (newLayer is FeatureLayer featureLayer)
                         {
                             CIMRenderer renderer = null;
-                            if (SelectedMapStyle != null)
+                            if (effectiveStyle != null)
                             {
-                                renderer = CartographyService.CreateRendererForLayer(layerInfo, SelectedMapStyle);
+                                renderer = CartographyService.CreateRendererForLayer(layerInfo, effectiveStyle);
                             }
-                            ApplyLayerSettings(featureLayer, renderer, layerInfo, SelectedMapStyle);
+                            ApplyLayerSettings(featureLayer, renderer, layerInfo, effectiveStyle, SelectedCartographicProfile);
 
                             if (renderer != null)
                             {
                                 if (VerbosePerLayerDebugLogging)
                                 {
-                                    System.Diagnostics.Debug.WriteLine($"CartographyService: Applied '{SelectedMapStyle.DisplayName}' style to layer '{featureLayer.Name}' (type={layerInfo.ActualType}, geom={layerInfo.GeometryType})");
+                                    System.Diagnostics.Debug.WriteLine($"CartographyService: Applied '{effectiveCartographyName}' cartography to layer '{featureLayer.Name}' (type={layerInfo.ActualType}, geom={layerInfo.GeometryType})");
                                 }
                             }
                         }
@@ -1815,7 +1833,7 @@ namespace DuckDBGeoparquet.Services
         /// Optionally sets a CIM renderer and label classes in the same definition update.
         /// Note: In Pro 3.5, accessing layer definitions for Parquet files may trigger domain lookups that fail
         /// </summary>
-        private static void ApplyLayerSettings(FeatureLayer featureLayer, CIMRenderer renderer = null, LayerCreationInfo layerInfo = null, MapStyleDefinition mapStyle = null)
+        private static void ApplyLayerSettings(FeatureLayer featureLayer, CIMRenderer renderer = null, LayerCreationInfo layerInfo = null, MapStyleDefinition mapStyle = null, CartographicProfile profile = null)
         {
             try
             {
@@ -1856,7 +1874,7 @@ namespace DuckDBGeoparquet.Services
                     bool labelsAdded = false;
                     if (layerInfo != null)
                     {
-                        labelsAdded = CartographyService.ApplyLabelClasses(layerDef, layerInfo.ActualType, layerInfo.GeometryType, mapStyle);
+                        labelsAdded = CartographyService.ApplyLabelClasses(layerDef, layerInfo.ActualType, layerInfo.GeometryType, mapStyle, profile);
                     }
 
                     featureLayer.SetDefinition(layerDef);
@@ -1885,7 +1903,7 @@ namespace DuckDBGeoparquet.Services
 
                     if (layerInfo != null)
                     {
-                        CartographyService.ApplyVisibilityDefaults(featureLayer, layerInfo.ActualType, layerInfo.GeometryType);
+                        CartographyService.ApplyVisibilityDefaults(featureLayer, layerInfo.ActualType, layerInfo.GeometryType, profile);
                     }
 
                     if (VerbosePerLayerDebugLogging)
