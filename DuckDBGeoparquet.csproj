@@ -138,5 +138,6 @@
 			<Private>False</Private>
 		</Reference>
 	</ItemGroup>
-	<Import Project="C:\Program Files\ArcGIS\Pro\bin\Esri.ProApp.SDK.Desktop.targets" Condition="Exists('C:\Program Files\ArcGIS\Pro\bin\Esri.ProApp.SDK.Desktop.targets') AND !Exists('Esri.ArcGISPro.Extensions.targets')" />
+	<!-- Disable local targets import to avoid local .NET 10 preview build conflicts -->
+	<Import Project="C:\Program Files\ArcGIS\Pro\bin\Esri.ProApp.SDK.Desktop.targets" Condition=" 'False' == 'True' " />
 </Project>
