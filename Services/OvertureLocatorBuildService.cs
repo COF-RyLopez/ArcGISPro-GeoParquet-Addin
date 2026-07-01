@@ -8,6 +8,8 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using DuckDBGeoparquet.Models;
+using static DuckDBGeoparquet.Models.AddinConstants;
 
 namespace DuckDBGeoparquet.Services
 {
@@ -28,7 +30,7 @@ namespace DuckDBGeoparquet.Services
 
     public class OvertureLocatorBuildService
     {
-        private const string AddinDataSubfolder = "OvertureProAddinData";
+        // Data subfolder constant is now in AddinConstants.DataSubfolder
         private const string MetadataFileName = "overture_locator_metadata.json";
 
         public LocatorBuildMetadata ReadBuildMetadata()
@@ -373,7 +375,7 @@ namespace DuckDBGeoparquet.Services
             var project = Project.Current;
             if (project != null && !string.IsNullOrWhiteSpace(project.HomeFolderPath))
             {
-                return Path.Combine(project.HomeFolderPath, AddinDataSubfolder, "Data");
+                return Path.Combine(project.HomeFolderPath, DataSubfolder, "Data");
             }
 
             if (project != null && !string.IsNullOrWhiteSpace(project.Path))
@@ -381,7 +383,7 @@ namespace DuckDBGeoparquet.Services
                 string projectDir = Path.GetDirectoryName(project.Path);
                 if (!string.IsNullOrWhiteSpace(projectDir))
                 {
-                    return Path.Combine(projectDir, AddinDataSubfolder, "Data");
+                    return Path.Combine(projectDir, DataSubfolder, "Data");
                 }
             }
 
@@ -393,7 +395,7 @@ namespace DuckDBGeoparquet.Services
             var project = Project.Current;
             if (project != null && !string.IsNullOrWhiteSpace(project.HomeFolderPath))
             {
-                return Path.Combine(project.HomeFolderPath, AddinDataSubfolder, "Locators");
+                return Path.Combine(project.HomeFolderPath, DataSubfolder, "Locators");
             }
 
             if (project != null && !string.IsNullOrWhiteSpace(project.Path))
@@ -401,11 +403,11 @@ namespace DuckDBGeoparquet.Services
                 string projectDir = Path.GetDirectoryName(project.Path);
                 if (!string.IsNullOrWhiteSpace(projectDir))
                 {
-                    return Path.Combine(projectDir, AddinDataSubfolder, "Locators");
+                    return Path.Combine(projectDir, DataSubfolder, "Locators");
                 }
             }
 
-            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OvertureProAddinData", "Locators");
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), DataSubfolder, "Locators");
         }
 
         private static string GetMetadataPath()

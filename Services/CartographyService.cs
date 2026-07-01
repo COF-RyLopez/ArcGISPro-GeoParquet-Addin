@@ -42,6 +42,15 @@ namespace DuckDBGeoparquet.Services
         }
 
         /// <summary>
+        /// Create a CIM renderer for the given Overture data type, geometry, and cartographic profile.
+        /// Returns null if the type is not recognized.
+        /// </summary>
+        public static CIMRenderer CreateRendererForLayer(string actualType, string geometryType, CartographicProfile profile)
+        {
+            return CreateRendererForLayer(actualType, geometryType, CartographicProfileRules.ResolveStyle(profile));
+        }
+
+        /// <summary>
         /// Create a CIM renderer for the given layer info and style.
         /// Returns null if the type is not recognized.
         /// </summary>
@@ -51,6 +60,15 @@ namespace DuckDBGeoparquet.Services
                 return null;
 
             return CreateRenderer(layerInfo.ActualType, layerInfo.GeometryType, style);
+        }
+
+        /// <summary>
+        /// Create a CIM renderer for the given layer info and cartographic profile.
+        /// Returns null if the type is not recognized.
+        /// </summary>
+        public static CIMRenderer CreateRendererForLayer(LayerCreationInfo layerInfo, CartographicProfile profile)
+        {
+            return CreateRendererForLayer(layerInfo, CartographicProfileRules.ResolveStyle(profile));
         }
 
         private static CIMRenderer CreateRenderer(string actualType, string geometryType, MapStyleDefinition style)
@@ -571,7 +589,7 @@ namespace DuckDBGeoparquet.Services
         /// Applies point-layer scale thresholds to reduce visual overload in dense urban extents.
         /// Must be called on the MCT.
         /// </summary>
-        public static void ApplyVisibilityDefaults(FeatureLayer featureLayer, string actualType, string geometryType)
+        public static void ApplyVisibilityDefaults(FeatureLayer featureLayer, string actualType, string geometryType, CartographicProfile profile = null)
         {
             if (featureLayer == null)
                 return;
@@ -580,7 +598,7 @@ namespace DuckDBGeoparquet.Services
             if (!isPoint)
                 return;
 
-            double minScale = GetRecommendedPointMinScale(actualType);
+            double minScale = CartographicProfileRules.GetPointMinScale(profile, actualType);
             if (minScale <= 0)
                 return;
 
@@ -594,23 +612,6 @@ namespace DuckDBGeoparquet.Services
                 System.Diagnostics.Debug.WriteLine(
                     $"CartographyService: Failed setting visibility scale for '{featureLayer.Name}': {ex.Message}");
             }
-        }
-
-        private static double GetRecommendedPointMinScale(string actualType)
-        {
-            if (string.IsNullOrWhiteSpace(actualType))
-                return 25000;
-
-            return actualType.ToLowerInvariant() switch
-            {
-                "address" => 6000,
-                "connector" => 12000,
-                "place" => 10000,
-                "division" => 40000,
-                "infrastructure" => 22000,
-                "land" => 28000,
-                _ => 25000
-            };
         }
 
         private static bool IsLineGeometry(string geometryType) =>
@@ -630,6 +631,20 @@ namespace DuckDBGeoparquet.Services
         /// Must be called on the MCT (inside QueuedTask.Run).
         /// </summary>
         public static bool ApplyStyleToExistingLayer(FeatureLayer featureLayer, MapStyleDefinition style)
+        {
+            return ApplyStyleToExistingLayer(featureLayer, style, null);
+        }
+
+        /// <summary>
+        /// Apply a cartographic profile to an existing feature layer by inferring the Overture type from the layer name.
+        /// Must be called on the MCT (inside QueuedTask.Run).
+        /// </summary>
+        public static bool ApplyStyleToExistingLayer(FeatureLayer featureLayer, CartographicProfile profile)
+        {
+            return ApplyStyleToExistingLayer(featureLayer, CartographicProfileRules.ResolveStyle(profile), profile);
+        }
+
+        private static bool ApplyStyleToExistingLayer(FeatureLayer featureLayer, MapStyleDefinition style, CartographicProfile profile)
         {
             if (style == null || featureLayer == null)
                 return false;
@@ -663,7 +678,7 @@ namespace DuckDBGeoparquet.Services
                         // Update only labels in the definition; do not set layerDef.Renderer here.
                         // Setting the renderer in the definition and then SetDefinition causes features to
                         // stop drawing on the second and later style changes (labels still update).
-                        bool labelsAdded = ApplyLabelClasses(layerDef, actualType, geometryType, style);
+                        bool labelsAdded = ApplyLabelClasses(layerDef, actualType, geometryType, style, profile);
                         featureLayer.SetDefinition(layerDef);
 
                         // Apply symbology only via SetRenderer so style can be changed repeatedly.
@@ -683,7 +698,7 @@ namespace DuckDBGeoparquet.Services
                             featureLayer.SetLabelVisibility(false);
                             featureLayer.SetLabelVisibility(true);
                         }
-                        ApplyVisibilityDefaults(featureLayer, actualType, geometryType);
+                        ApplyVisibilityDefaults(featureLayer, actualType, geometryType, profile);
                         if (VerboseStyleApplyLogging)
                         {
                             System.Diagnostics.Debug.WriteLine(
@@ -725,7 +740,7 @@ namespace DuckDBGeoparquet.Services
         /// Call this before SetDefinition so labels are applied in the same CIM update as the renderer.
         /// Returns true if at least one label class was added (caller should call featureLayer.SetLabelVisibility(true)).
         /// </summary>
-        public static bool ApplyLabelClasses(CIMFeatureLayer layerDef, string actualType, string geometryType, MapStyleDefinition style)
+        public static bool ApplyLabelClasses(CIMFeatureLayer layerDef, string actualType, string geometryType, MapStyleDefinition style, CartographicProfile profile = null)
         {
             if (layerDef == null || string.IsNullOrEmpty(actualType))
                 return false;
@@ -735,7 +750,7 @@ namespace DuckDBGeoparquet.Services
 
             string normalizedType = actualType.ToLowerInvariant();
             string arcadeExpression = GetLabelExpressionForType(normalizedType, isPoint, isLine);
-            if (arcadeExpression == null)
+            if (arcadeExpression == null || !CartographicProfileRules.ShouldLabel(profile, normalizedType))
             {
                 // Clear stale label classes when this layer type should not be labeled.
                 layerDef.LabelClasses = System.Array.Empty<CIMLabelClass>();
@@ -770,7 +785,7 @@ namespace DuckDBGeoparquet.Services
 
             if (normalizedType == "segment" && isLine)
             {
-                var segmentClasses = CreateSegmentLineLabelClasses(textSymbol.MakeSymbolReference(), placementProps);
+                var segmentClasses = CreateSegmentLineLabelClasses(textSymbol.MakeSymbolReference(), placementProps, profile);
                 layerDef.LabelClasses = segmentClasses;
                 return segmentClasses.Length > 0;
             }
@@ -791,12 +806,12 @@ namespace DuckDBGeoparquet.Services
             return true;
         }
 
-        private static CIMLabelClass[] CreateSegmentLineLabelClasses(CIMSymbolReference textSymbol, CIMStandardLabelPlacementProperties placementProps)
+        private static CIMLabelClass[] CreateSegmentLineLabelClasses(CIMSymbolReference textSymbol, CIMStandardLabelPlacementProperties placementProps, CartographicProfile profile = null)
         {
             if (textSymbol == null)
                 return System.Array.Empty<CIMLabelClass>();
 
-            return new[]
+            var labelClasses = new List<CIMLabelClass>
             {
                 CreateLabelClass(
                     name: "Overture Labels - Primary",
@@ -804,15 +819,21 @@ namespace DuckDBGeoparquet.Services
                     textSymbol: textSymbol,
                     placementProps: placementProps,
                     whereClause: "(class IN ('motorway','trunk','primary','secondary','tertiary')) AND (names_primary IS NOT NULL OR names_common_key_value_value IS NOT NULL)",
-                    maxScale: 0),
-                CreateLabelClass(
+                    maxScale: 0)
+            };
+
+            if (CartographicProfileRules.ShowLocalRoadLabels(profile))
+            {
+                labelClasses.Add(CreateLabelClass(
                     name: "Overture Labels - Local",
                     expression: SegmentNameArcadeExpression,
                     textSymbol: textSymbol,
                     placementProps: placementProps,
                     whereClause: "(class IN ('residential','service','living_street','pedestrian','track','unclassified')) AND (names_primary IS NOT NULL OR names_common_key_value_value IS NOT NULL)",
-                    maxScale: 18000) // show locals only when zoomed in (~1:18k and larger scales)
-            };
+                    maxScale: 18000)); // show locals only when zoomed in (~1:18k and larger scales)
+            }
+
+            return labelClasses.ToArray();
         }
 
         private static CIMLabelClass CreateLabelClass(
