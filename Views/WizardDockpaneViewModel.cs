@@ -211,7 +211,7 @@ namespace DuckDBGeoparquet.Views
         private DataProcessor _dataProcessor;
         private const string RELEASE_URL = "https://labs.overturemaps.org/data/releases.json";
         private const string S3_BASE_PATH = "s3://overturemaps-us-west-2/release";
-        private const string ADDIN_DATA_SUBFOLDER = "OvertureProAddinData"; // Define a subfolder name
+
         private const uint FILE_DELETE_ACCESS = 0x00010000;
         private const int ERROR_SHARING_VIOLATION = 32;
         private const int ERROR_LOCK_VIOLATION = 33;
@@ -250,14 +250,14 @@ namespace DuckDBGeoparquet.Views
                     if (project != null && !string.IsNullOrEmpty(project.HomeFolderPath))
                     {
                         // Use the project's Home Folder Path
-                        return Path.Combine(project.HomeFolderPath, ADDIN_DATA_SUBFOLDER);
+                        return Path.Combine(project.HomeFolderPath, AddinConstants.DataSubfolder);
                     }
                     // Fallback if HomeFolderPath is not available but project path is (less ideal)
                     else if (project != null && !string.IsNullOrEmpty(project.Path))
                     {
                         string projectDir = Path.GetDirectoryName(project.Path);
                         if (!string.IsNullOrEmpty(projectDir))
-                            return Path.Combine(projectDir, ADDIN_DATA_SUBFOLDER);
+                            return Path.Combine(projectDir, AddinConstants.DataSubfolder);
                     }
                 }
                 catch (Exception ex)
@@ -265,7 +265,7 @@ namespace DuckDBGeoparquet.Views
                     System.Diagnostics.Debug.WriteLine($"Error getting project home/path for DefaultMfcBasePath: {ex.Message}");
                 }
                 // Fallback to MyDocuments if project path cannot be determined
-                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), ADDIN_DATA_SUBFOLDER);
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), AddinConstants.DataSubfolder);
             }
         }
 
@@ -2047,7 +2047,7 @@ namespace DuckDBGeoparquet.Views
             StatusText = $"Loading {itemDisplayName} from S3 (this may take 30-60 seconds)...";
             AddToLog($"⏳ Starting S3 data load for {itemDisplayName} - please wait, this operation may take time...");
 
-            bool ingestSuccess = await _dataProcessor.IngestFileAsync(s3Path, extent, actualS3Type, ingestProgressReporter);
+            bool ingestSuccess = await _dataProcessor.IngestFileAsync(s3Path, extent == null ? null : new ExtentBounds(extent.XMin, extent.YMin, extent.XMax, extent.YMax), actualS3Type, ingestProgressReporter, ct);
 
             heartbeatCts.Cancel();
             try { await heartbeatTask; } catch (OperationCanceledException) { }
@@ -2079,7 +2079,7 @@ namespace DuckDBGeoparquet.Views
                 ProgressValue = Math.Min(baseProgress + itemProgress, 99.0);
             });
 
-            await _dataProcessor.CreateFeatureLayerAsync(featureLayerName, itemProgressReporter, parentS3Theme, actualS3Type, DataOutputPath, SelectedCompression);
+            await _dataProcessor.CreateFeatureLayerAsync(featureLayerName, itemProgressReporter, parentS3Theme, actualS3Type, DataOutputPath, SelectedCompression, ct);
 
             ProgressValue = ((processedCount + 1) * 100.0) / totalCount;
 

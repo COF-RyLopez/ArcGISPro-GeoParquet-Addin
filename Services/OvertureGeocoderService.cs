@@ -1,17 +1,19 @@
 using ArcGIS.Core.Geometry;
 using ArcGIS.Desktop.Core;
 using DuckDBGeoparquet.Models;
+using static DuckDBGeoparquet.Models.AddinConstants;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace DuckDBGeoparquet.Services
 {
     public class OvertureGeocoderService : IDisposable
     {
-        private const string AddinDataSubfolder = "OvertureProAddinData";
+        // Data subfolder constant is now in AddinConstants.DataSubfolder
         private readonly DataProcessor _dataProcessor;
         private readonly OvertureLocatorBuildService _locatorBuildService;
         private bool _isInitialized;
@@ -34,7 +36,7 @@ namespace DuckDBGeoparquet.Services
             _isInitialized = true;
         }
 
-        public async Task<List<GeocodeCandidate>> SearchAsync(string query, Envelope roiExtent = null, int maxResults = 25)
+        public async Task<List<GeocodeCandidate>> SearchAsync(string query, Envelope roiExtent = null, int maxResults = 25, CancellationToken cancellationToken = default)
         {
             await InitializeAsync();
 
@@ -56,13 +58,13 @@ namespace DuckDBGeoparquet.Services
 
             if (!string.IsNullOrWhiteSpace(addressParquetGlob))
             {
-                var addressCandidates = await _dataProcessor.SearchAddressCandidatesAsync(addressParquetGlob, normalizedQuery, roiExtent, perSourceLimit);
+                var addressCandidates = await _dataProcessor.SearchAddressCandidatesAsync(addressParquetGlob, normalizedQuery, roiExtent == null ? null : new ExtentBounds(roiExtent.XMin, roiExtent.YMin, roiExtent.XMax, roiExtent.YMax), perSourceLimit, cancellationToken);
                 merged.AddRange(addressCandidates);
             }
 
             if (!string.IsNullOrWhiteSpace(placeParquetGlob))
             {
-                var placeCandidates = await _dataProcessor.SearchPlaceCandidatesAsync(placeParquetGlob, normalizedQuery, roiExtent, perSourceLimit);
+                var placeCandidates = await _dataProcessor.SearchPlaceCandidatesAsync(placeParquetGlob, normalizedQuery, roiExtent == null ? null : new ExtentBounds(roiExtent.XMin, roiExtent.YMin, roiExtent.XMax, roiExtent.YMax), perSourceLimit, cancellationToken);
                 merged.AddRange(placeCandidates);
             }
 
@@ -138,7 +140,7 @@ namespace DuckDBGeoparquet.Services
                 var project = Project.Current;
                 if (project != null && !string.IsNullOrWhiteSpace(project.HomeFolderPath))
                 {
-                    return Path.Combine(project.HomeFolderPath, AddinDataSubfolder, "Data");
+                    return Path.Combine(project.HomeFolderPath, DataSubfolder, "Data");
                 }
 
                 if (project != null && !string.IsNullOrWhiteSpace(project.Path))
@@ -146,7 +148,7 @@ namespace DuckDBGeoparquet.Services
                     string projectDir = Path.GetDirectoryName(project.Path);
                     if (!string.IsNullOrWhiteSpace(projectDir))
                     {
-                        return Path.Combine(projectDir, AddinDataSubfolder, "Data");
+                        return Path.Combine(projectDir, DataSubfolder, "Data");
                     }
                 }
             }

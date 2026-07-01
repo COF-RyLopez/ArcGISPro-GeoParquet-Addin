@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using DuckDB.NET.Data;
+using DuckDBGeoparquet.Models;
 
 namespace DuckDBGeoparquet.Services
 {
@@ -129,28 +130,7 @@ namespace DuckDBGeoparquet.Services
             return string.Join("_", fileName.Split(Path.GetInvalidFileNameChars()));
         }
 
-        // Define field exclusion and renaming maps
-        private static readonly Dictionary<string, HashSet<string>> FieldExclusionMap = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "address", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "address_levels", "sources" } },
-            { "building", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
-            { "building_part", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
-            { "connector", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
-            { "division", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "local_type", "hierarchies", "capital_division_ids", "capital_of_divisions" } },
-            { "division_area", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
-            { "infrastructure", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } },
-            { "land", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } },
-            { "land_cover", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
-            { "land_use", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } },
-            { "place", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "addresses", "brand", "emails", "phones", "socials", "sources", "websites" } },
-            { "segment", new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
-                "access_restrictions", "connectors", "destinations", "level_rules",
-                "prohibited_transitions", "road_flags", "road_surface", "routes", "sources",
-                "speed_limits", "subclass_rules", "width_rules"
-              }
-            },
-            { "water", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } }
-        };
+        // Field exclusions are now defined in OvertureSchema.ColumnExclusions (single source of truth).
 
         private static readonly Dictionary<string, Dictionary<string, string>> FieldRenameMap = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase)
         {
@@ -481,7 +461,7 @@ namespace DuckDBGeoparquet.Services
 
                 if (columnName.StartsWith("__duckdb_internal")) continue;
 
-                if (FieldExclusionMap.TryGetValue(datasetName, out var exclusions) && exclusions.Contains(columnName))
+                if (OvertureSchema.ColumnExclusions.TryGetValue(datasetName, out var exclusions) && exclusions.Contains(columnName))
                 {
                     logAction($"MFC Generation: Excluding field '{columnName}' for dataset '{datasetName}' as per exclusion rules.");
                     continue;

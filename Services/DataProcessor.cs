@@ -42,28 +42,7 @@ namespace DuckDBGeoparquet.Services
         // Add static readonly field for the theme-type separator
         private static readonly string[] THEME_TYPE_SEPARATOR = [" - "];
 
-        // Columns to drop per dataset type to reduce S3 transfer and decoding cost (only dropped when present)
-        private static readonly Dictionary<string, HashSet<string>> ColumnDropMap = new(StringComparer.OrdinalIgnoreCase)
-        {
-            { "address", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "address_levels", "sources" } },
-            { "building", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
-            { "building_part", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
-            { "connector", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
-            { "division", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "local_type", "hierarchies", "capital_division_ids", "capital_of_divisions" } },
-            { "division_area", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
-            { "infrastructure", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } },
-            { "land", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } },
-            { "land_cover", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
-            { "land_use", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } },
-            { "place", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "addresses", "brand", "emails", "phones", "socials", "sources", "websites" } },
-            { "segment", new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
-                "access_restrictions", "connectors", "destinations", "level_rules",
-                "prohibited_transitions", "road_flags", "road_surface", "routes", "sources",
-                "speed_limits", "subclass_rules", "width_rules"
-              }
-            },
-            { "water", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } }
-        };
+        // Column exclusions are now defined in OvertureSchema.ColumnExclusions (single source of truth).
 
         // Default draw order fallback used when a style does not provide explicit draw ranks.
         // Higher rank draws above lower rank.
@@ -108,8 +87,12 @@ namespace DuckDBGeoparquet.Services
             { "bathymetry", 260 },
         };
 
+        // Add fields for state management
+        private bool _isInitialized;
+        private bool _isDisposed;
+
         // Add a class-level field to store the current extent
-        private dynamic _currentExtent;
+        private ExtentBounds _currentExtent;
 
         // Fields to store theme context for file path generation
         private string _currentParentS3Theme;
@@ -154,8 +137,10 @@ namespace DuckDBGeoparquet.Services
             _outputSessionSuffix = DateTime.UtcNow.ToString("yyyyMMddHHmmssfff", CultureInfo.InvariantCulture);
         }
 
-        public async Task InitializeDuckDBAsync()
+        public async Task InitializeDuckDBAsync(CancellationToken cancellationToken = default)
         {
+            if (_isInitialized) return;
+
             try
             {
                 await _connection.OpenAsync();
@@ -178,7 +163,7 @@ namespace DuckDBGeoparquet.Services
 
                     try
                     {
-                        await command.ExecuteNonQueryAsync(CancellationToken.None);
+                        await command.ExecuteNonQueryAsync(cancellationToken);
                         System.Diagnostics.Debug.WriteLine("Successfully installed extensions directly");
                         // If we get here, extensions were successfully installed
                     }
@@ -201,7 +186,7 @@ namespace DuckDBGeoparquet.Services
                                     LOAD spatial;
                                     LOAD httpfs;
                                 ";
-                                await command.ExecuteNonQueryAsync(CancellationToken.None);
+                                await command.ExecuteNonQueryAsync(cancellationToken);
                                 System.Diagnostics.Debug.WriteLine("Successfully loaded extensions from bundled directory");
                             }
                             else
@@ -232,26 +217,30 @@ namespace DuckDBGeoparquet.Services
                 try
                 {
                     command.CommandText = "SET s3_region='us-west-2';";
-                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                    await command.ExecuteNonQueryAsync(cancellationToken);
                     
                     command.CommandText = "SET enable_http_metadata_cache=true;";
-                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                    await command.ExecuteNonQueryAsync(cancellationToken);
                     
                     command.CommandText = "SET enable_object_cache=true;";
-                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                    await command.ExecuteNonQueryAsync(cancellationToken);
                     
                     command.CommandText = "SET enable_progress_bar=true;";
-                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                    await command.ExecuteNonQueryAsync(cancellationToken);
 
                     // Additional performance tuning
                     command.CommandText = "SET memory_limit='2GB';";
-                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                    await command.ExecuteNonQueryAsync(cancellationToken);
 
                     string tempDir = Path.GetTempPath().Replace('\\', '/');
                     command.CommandText = $"SET temp_directory='{tempDir}';";
-                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                    await command.ExecuteNonQueryAsync(cancellationToken);
+                    
+                    command.CommandText = "SET max_memory='4GB';";
+                    await command.ExecuteNonQueryAsync(cancellationToken);
 
-                    System.Diagnostics.Debug.WriteLine("DuckDB S3 and cache settings configured successfully");
+                    System.Diagnostics.Debug.WriteLine("Successfully configured DuckDB settings");
+                    _isInitialized = true;
                 }
                 catch (Exception settingsEx)
                 {
@@ -264,7 +253,7 @@ namespace DuckDBGeoparquet.Services
                 {
                     int threads = Math.Max(1, Environment.ProcessorCount);
                     command.CommandText = $"SET threads={threads};";
-                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                    await command.ExecuteNonQueryAsync(cancellationToken);
                     System.Diagnostics.Debug.WriteLine($"DuckDB threads set to {threads}");
                 }
                 catch (Exception threadEx)
@@ -279,7 +268,7 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        public async Task<bool> IngestFileAsync(string s3Path, dynamic extent = null, string actualS3Type = null, IProgress<string> progress = null)
+        public async Task<bool> IngestFileAsync(string s3Path, ExtentBounds extent = null, string actualS3Type = null, IProgress<string> progress = null, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -321,7 +310,7 @@ namespace DuckDBGeoparquet.Services
                 System.Diagnostics.Debug.WriteLine($"Executing schema query for {actualS3Type ?? "data"}...");
                 try
                 {
-                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                    await command.ExecuteNonQueryAsync(cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -333,7 +322,7 @@ namespace DuckDBGeoparquet.Services
 
                 command.CommandText = "DESCRIBE temp";
                 var columnNames = new List<string>();
-                using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
+                using var reader = await command.ExecuteReaderAsync(cancellationToken);
                 // Collect column names for projection and count for validation
                 while (await reader.ReadAsync())
                 {
@@ -459,7 +448,7 @@ namespace DuckDBGeoparquet.Services
                 System.Diagnostics.Debug.WriteLine($"Executing data load query for {actualS3Type ?? "data"}...");
                 try
                 {
-                    await command.ExecuteNonQueryAsync(CancellationToken.None);
+                    await command.ExecuteNonQueryAsync(cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -470,7 +459,7 @@ namespace DuckDBGeoparquet.Services
                 }
 
                 command.CommandText = "SELECT COUNT(*) FROM current_table";
-                var count = await command.ExecuteScalarAsync(CancellationToken.None);
+                var count = await command.ExecuteScalarAsync(cancellationToken);
                 progress?.Report($"Successfully loaded {count:N0} rows from S3");
                 System.Diagnostics.Debug.WriteLine($"[{actualS3Type}] Loaded {count} rows");
 
@@ -495,11 +484,11 @@ namespace DuckDBGeoparquet.Services
         /// Infer ISO 3166-1 alpha-2 country code from extent center (WGS84) for filtering address data.
         /// Returns null if extent center is not in a known bounding box. Reduces address load from global to one country.
         /// </summary>
-        private static string TryGetCountryCodeFromExtent(dynamic extent)
+        private static string TryGetCountryCodeFromExtent(ExtentBounds extent)
         {
             if (extent == null) return null;
-            double midLon = (double)((extent.XMin + extent.XMax) / 2.0);
-            double midLat = (double)((extent.YMin + extent.YMax) / 2.0);
+            double midLon = (extent.XMin + extent.XMax) / 2.0;
+            double midLat = (extent.YMin + extent.YMax) / 2.0;
             // Rough bounding boxes (lon min, lat min, lon max, lat max) for countries with large Overture address counts
             if (midLon >= -125 && midLon <= -66 && midLat >= 24 && midLat <= 50) return "US";
             if (midLon >= -141 && midLon <= -52 && midLat >= 41 && midLat <= 84) return "CA";
@@ -525,7 +514,7 @@ namespace DuckDBGeoparquet.Services
             if (string.IsNullOrWhiteSpace(actualS3Type) || columnNames == null || columnNames.Count == 0)
                 return null;
 
-            if (!ColumnDropMap.TryGetValue(actualS3Type, out var dropSet) || dropSet.Count == 0)
+            if (!OvertureSchema.ColumnExclusions.TryGetValue(actualS3Type, out var dropSet) || dropSet.Count == 0)
                 return null;
 
             var projected = columnNames
@@ -543,13 +532,13 @@ namespace DuckDBGeoparquet.Services
             return string.Join(", ", projected);
         }
 
-        public async Task<DataTable> GetPreviewDataAsync()
+        public async Task<DataTable> GetPreviewDataAsync(CancellationToken cancellationToken = default)
         {
             try
             {
                 using var command = _connection.CreateCommand();
                 command.CommandText = "SELECT * FROM current_table LIMIT 1000";
-                using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
+                using var reader = await command.ExecuteReaderAsync(cancellationToken);
                 var previewTable = new DataTable();
                 previewTable.Load(reader);
                 return previewTable;
@@ -567,7 +556,7 @@ namespace DuckDBGeoparquet.Services
         /// </summary>
         /// <param name="s3Path">S3 path to the GeoParquet file(s)</param>
         /// <returns>List of dictionaries containing column_name and column_type</returns>
-        public async Task<List<Dictionary<string, object>>> GetSchemaAsync(string s3Path)
+        public async Task<List<Dictionary<string, object>>> GetSchemaAsync(string s3Path, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -577,7 +566,7 @@ namespace DuckDBGeoparquet.Services
                     CREATE OR REPLACE TABLE temp_schema AS 
                     SELECT * FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1) LIMIT 0;
                 ";
-                await command.ExecuteNonQueryAsync(CancellationToken.None);
+                await command.ExecuteNonQueryAsync(cancellationToken);
 
                 // Use ExecuteQueryAsync to get schema results
                 var results = await ExecuteQueryAsync("DESCRIBE temp_schema");
@@ -884,7 +873,7 @@ namespace DuckDBGeoparquet.Services
         /// <param name="parentS3Theme">The S3 parent theme key (e.g., 'buildings').</param>
         /// <param name="actualS3Type">The specific S3 data type (e.g., 'building', 'building_part').</param>
         /// <param name="dataOutputPathRoot">The root directory where data for the current release is stored (e.g., C:\...\ProjectHome\OvertureProAddinData\Data\{ReleaseVersion})</param>
-        public async Task CreateFeatureLayerAsync(string layerNameBase, IProgress<string> progress, string parentS3Theme, string actualS3Type, string dataOutputPathRoot, string compression = "ZSTD")
+        public async Task CreateFeatureLayerAsync(string layerNameBase, IProgress<string> progress, string parentS3Theme, string actualS3Type, string dataOutputPathRoot, string compression = "ZSTD", CancellationToken cancellationToken = default)
         {
             System.Diagnostics.Debug.WriteLine($"CreateFeatureLayerAsync called for: {layerNameBase}, ParentS3Theme: {parentS3Theme}, ActualS3Type: {actualS3Type}, DataOutputPathRoot: {dataOutputPathRoot}");
             progress?.Report($"Starting layer creation for {layerNameBase}");
@@ -927,7 +916,7 @@ namespace DuckDBGeoparquet.Services
             try
             {
                 // Now pass this specific folder to ExportByGeometryType
-                await ExportByGeometryType(layerNameBase, themeTypeSpecificFolder, progress, compression);
+                await ExportByGeometryType(layerNameBase, themeTypeSpecificFolder, progress, compression, cancellationToken);
 
                 progress?.Report($"Feature layer creation process completed for {layerNameBase}.");
                 System.Diagnostics.Debug.WriteLine($"Feature layer creation process completed for {layerNameBase}");
@@ -947,7 +936,7 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        private async Task ExportByGeometryType(string layerNameBase, string themeTypeSpecificOutputFolder, IProgress<string> progress = null, string compression = "ZSTD")
+        private async Task ExportByGeometryType(string layerNameBase, string themeTypeSpecificOutputFolder, IProgress<string> progress = null, string compression = "ZSTD", CancellationToken cancellationToken = default)
         {
             System.Diagnostics.Debug.WriteLine($"ExportByGeometryType for {layerNameBase}, OutputFolder: {themeTypeSpecificOutputFolder}");
             progress?.Report($"Processing geometry types for {layerNameBase} with optimal layer stacking");
@@ -958,7 +947,7 @@ namespace DuckDBGeoparquet.Services
             var geometryTypes = new List<string>();
             try
             {
-                using var reader = await command.ExecuteReaderAsync(CancellationToken.None);
+                using var reader = await command.ExecuteReaderAsync(cancellationToken);
                 while (await reader.ReadAsync())
                 {
                     var geomType = reader.GetString(0);
@@ -999,7 +988,7 @@ namespace DuckDBGeoparquet.Services
 
             // Determine whether current_table has a bbox column so we can keep bbox synchronized with geometry.
             command.CommandText = "SELECT COUNT(*) FROM pragma_table_info('current_table') WHERE lower(name) = 'bbox'";
-            var bboxColCount = Convert.ToInt32(await command.ExecuteScalarAsync(CancellationToken.None));
+            var bboxColCount = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
             bool currentTableHasBbox = bboxColCount > 0;
 
             int typeIndex = 0;
@@ -1043,7 +1032,7 @@ namespace DuckDBGeoparquet.Services
                             WHERE geometry IS NOT NULL
                               AND ST_GeometryType(geometry) = '{escapedGeomType}'";
 
-                    string targetPath = await ExportToGeoParquet(exportSelect, finalOutputPath, finalLayerName, progress, compression);
+                    string targetPath = await ExportToGeoParquet(exportSelect, finalOutputPath, finalLayerName, progress, compression, cancellationToken);
 
                     var layerInfo = new LayerCreationInfo
                     {
@@ -1069,7 +1058,7 @@ namespace DuckDBGeoparquet.Services
             progress?.Report($"Finished processing all geometry types for {layerNameBase}.");
         }
 
-        private async Task<string> ExportToGeoParquet(string query, string outputPath, string _layerName, IProgress<string> progress = null, string compression = "ZSTD")
+        private async Task<string> ExportToGeoParquet(string query, string outputPath, string _layerName, IProgress<string> progress = null, string compression = "ZSTD", CancellationToken cancellationToken = default)
         {
             progress?.Report($"Exporting data for {_layerName} to {Path.GetFileName(outputPath)}");
 
@@ -1120,7 +1109,7 @@ namespace DuckDBGeoparquet.Services
                 }
                 
                 command.CommandText = BuildGeoParquetCopyCommand(query, actualOutputPath, compression);
-                await command.ExecuteNonQueryAsync(CancellationToken.None);
+                await command.ExecuteNonQueryAsync(cancellationToken);
                 
                 // If we used a temp file, try to replace the original
                 if (useTempFile && File.Exists(actualOutputPath))
@@ -1964,23 +1953,24 @@ namespace DuckDBGeoparquet.Services
             return results;
         }
 
-        public async Task<List<GeocodeCandidate>> SearchAddressCandidatesAsync(string parquetGlobPath, string normalizedQuery, dynamic extent = null, int maxResults = 25)
+        public async Task<List<GeocodeCandidate>> SearchAddressCandidatesAsync(string parquetGlobPath, string normalizedQuery, ExtentBounds extent = null, int maxResults = 25, CancellationToken cancellationToken = default)
         {
-            return await SearchLocalCandidatesAsync(parquetGlobPath, normalizedQuery, "Address", extent, maxResults, 40);
+            return await SearchLocalCandidatesAsync(parquetGlobPath, normalizedQuery, "Address", extent, maxResults, 40, cancellationToken);
         }
 
-        public async Task<List<GeocodeCandidate>> SearchPlaceCandidatesAsync(string parquetGlobPath, string normalizedQuery, dynamic extent = null, int maxResults = 25)
+        public async Task<List<GeocodeCandidate>> SearchPlaceCandidatesAsync(string parquetGlobPath, string normalizedQuery, ExtentBounds extent = null, int maxResults = 25, CancellationToken cancellationToken = default)
         {
-            return await SearchLocalCandidatesAsync(parquetGlobPath, normalizedQuery, "Place", extent, maxResults, 0);
+            return await SearchLocalCandidatesAsync(parquetGlobPath, normalizedQuery, "Place", extent, maxResults, 0, cancellationToken);
         }
 
         public async Task<List<GeocodeCandidate>> SearchLocalCandidatesAsync(
             string parquetGlobPath,
             string normalizedQuery,
             string sourceType,
-            dynamic extent = null,
+            ExtentBounds extent = null,
             int maxResults = 25,
-            int sourceBias = 0)
+            int sourceBias = 0,
+            CancellationToken cancellationToken = default)
         {
             var candidates = new List<GeocodeCandidate>();
             if (string.IsNullOrWhiteSpace(parquetGlobPath) || string.IsNullOrWhiteSpace(normalizedQuery))
@@ -2000,13 +1990,13 @@ namespace DuckDBGeoparquet.Services
                 CREATE OR REPLACE TABLE geocoder_schema_probe AS
                 SELECT * FROM read_parquet('{escapedPath}', hive_partitioning=1) LIMIT 0;
             ";
-            await command.ExecuteNonQueryAsync(CancellationToken.None);
+            await command.ExecuteNonQueryAsync(cancellationToken);
 
             command.CommandText = "DESCRIBE geocoder_schema_probe";
             var availableColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            using (var schemaReader = await command.ExecuteReaderAsync(CancellationToken.None))
+            using (var schemaReader = await command.ExecuteReaderAsync(cancellationToken))
             {
-                while (await schemaReader.ReadAsync(CancellationToken.None))
+                while (await schemaReader.ReadAsync(cancellationToken))
                 {
                     if (!schemaReader.IsDBNull(0))
                     {
@@ -2053,10 +2043,10 @@ namespace DuckDBGeoparquet.Services
             string extentFilter = string.Empty;
             if (extent != null)
             {
-                string xMinStr = ((double)extent.XMin).ToString("G", CultureInfo.InvariantCulture);
-                string yMinStr = ((double)extent.YMin).ToString("G", CultureInfo.InvariantCulture);
-                string xMaxStr = ((double)extent.XMax).ToString("G", CultureInfo.InvariantCulture);
-                string yMaxStr = ((double)extent.YMax).ToString("G", CultureInfo.InvariantCulture);
+                string xMinStr = extent.XMin.ToString("G", CultureInfo.InvariantCulture);
+                string yMinStr = extent.YMin.ToString("G", CultureInfo.InvariantCulture);
+                string xMaxStr = extent.XMax.ToString("G", CultureInfo.InvariantCulture);
+                string yMaxStr = extent.YMax.ToString("G", CultureInfo.InvariantCulture);
 
                 if (availableColumns.Contains("bbox"))
                 {
@@ -2135,8 +2125,8 @@ namespace DuckDBGeoparquet.Services
                 LIMIT {safeLimit};";
 
             command.CommandText = searchSql;
-            using var resultReader = await command.ExecuteReaderAsync(CancellationToken.None);
-            while (await resultReader.ReadAsync(CancellationToken.None))
+            using var resultReader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await resultReader.ReadAsync(cancellationToken))
             {
                 int score = resultReader.IsDBNull(5) ? 0 : Convert.ToInt32(resultReader.GetValue(5), CultureInfo.InvariantCulture);
                 candidates.Add(new GeocodeCandidate
@@ -2161,8 +2151,11 @@ namespace DuckDBGeoparquet.Services
 
         public void Dispose()
         {
+            if (_isDisposed) return;
+            
             _connection?.Dispose();
             _pendingLayers?.Clear();
+            _isDisposed = true;
             GC.SuppressFinalize(this);
         }
 
