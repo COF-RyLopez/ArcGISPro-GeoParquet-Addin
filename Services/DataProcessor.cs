@@ -161,16 +161,33 @@ namespace DuckDBGeoparquet.Services
                         LOAD httpfs;
                     ";
 
-                    try
+                    bool installSuccess = false;
+                    int maxRetries = 3;
+                    for (int i = 0; i < maxRetries; i++)
                     {
-                        await command.ExecuteNonQueryAsync(cancellationToken);
-                        System.Diagnostics.Debug.WriteLine("Successfully installed extensions directly");
-                        // If we get here, extensions were successfully installed
+                        try
+                        {
+                            await command.ExecuteNonQueryAsync(cancellationToken);
+                            System.Diagnostics.Debug.WriteLine($"Successfully installed extensions directly on attempt {i + 1}");
+                            installSuccess = true;
+                            break; // Success, exit retry loop
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Direct installation attempt {i + 1} failed: {ex.Message}");
+                            if (i < maxRetries - 1)
+                            {
+                                await Task.Delay(2000, cancellationToken); // Wait 2 seconds before retrying
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine("All direct installation attempts failed. Trying bundled extensions...");
+                            }
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Direct installation failed: {ex.Message}. Trying bundled extensions...");
 
+                    if (!installSuccess)
+                    {
                         // Try loading from our bundled extensions path
                         if (Directory.Exists(extensionsPath))
                         {
@@ -212,53 +229,33 @@ namespace DuckDBGeoparquet.Services
                         $"4. Current extension search path: {extensionsPath}", ex);
                 }
 
-                // Configure DuckDB settings for optimal performance
-                // Execute each SET command separately to avoid potential parsing issues
+                // Extensions loaded successfully — mark as initialized so a retry
+                // after a settings failure doesn't re-open the connection.
+                _isInitialized = true;
+
+                // Configure DuckDB settings for optimal performance.
+                // Batched into a single multi-statement execution to reduce round trips.
                 try
                 {
-                    command.CommandText = "SET s3_region='us-west-2';";
-                    await command.ExecuteNonQueryAsync(cancellationToken);
-                    
-                    command.CommandText = "SET enable_http_metadata_cache=true;";
-                    await command.ExecuteNonQueryAsync(cancellationToken);
-                    
-                    command.CommandText = "SET enable_object_cache=true;";
-                    await command.ExecuteNonQueryAsync(cancellationToken);
-                    
-                    command.CommandText = "SET enable_progress_bar=true;";
-                    await command.ExecuteNonQueryAsync(cancellationToken);
-
-                    // Additional performance tuning
-                    command.CommandText = "SET memory_limit='2GB';";
-                    await command.ExecuteNonQueryAsync(cancellationToken);
-
+                    int threads = Math.Max(1, Environment.ProcessorCount);
                     string tempDir = Path.GetTempPath().Replace('\\', '/');
-                    command.CommandText = $"SET temp_directory='{tempDir}';";
+                    command.CommandText = $@"
+                        SET s3_region='us-west-2';
+                        SET enable_http_metadata_cache=true;
+                        SET enable_object_cache=true;
+                        SET enable_progress_bar=true;
+                        SET memory_limit='2GB';
+                        SET max_memory='4GB';
+                        SET temp_directory='{tempDir}';
+                        SET threads={threads};
+                    ";
                     await command.ExecuteNonQueryAsync(cancellationToken);
-                    
-                    command.CommandText = "SET max_memory='4GB';";
-                    await command.ExecuteNonQueryAsync(cancellationToken);
-
-                    System.Diagnostics.Debug.WriteLine("Successfully configured DuckDB settings");
-                    _isInitialized = true;
+                    System.Diagnostics.Debug.WriteLine($"DuckDB settings configured successfully (threads={threads})");
                 }
                 catch (Exception settingsEx)
                 {
                     System.Diagnostics.Debug.WriteLine($"Warning: Could not set some DuckDB settings: {settingsEx.Message}");
-                    // Continue - these are optimizations, not required for functionality
-                }
-
-                // Enable parallelism according to host CPU
-                try
-                {
-                    int threads = Math.Max(1, Environment.ProcessorCount);
-                    command.CommandText = $"SET threads={threads};";
-                    await command.ExecuteNonQueryAsync(cancellationToken);
-                    System.Diagnostics.Debug.WriteLine($"DuckDB threads set to {threads}");
-                }
-                catch (Exception threadEx)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Warning: Could not set DuckDB threads: {threadEx.Message}");
+                    // Continue — these are optimizations, not required for functionality
                 }
 
             }
