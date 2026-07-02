@@ -31,6 +31,19 @@ using Microsoft.Win32.SafeHandles;
 
 namespace DuckDBGeoparquet.Views
 {
+    /// <summary>
+    /// Tab order of the wizard DockPane's TabControl. Keep in sync with
+    /// the TabItem order in WizardDockpane.xaml.
+    /// </summary>
+    internal enum WizardTab
+    {
+        SelectData = 0,
+        Preview = 1,
+        Status = 2,
+        CreateMfc = 3,
+        CacheManagement = 4
+    }
+
     internal partial class WizardDockpaneViewModel : DockPane
     {
         #region Commands
