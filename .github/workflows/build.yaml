@@ -44,6 +44,28 @@ jobs:
         $cleanVersion = $version -replace '-dev$', ''
         pwsh ./.github/workflows/update-version.ps1 -Version $cleanVersion -ConfigPath "Config.daml"
 
+    - name: Bundle DuckDB extensions (spatial, httpfs)
+      shell: powershell
+      run: |
+        # Must match the DuckDB.NET.Data.Full package version in the csproj.
+        $duckdbVersion = "1.5.3"
+        $platform = "windows_amd64"
+        New-Item -Path "Extensions" -ItemType Directory -Force | Out-Null
+        foreach ($ext in @("spatial", "httpfs")) {
+          $url = "https://extensions.duckdb.org/v$duckdbVersion/$platform/$ext.duckdb_extension.gz"
+          $gz = "Extensions\$ext.duckdb_extension.gz"
+          $out = "Extensions\$ext.duckdb_extension"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $gz
+          $in = [System.IO.File]::OpenRead($gz)
+          $gzip = New-Object System.IO.Compression.GzipStream($in, [System.IO.Compression.CompressionMode]::Decompress)
+          $of = [System.IO.File]::Create($out)
+          $gzip.CopyTo($of)
+          $of.Close(); $gzip.Close(); $in.Close()
+          Remove-Item $gz
+          Write-Host ("Bundled {0} ({1:N1} MB)" -f $ext, ((Get-Item $out).Length / 1MB))
+        }
+
     - name: Restore NuGet packages
       run: nuget restore DuckDBGeoparquet.sln
       
@@ -101,8 +123,8 @@ jobs:
       run: |
         $version = "${{ steps.get_version.outputs.VERSION }}"
         $zipName = "ArcGISPro-GeoParquet-Addin-v${version}.zip"
-        $addinFile = Get-ChildItem -Path "bin/Release/net8.0-windows" -Filter "*.esriAddInX" | Select-Object -First 1
-        
+        $addinFile = Get-ChildItem -Path "bin/Release" -Filter "*.esriAddInX" -Recurse | Select-Object -First 1
+
         if ($addinFile) {
           # Create a directory for the release
           New-Item -Path "release" -ItemType Directory -Force
@@ -130,7 +152,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: addin-package
-        path: "bin/Release/net8.0-windows/*.esriAddInX"
+        path: "bin/Release/**/*.esriAddInX"
         if-no-files-found: error
         
     - name: Upload release zip
@@ -235,13 +257,13 @@ jobs:
       id: find_addin
       shell: powershell
       run: |
-        $addinFile = Get-ChildItem -Path "bin/Release/net8.0-windows" -Filter "*.esriAddInX" -Recurse | Select-Object -First 1
+        $addinFile = Get-ChildItem -Path "bin/Release" -Filter "*.esriAddInX" -Recurse | Select-Object -First 1
         if ($addinFile) {
           $fullPath = $addinFile.FullName
           Write-Host "Found add-in file: $fullPath"
           echo "ADDIN_FILE=$fullPath" >> $env:GITHUB_OUTPUT
         } else {
-          Write-Host "ERROR: No .esriAddInX file found in bin/Release/net8.0-windows"
+          Write-Host "ERROR: No .esriAddInX file found in bin/Release"
           Get-ChildItem -Path "bin/Release" -Recurse | Select-Object FullName | Format-Table
           exit 1
         }

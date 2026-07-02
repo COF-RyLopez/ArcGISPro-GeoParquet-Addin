@@ -30,15 +30,24 @@
 		<Content Include="NewAmsterdam.stylx">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</Content>
+		<Content Include="Views\PreviewMap\preview.html">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
+		<!-- Bundled DuckDB extensions (not in source control; see Extensions/README.txt).
+		     When present they ship inside the .esriAddInX so the add-in works offline
+		     and on machines whose Application Control policy blocks runtime downloads. -->
+		<Content Include="Extensions\*.duckdb_extension">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
 	</ItemGroup>
 	<ItemGroup>
 		<None Include="Properties\launchSettings.json" />
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Include="DuckDB.NET.Data.Full" Version="1.5.3" />
-		<PackageReference Include="Esri.ArcGISRuntime" Version="300.0.0" />
 		<!-- Force NuGet package usage to avoid local .NET 10 preview build conflicts -->
 		<PackageReference Include="Esri.ArcGISPro.Extensions30" Version="3.7.0.1901" />
+		<PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4022.49" />
 	</ItemGroup>
 	<!-- Disable local targets import to avoid local .NET 10 preview build conflicts -->
 </Project>

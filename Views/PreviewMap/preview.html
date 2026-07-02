@@ -5,9 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Overture Data Preview</title>
 
-    <!-- ArcGIS Maps SDK for JavaScript 5.1 (CDN) -->
+    <!--
+      ArcGIS Maps SDK for JavaScript 5.1 via CDN.
+      type="module" is REQUIRED on the script tag at 5.x — the CDN entry is an
+      ES module and a classic script tag silently fails to define $arcgis.
+      Modules are then loaded with $arcgis.import() (the Esri-recommended CDN
+      pattern; AMD require() is deprecated at 5.0 and removed at 6.0).
+      Both theme stylesheet paths are referenced; whichever the CDN serves for
+      this version wins and the other 404s harmlessly.
+    -->
+    <link rel="stylesheet" href="https://js.arcgis.com/5.1/esri/themes/dark/main.css" />
     <link rel="stylesheet" href="https://js.arcgis.com/5.1/@arcgis/core/assets/esri/themes/dark/main.css" />
-    <script src="https://js.arcgis.com/5.1/"></script>
+    <script type="module" src="https://js.arcgis.com/5.1/"></script>
 
     <style>
         html, body {
@@ -94,10 +103,32 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+
+        /* Shown when the SDK cannot be reached (offline / blocked CDN) */
+        #offline-notice {
+            position: absolute;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            color: #a0a0a0;
+            font-size: 13px;
+            text-align: center;
+            padding: 24px;
+            z-index: 30;
+            background: #1a1a1a;
+        }
     </style>
 </head>
 <body>
     <div id="viewDiv"></div>
+
+    <div id="offline-notice">
+        <p><strong>Preview map unavailable.</strong></p>
+        <p>The ArcGIS Maps SDK for JavaScript could not be loaded from js.arcgis.com.<br />
+           Check your network connection or proxy settings. All other add-in features still work.</p>
+    </div>
 
     <div id="loading-overlay">
         <div class="spinner"></div>
@@ -109,24 +140,66 @@
         <span class="layer-count" id="layerCount"></span>
     </div>
 
-    <script>
-        require([
-            "esri/Map",
-            "esri/views/MapView",
-            "esri/layers/GraphicsLayer",
-            "esri/Graphic",
-            "esri/geometry/Extent",
-            "esri/geometry/SpatialReference"
-        ], function (Map, MapView, GraphicsLayer, Graphic, Extent, SpatialReference) {
+    <script type="module">
+        // ── State ──────────────────────────────────────────
+        const previewLayers = [];
+        let loadingCount = 0;
 
-            // ── State ──────────────────────────────────────────
-            const parquetLayers = [];
-            let loadingCount = 0;
+        const statusText = document.getElementById("statusText");
+        const layerCountEl = document.getElementById("layerCount");
+        const loadingOverlay = document.getElementById("loading-overlay");
+        const loadingText = loadingOverlay.querySelector(".loading-text");
 
-            const statusText = document.getElementById("statusText");
-            const layerCountEl = document.getElementById("layerCount");
-            const loadingOverlay = document.getElementById("loading-overlay");
-            const loadingText = loadingOverlay.querySelector(".loading-text");
+        function setStatus(text) {
+            statusText.textContent = text;
+        }
+
+        function postToHost(msg) {
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage(JSON.stringify(msg));
+            }
+        }
+
+        function showOfflineNotice() {
+            document.getElementById("offline-notice").style.display = "flex";
+            setStatus("Preview unavailable (SDK failed to load)");
+            postToHost({ type: "previewUnavailable", error: "ArcGIS JS SDK failed to load from CDN" });
+        }
+
+        // Wait for the CDN module to define $arcgis. Module execution order
+        // usually guarantees it's ready, but polling briefly makes this robust
+        // to slow proxies and async global definition.
+        async function waitForSdk(timeoutMs) {
+            const start = Date.now();
+            while (!window.$arcgis) {
+                if (Date.now() - start > timeoutMs) return false;
+                await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+            return true;
+        }
+
+        if (await waitForSdk(8000)) {
+            try {
+                await initMap();
+            } catch (err) {
+                console.error("Preview init failed:", err);
+                showOfflineNotice();
+            }
+        } else {
+            // The CDN script failed to load (offline or blocked).
+            showOfflineNotice();
+        }
+
+        async function initMap() {
+            const [Map, MapView, GraphicsLayer, Graphic, Extent, reactiveUtils] =
+                await $arcgis.import([
+                    "@arcgis/core/Map.js",
+                    "@arcgis/core/views/MapView.js",
+                    "@arcgis/core/layers/GraphicsLayer.js",
+                    "@arcgis/core/Graphic.js",
+                    "@arcgis/core/geometry/Extent.js",
+                    "@arcgis/core/core/reactiveUtils.js"
+                ]);
 
             // ── Map Setup ──────────────────────────────────────
             const extentLayer = new GraphicsLayer({ title: "Selected Extent" });
@@ -149,38 +222,33 @@
                 }
             });
 
-            view.when(function () {
-                setStatus("Ready — waiting for commands from add-in");
-                notifyReady();
-            });
+            await view.when();
+            setStatus("Ready — waiting for commands from add-in");
+            postToHost({ type: "mapReady" });
 
-            // Send extent changes back to C# when user stops panning
-            view.watch("stationary", function (isStationary) {
-                if (!isStationary) return;
-                var ext = view.extent;
-                if (!ext) return;
-
-                // Project to WGS84 if needed
-                var wgs84Ext = ext;
-                if (ext.spatialReference && ext.spatialReference.wkid !== 4326) {
-                    // For the extent notification we send raw coords;
-                    // the C# side will handle projection if needed
+            // Send extent changes back to C# when the view becomes stationary.
+            // Coordinates are in the view's spatial reference (typically Web
+            // Mercator, wkid 102100) — the C# side projects to WGS84.
+            reactiveUtils.when(
+                () => view.stationary === true,
+                () => {
+                    const ext = view.extent;
+                    if (!ext) return;
+                    postToHost({
+                        type: "extentChanged",
+                        xmin: ext.xmin,
+                        ymin: ext.ymin,
+                        xmax: ext.xmax,
+                        ymax: ext.ymax,
+                        wkid: ext.spatialReference ? ext.spatialReference.wkid : 4326
+                    });
                 }
-
-                postToHost({
-                    type: "extentChanged",
-                    xmin: ext.xmin,
-                    ymin: ext.ymin,
-                    xmax: ext.xmax,
-                    ymax: ext.ymax,
-                    wkid: ext.spatialReference ? ext.spatialReference.wkid : 4326
-                });
-            });
+            );
 
             // ── C# → JS Message Handler ────────────────────────
             if (window.chrome && window.chrome.webview) {
-                window.chrome.webview.addEventListener("message", function (event) {
-                    var msg;
+                window.chrome.webview.addEventListener("message", (event) => {
+                    let msg;
                     try {
                         msg = typeof event.data === "string"
                             ? JSON.parse(event.data)
@@ -200,7 +268,7 @@
                             break;
 
                         case "addGeoJsonLayer":
-                            addGeoJsonPreview(msg.url, msg.name, msg.renderer);
+                            addGeoJsonPreview(msg.data, msg.name, msg.renderer);
                             break;
 
                         case "clearLayers":
@@ -212,12 +280,11 @@
                             break;
 
                         case "zoomTo":
-                            var zoomExtent = new Extent({
+                            view.goTo(new Extent({
                                 xmin: msg.xmin, ymin: msg.ymin,
                                 xmax: msg.xmax, ymax: msg.ymax,
                                 spatialReference: { wkid: msg.wkid || 4326 }
-                            });
-                            view.goTo(zoomExtent.expand(1.2));
+                            }).expand(1.2));
                             break;
 
                         default:
@@ -231,13 +298,13 @@
             function showExtentBox(xmin, ymin, xmax, ymax) {
                 extentLayer.removeAll();
 
-                var extent = new Extent({
+                const extent = new Extent({
                     xmin: xmin, ymin: ymin,
                     xmax: xmax, ymax: ymax,
                     spatialReference: { wkid: 4326 }
                 });
 
-                var graphic = new Graphic({
+                extentLayer.add(new Graphic({
                     geometry: extent,
                     symbol: {
                         type: "simple-fill",
@@ -248,9 +315,8 @@
                             style: "dash"
                         }
                     }
-                });
+                }));
 
-                extentLayer.add(graphic);
                 view.goTo(extent.expand(1.4));
 
                 setStatus("Extent: " +
@@ -258,100 +324,143 @@
                     " → " + xmax.toFixed(4) + ", " + ymax.toFixed(4));
             }
 
-            function addParquetPreview(url, name, rendererDef) {
+            async function addParquetPreview(url, name, rendererDef) {
                 showLoading("Loading " + name + "...");
                 setStatus("Loading " + name + " from Parquet...");
 
-                // Use require to dynamically load ParquetLayer
-                // (it may not be available in all SDK builds)
-                require(["esri/layers/ParquetLayer"], function (ParquetLayer) {
-                    var layerConfig = {
-                        title: name
-                    };
-
-                    // Configure the data source
-                    if (url.startsWith("http://") || url.startsWith("https://")) {
-                        layerConfig.url = url;
-                    }
-
-                    if (rendererDef) {
-                        layerConfig.renderer = rendererDef;
-                    }
-
-                    var layer = new ParquetLayer(layerConfig);
-
-                    layer.when(function () {
-                        hideLoading();
-                        setStatus(name + " loaded successfully");
-                        updateLayerCount();
-
-                        postToHost({
-                            type: "layerLoaded",
-                            name: name,
-                            featureCount: -1
-                        });
-                    }, function (error) {
-                        hideLoading();
-                        setStatus("Error loading " + name + ": " + error.message);
-                        console.error("ParquetLayer error:", error);
-
-                        postToHost({
-                            type: "layerError",
-                            name: name,
-                            error: error.message
-                        });
-                    });
-
-                    map.add(layer);
-                    parquetLayers.push(layer);
-                }, function (error) {
-                    // ParquetLayer module not available — fall back to GeoJSON if possible
+                let ParquetLayer;
+                try {
+                    // ParquetLayer is beta; import it lazily so its absence
+                    // doesn't break the rest of the preview.
+                    [ParquetLayer] = await $arcgis.import(["@arcgis/core/layers/ParquetLayer.js"]);
+                } catch (err) {
                     hideLoading();
-                    setStatus("ParquetLayer not available in this SDK version. Try GeoJSON preview.");
-                    console.warn("ParquetLayer not available:", error);
+                    setStatus("ParquetLayer not available in this SDK version.");
+                    console.warn("ParquetLayer not available:", err);
+                    postToHost({ type: "layerError", name: name, error: "ParquetLayer module unavailable" });
+                    return;
+                }
+
+                // ParquetLayer requires GZIP/Snappy/uncompressed files and
+                // takes a `urls` array (one or more files with the same schema).
+                const layerConfig = {
+                    title: name,
+                    urls: [url]
+                };
+                if (rendererDef) {
+                    layerConfig.renderer = rendererDef;
+                }
+
+                const layer = new ParquetLayer(layerConfig);
+
+                layer.when(() => {
+                    hideLoading();
+                    setStatus(name + " loaded successfully");
+                    updateLayerCount();
+                    postToHost({ type: "layerLoaded", name: name, featureCount: -1 });
+                }, (error) => {
+                    hideLoading();
+                    setStatus("Error loading " + name + ": " + error.message);
+                    console.error("ParquetLayer error:", error);
+                    postToHost({ type: "layerError", name: name, error: error.message });
                 });
+
+                map.add(layer);
+                previewLayers.push(layer);
             }
 
-            function addGeoJsonPreview(url, name, rendererDef) {
+            const blobUrls = [];
+
+            // Distinct color per sample layer; fills stay translucent so
+            // overlapping polygon samples don't paint over the basemap.
+            const samplePalette = [
+                [0, 150, 255], [255, 140, 0], [46, 204, 113], [231, 76, 60],
+                [155, 89, 182], [241, 196, 15], [26, 188, 156], [236, 64, 122],
+                [52, 152, 219], [149, 165, 166], [230, 126, 34], [106, 176, 76]
+            ];
+            let sampleColorIndex = 0;
+
+            function buildSampleRenderer(geometryType, rgb) {
+                let symbol;
+                if (geometryType === "polygon") {
+                    symbol = {
+                        type: "simple-fill",
+                        color: [rgb[0], rgb[1], rgb[2], 0.08],
+                        outline: { color: [rgb[0], rgb[1], rgb[2], 0.9], width: 1 }
+                    };
+                } else if (geometryType === "polyline") {
+                    symbol = {
+                        type: "simple-line",
+                        color: [rgb[0], rgb[1], rgb[2], 0.9],
+                        width: 1.5
+                    };
+                } else {
+                    symbol = {
+                        type: "simple-marker",
+                        size: 4,
+                        color: [rgb[0], rgb[1], rgb[2], 0.7],
+                        outline: { color: [255, 255, 255, 0.4], width: 0.5 }
+                    };
+                }
+                return { type: "simple", symbol: symbol };
+            }
+
+            async function addGeoJsonPreview(geojsonText, name, rendererDef) {
+                if (!geojsonText) {
+                    setStatus("No data received for " + name);
+                    postToHost({ type: "layerError", name: name, error: "empty GeoJSON payload" });
+                    return;
+                }
                 showLoading("Loading " + name + "...");
 
-                require(["esri/layers/GeoJSONLayer"], function (GeoJSONLayer) {
-                    var layerConfig = {
-                        url: url,
-                        title: name
-                    };
+                const [GeoJSONLayer] = await $arcgis.import(["@arcgis/core/layers/GeoJSONLayer.js"]);
 
-                    if (rendererDef) {
-                        layerConfig.renderer = rendererDef;
+                // Blob URL instead of a virtual-host URL: the SDK fetches
+                // GeoJSON from a web worker, where WebView2 virtual-host
+                // mappings are unreliable ("Failed to fetch").
+                const blobUrl = URL.createObjectURL(
+                    new Blob([geojsonText], { type: "application/json" }));
+                blobUrls.push(blobUrl);
+
+                const layerConfig = {
+                    url: blobUrl,
+                    title: name
+                };
+                if (rendererDef) {
+                    layerConfig.renderer = rendererDef;
+                }
+
+                const layer = new GeoJSONLayer(layerConfig);
+                const rgb = samplePalette[sampleColorIndex++ % samplePalette.length];
+
+                layer.when(() => {
+                    if (!rendererDef) {
+                        layer.renderer = buildSampleRenderer(layer.geometryType, rgb);
                     }
-
-                    var layer = new GeoJSONLayer(layerConfig);
-
-                    layer.when(function () {
-                        hideLoading();
-                        setStatus(name + " loaded successfully");
-                        updateLayerCount();
-
-                        postToHost({
-                            type: "layerLoaded",
-                            name: name,
-                            featureCount: -1
-                        });
-                    }, function (error) {
-                        hideLoading();
-                        setStatus("Error loading " + name + ": " + error.message);
-                    });
-
-                    map.add(layer);
-                    parquetLayers.push(layer);
+                    // Keep polygon fills under lines/points so a large polygon
+                    // sample doesn't hide everything else (extentLayer is 0).
+                    if (layer.geometryType === "polygon") {
+                        map.layers.reorder(layer, 1);
+                    }
+                    hideLoading();
+                    setStatus(name + " loaded successfully");
+                    updateLayerCount();
+                    postToHost({ type: "layerLoaded", name: name, featureCount: -1 });
+                }, (error) => {
+                    hideLoading();
+                    setStatus("Error loading " + name + ": " + error.message);
+                    postToHost({ type: "layerError", name: name, error: error.message });
                 });
+
+                map.add(layer);
+                previewLayers.push(layer);
             }
 
             function clearAllPreviewLayers() {
-                parquetLayers.forEach(function (layer) {
-                    map.remove(layer);
-                });
-                parquetLayers.length = 0;
+                previewLayers.forEach((layer) => map.remove(layer));
+                previewLayers.length = 0;
+                blobUrls.forEach((u) => URL.revokeObjectURL(u));
+                blobUrls.length = 0;
                 extentLayer.removeAll();
                 setStatus("Preview cleared");
                 updateLayerCount();
@@ -359,13 +468,9 @@
 
             // ── Helpers ────────────────────────────────────────
 
-            function setStatus(text) {
-                statusText.textContent = text;
-            }
-
             function updateLayerCount() {
-                layerCountEl.textContent = parquetLayers.length > 0
-                    ? parquetLayers.length + " layer" + (parquetLayers.length !== 1 ? "s" : "")
+                layerCountEl.textContent = previewLayers.length > 0
+                    ? previewLayers.length + " layer" + (previewLayers.length !== 1 ? "s" : "")
                     : "";
             }
 
@@ -381,17 +486,7 @@
                     loadingOverlay.classList.remove("active");
                 }
             }
-
-            function postToHost(msg) {
-                if (window.chrome && window.chrome.webview) {
-                    window.chrome.webview.postMessage(JSON.stringify(msg));
-                }
-            }
-
-            function notifyReady() {
-                postToHost({ type: "mapReady" });
-            }
-        });
+        }
     </script>
 </body>
 </html>

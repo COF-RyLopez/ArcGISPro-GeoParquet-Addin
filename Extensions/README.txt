@@ -1,43 +1,44 @@
 DuckDB Extensions for GeoParquet Add-in
 ============================================
 
-This folder MUST contain the following DuckDB extension files:
-1. spatial.duckdb_extension - For spatial functions and GeoParquet support
-2. httpfs.duckdb_extension - For HTTP/Cloud storage access
+The add-in needs two DuckDB extensions:
+1. spatial.duckdb_extension  - spatial functions and GeoParquet support
+2. httpfs.duckdb_extension   - HTTP / S3 cloud storage access
 
-How to obtain these files (CRITICAL):
--------------------------------------
-The extensions MUST match version 1.2.0 of DuckDB to work with this add-in.
+Normally DuckDB downloads these at runtime into %USERPROFILE%\.duckdb.
+On locked-down machines an Application Control (WDAC/AppLocker) policy can
+block DLLs loaded from the user profile ("An Application Control policy has
+blocked this file"). Bundling the extensions in this folder fixes that: they
+then load from the add-in's own install folder and no runtime download is
+needed.
 
-OPTION 1: Download pre-built extensions (RECOMMENDED)
-----------------------------------------------------
-1. Go to: https://github.com/duckdb/duckdb/releases/tag/v1.2.0
-2. Download the Windows x64 version: duckdb_cli-windows-amd64.zip
-3. Extract the zip file
-4. Run these commands in a terminal:
-   ```
-   ./duckdb.exe -c "INSTALL spatial; INSTALL httpfs;"
-   ```
-5. The extensions will be created in a .duckdb/extensions folder
-6. Copy these files to this Extensions folder:
-   - .duckdb/extensions/v1.2.0/windows_amd64/spatial.duckdb_extension
-   - .duckdb/extensions/v1.2.0/windows_amd64/httpfs.duckdb_extension
+The extension version MUST match the DuckDB.NET.Data.Full package version in
+DuckDBGeoparquet.csproj (currently 1.5.3).
 
-OPTION 2: Direct download links (ALTERNATIVE)
----------------------------------------------
-Direct links to extension files for v1.2.0:
-- spatial: https://github.com/duckdb/duckdb-spatial
-- httpfs: https://github.com/duckdb/duckdb-httpfs
+CI does this automatically
+---------------------------
+The GitHub Actions build downloads both extensions into this folder before
+compiling, so release artifacts already contain them. You only need the steps
+below for local builds.
 
-Download these files and rename them to:
-- spatial.duckdb_extension
-- httpfs.duckdb_extension
+OPTION 1: Copy from your local DuckDB cache (fastest)
+-----------------------------------------------------
+If the add-in ever ran on your machine, DuckDB already downloaded the files:
+  %USERPROFILE%\.duckdb\extensions\v1.5.3\windows_amd64\spatial.duckdb_extension
+  %USERPROFILE%\.duckdb\extensions\v1.5.3\windows_amd64\httpfs.duckdb_extension
+Copy both files directly into this Extensions folder (no subfolders).
 
-CRITICAL:
----------
-1. The extensions MUST match version 1.2.0 of DuckDB
-2. The files MUST be named exactly "spatial.duckdb_extension" and "httpfs.duckdb_extension"
-3. The files MUST be directly in this Extensions folder
-4. These extensions will be automatically copied to the output directory during build
-   and loaded from that location at runtime, eliminating the need for internet access
-   or admin privileges when running the add-in 
+OPTION 2: Direct download
+-------------------------
+  https://extensions.duckdb.org/v1.5.3/windows_amd64/spatial.duckdb_extension.gz
+  https://extensions.duckdb.org/v1.5.3/windows_amd64/httpfs.duckdb_extension.gz
+Un-gzip each file and place the resulting .duckdb_extension files directly in
+this folder.
+
+CRITICAL
+--------
+1. Version must match the DuckDB.NET package (1.5.3 today; update on upgrade)
+2. Names must be exactly spatial.duckdb_extension and httpfs.duckdb_extension
+3. Files go DIRECTLY in this Extensions folder (no version/platform subfolders)
+4. The csproj packages Extensions\*.duckdb_extension into the .esriAddInX
+   automatically; the files are gitignored, so they never enter source control

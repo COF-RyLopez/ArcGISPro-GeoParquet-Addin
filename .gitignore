@@ -371,3 +371,10 @@ Extensions/spatial.duckdb*
 
 # Cursor IDE
 .cursor/
+
+# Local dev scratch scripts (not part of the add-in)
+scratch/
+split_properties.py
+
+# Bundled DuckDB extensions (large binaries; downloaded by CI or copied locally)
+Extensions/*.duckdb_extension

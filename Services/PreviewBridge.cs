@@ -40,6 +40,13 @@ namespace DuckDBGeoparquet.Services
         public event Action MapReady;
 
         /// <summary>
+        /// Raised when the preview page reports it cannot run
+        /// (e.g., the ArcGIS JS SDK failed to load from the CDN).
+        /// Parameter: errorMessage.
+        /// </summary>
+        public event Action<string> PreviewUnavailable;
+
+        /// <summary>
         /// Whether the preview map has reported ready.
         /// </summary>
         public bool IsMapReady { get; private set; }
@@ -88,13 +95,15 @@ namespace DuckDBGeoparquet.Services
         }
 
         /// <summary>
-        /// Adds a GeoJSON file as a GeoJSONLayer on the preview map.
-        /// Used as a fallback when ParquetLayer is unavailable.
+        /// Adds inline GeoJSON as a GeoJSONLayer on the preview map. The text
+        /// is sent through the message bridge and turned into a blob URL on
+        /// the JS side — WebView2 virtual-host fetches are unreliable from the
+        /// SDK's web workers, so no URL fetch is involved.
         /// </summary>
-        public void AddGeoJsonLayer(string fileUrl, string displayName, object renderer = null)
+        public void AddGeoJsonLayer(string displayName, string geoJsonText, object renderer = null)
         {
-            _logAction?.Invoke($"Preview: adding GeoJSONLayer '{displayName}' from {fileUrl}");
-            PostMessage(new { type = "addGeoJsonLayer", url = fileUrl, name = displayName, renderer });
+            _logAction?.Invoke($"Preview: adding GeoJSON layer '{displayName}' ({(geoJsonText?.Length ?? 0):N0} chars)");
+            PostMessage(new { type = "addGeoJsonLayer", name = displayName, data = geoJsonText, renderer });
         }
 
         /// <summary>
@@ -179,12 +188,22 @@ namespace DuckDBGeoparquet.Services
 
                     case "extentChanged":
                         {
-                            double xmin = root.GetProperty("xmin").GetDouble();
-                            double ymin = root.GetProperty("ymin").GetDouble();
-                            double xmax = root.GetProperty("xmax").GetDouble();
-                            double ymax = root.GetProperty("ymax").GetDouble();
-                            int wkid = root.TryGetProperty("wkid", out var w) ? w.GetInt32() : 4326;
-                            ExtentChanged?.Invoke(xmin, ymin, xmax, ymax, wkid);
+                            if (root.TryGetProperty("xmin", out var x1) &&
+                                root.TryGetProperty("ymin", out var y1) &&
+                                root.TryGetProperty("xmax", out var x2) &&
+                                root.TryGetProperty("ymax", out var y2))
+                            {
+                                int wkid = root.TryGetProperty("wkid", out var w) ? w.GetInt32() : 4326;
+                                ExtentChanged?.Invoke(x1.GetDouble(), y1.GetDouble(), x2.GetDouble(), y2.GetDouble(), wkid);
+                            }
+                        }
+                        break;
+
+                    case "previewUnavailable":
+                        {
+                            string error = root.TryGetProperty("error", out var e) ? e.GetString() : "unknown error";
+                            _logAction?.Invoke($"Preview: unavailable — {error}");
+                            PreviewUnavailable?.Invoke(error);
                         }
                         break;
 
@@ -193,25 +212,26 @@ namespace DuckDBGeoparquet.Services
                         break;
                 }
             }
-            catch (JsonException ex)
+            catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
             {
-                _logAction?.Invoke($"Preview: JSON parse error: {ex.Message}");
-                System.Diagnostics.Debug.WriteLine($"PreviewBridge JSON error: {ex.Message}");
+                _logAction?.Invoke($"Preview: malformed message ignored: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"PreviewBridge message error: {ex.Message}");
             }
         }
 
         // ── Internal ───────────────────────────────────────────────
 
+        private static readonly JsonSerializerOptions _serializerOptions = new()
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        };
+
         private void PostMessage(object payload)
         {
             try
             {
-                string json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                    DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-                });
-                _postMessageAction(json);
+                _postMessageAction(JsonSerializer.Serialize(payload, _serializerOptions));
             }
             catch (Exception ex)
             {

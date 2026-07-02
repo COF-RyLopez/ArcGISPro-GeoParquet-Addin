@@ -268,6 +268,7 @@ namespace DuckDBGeoparquet.Views
             ClearMapStyleCommand = new RelayCommand(() => SelectedCartographicProfile = null, () => SelectedCartographicProfile != null);
             ApplyMapStyleCommand = new RelayCommand(async () => await ApplyMapStyleToExistingLayersAsync(), () => SelectedCartographicProfile != null);
             RepairMapSymbologyCommand = new RelayCommand(async () => await RepairMapSymbologyAsync());
+            InitializePreviewCommands();
 
             CustomExtentTool.ExtentCreatedStatic += OnExtentCreated;
 
@@ -396,24 +397,23 @@ namespace DuckDBGeoparquet.Views
             AddToLog($"DataOutputPath updated to: {DataOutputPath}");
         }
 
+        // Shared client for release checks: system proxy, default credentials, short timeout.
+        private static readonly HttpClient _releaseHttpClient = new(new HttpClientHandler
+        {
+            UseProxy = true,
+            Proxy = WebRequest.DefaultWebProxy,
+            DefaultProxyCredentials = CredentialCache.DefaultCredentials
+        })
+        {
+            Timeout = TimeSpan.FromSeconds(3)
+        };
+
         private async Task RefreshLatestReleaseAsync()
         {
             try
             {
-                // Use system proxy and default credentials; short timeout
-                var handler = new HttpClientHandler
-                {
-                    UseProxy = true,
-                    Proxy = WebRequest.DefaultWebProxy,
-                    DefaultProxyCredentials = CredentialCache.DefaultCredentials
-                };
-                using var client = new HttpClient(handler)
-                {
-                    Timeout = TimeSpan.FromSeconds(3)
-                };
-
                 var url = Environment.GetEnvironmentVariable("OVERTURE_RELEASE_URL") ?? RELEASE_URL;
-                var response = await client.GetStringAsync(url);
+                var response = await _releaseHttpClient.GetStringAsync(url);
                 var releaseInfo = JsonSerializer.Deserialize<ReleaseInfo>(response, _jsonOptions);
                 var latest = releaseInfo?.Latest;
                 if (!string.IsNullOrWhiteSpace(latest) && latest != LatestRelease)
@@ -449,30 +449,6 @@ namespace DuckDBGeoparquet.Views
         }
 
 
-
-        private async Task<string> GetLatestRelease()
-        {
-            try
-            {
-                using var client = new HttpClient();
-                var response = await client.GetStringAsync(RELEASE_URL);
-                System.Diagnostics.Debug.WriteLine($"Release API Response: {response}");
-                AddToLog("Received release information from Overture Maps API");
-
-                var releaseInfo = JsonSerializer.Deserialize<ReleaseInfo>(response, _jsonOptions)
-                    ?? throw new Exception("Failed to deserialize release info");
-
-                System.Diagnostics.Debug.WriteLine($"Deserialized Latest Release: {releaseInfo.Latest}");
-                AddToLog($"Latest release available: {releaseInfo.Latest}");
-                return releaseInfo.Latest;
-            }
-            catch (Exception ex)
-            {
-                AddToLog($"Failed to get latest release: {ex.Message}");
-                System.Diagnostics.Debug.WriteLine($"Error getting latest release: {ex}");
-                throw;
-            }
-        }
 
         /// <summary>
         /// Provides periodic heartbeat feedback during long-running operations
@@ -1056,9 +1032,7 @@ namespace DuckDBGeoparquet.Views
                 var cancellationToken = _cts.Token;
 
                 // Switch to status tab
-                SelectedTabIndex = 1;
-
-
+                SelectedTabIndex = (int)WizardTab.Status;
 
                 StatusText = $"Loading {selectedLeafItems.Count} selected data types...";
                 AddToLog($"Starting to load {selectedLeafItems.Count} data type(s) from release {LatestRelease}");
@@ -1311,7 +1285,7 @@ namespace DuckDBGeoparquet.Views
                 var cancellationToken = _cts.Token;
 
                 // Switch to status tab
-                SelectedTabIndex = 1; // Status tab is now index 1
+                SelectedTabIndex = (int)WizardTab.Status;
 
                 StatusText = "Creating Multifile Feature Connection...";
                 AddToLog("Setting up Multifile Feature Connection for data");
@@ -1465,34 +1439,8 @@ namespace DuckDBGeoparquet.Views
                 return;
 
             pane.ResetState();
-            pane.SelectedTabIndex = 0;
+            pane.SelectedTabIndex = (int)WizardTab.SelectData;
             pane.Activate();
-        }
-
-        public bool IsThemeSelected(string theme)
-        {
-            var themeItem = Themes.FirstOrDefault(t => t.DisplayName == theme);
-            return themeItem != null && themeItem.IsSelected == true; // Corrected: bool? to bool comparison
-        }
-
-        public void ToggleThemeSelection(string theme)
-        {
-            var themeItem = Themes.FirstOrDefault(t => t.DisplayName == theme);
-            if (themeItem != null)
-            {
-                themeItem.IsSelected = !themeItem.IsSelected;
-                // The OnThemeSelectionChanged event handler will update SelectedThemes
-            }
-        }
-
-        // Add a method to check the selected status in the ViewModel
-        private void CheckInitialThemeSelection()
-        {
-            // Update the preview based on the first selected theme (if any)
-            if (Themes.Any())
-            {
-                SelectedTheme = Themes[0].DisplayName;
-            }
         }
 
         // Cleanup method that will be called when the add-in is unloaded
@@ -1520,47 +1468,6 @@ namespace DuckDBGeoparquet.Views
             CleanupResources();
         }
 
-        // This event handler is for the original flat list of themes. 
-        // It's superseded by OnLeafThemeSelectionChanged for hierarchical themes.
-        // Consider removing or refactoring if only hierarchical selection is used.
-        private void OnThemeSelectionChanged(object sender, EventArgs e)
-        {
-            // Update the SelectedThemes list based on the currently selected theme items
-            // _selectedThemes.Clear(); // No longer used
-            // foreach (var themeItem in Themes)
-            // {
-            //     if (themeItem.IsSelected)
-            //     {
-            //         _selectedThemes.Add(themeItem.DisplayName); // No longer used
-            //     }
-            // }
-
-            // NotifyPropertyChanged(nameof(SelectedThemes)); // No longer used
-            UpdateThemePreview();
-            (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
-
-            // If a theme was selected, set it as the current preview theme
-            if (sender is SelectableThemeItem selectedItem && selectedItem.IsSelected == true) // Corrected: bool? to bool comparison
-            {
-                SelectedTheme = selectedItem.DisplayName; // This might still be useful for a general preview
-                                                          // but SelectedItemForPreview is now primary for TreeView focus
-            }
-            // else if (_selectedThemes.Count > 0) // No longer used
-            // {
-            //     // If we just deselected an item but others are still selected, show the first selected theme
-            //     SelectedTheme = _selectedThemes[0]; // No longer used
-            // }
-            else if (GetSelectedLeafItems().Count > 0) // CA1860 .Any() to .Count > 0 // If deselected, but other leaves are selected
-            {
-                SelectedTheme = GetSelectedLeafItems().First().ParentThemeForS3; // Or another suitable property
-            }
-            else
-            {
-                // If no themes are selected, clear the selection
-                SelectedTheme = null;
-            }
-        }
-
         private void ResetState()
         {
             // Clear theme selections
@@ -1583,7 +1490,7 @@ namespace DuckDBGeoparquet.Views
 
             // Reset other properties
             SelectedTheme = null;
-            SelectedTabIndex = 0; // Switch back to the first tab
+            SelectedTabIndex = (int)WizardTab.SelectData;
             _isSelectAllChecked = false; // Explicitly reset, though UpdateIsSelectAllCheckedStatus will also do it.
             NotifyPropertyChanged(nameof(IsSelectAllChecked));
 
@@ -1639,7 +1546,7 @@ namespace DuckDBGeoparquet.Views
 
         private void ShowCreateMfcTab()
         {
-            SelectedTabIndex = 2;
+            SelectedTabIndex = (int)WizardTab.CreateMfc;
             StatusText = "Ready to create Multifile Feature Connection";
             AddToLog("Create MFC tab activated");
         }
