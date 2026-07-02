@@ -258,38 +258,53 @@ namespace DuckDBGeoparquet.Services
                 placeBuilt = true;
             }
 
+            // Paths contain spaces (e.g. 'OneDrive - County of Fresno') and
+            // must be single-quoted or the value-table parser splits them.
+            // The tool's positional parameters are (locators, field_map, output).
             var compositeResult = await RunGpToolAsync(
                 "geocoding.CreateCompositeAddressLocator",
-                [$"{addressLocatorPath} Address;{placeLocatorPath} Place", compositeLocatorPath]);
+                [$"'{addressLocatorPath}' Address;'{placeLocatorPath}' Place", "", compositeLocatorPath]);
 
-            if (compositeResult.IsFailed)
-            {
-                return Fail("Failed to create composite locator from address/place locators.", compositeResult);
-            }
+            bool compositeBuilt = !compositeResult.IsFailed;
+            string compositeNote = compositeBuilt
+                ? string.Empty
+                : $" Composite creation failed ({GpMessages(compositeResult)}); the address and place locators are registered individually instead.";
 
             var metadata = new LocatorBuildMetadata
             {
                 ReleaseFolderName = latestReleaseDir.Name,
-                LocatorPath = compositeLocatorPath,
-                CompositeLocatorPath = compositeLocatorPath,
+                LocatorPath = compositeBuilt ? compositeLocatorPath : addressLocatorPath,
+                CompositeLocatorPath = compositeBuilt ? compositeLocatorPath : null,
                 LastBuiltUtc = DateTime.UtcNow
             };
 
             string metadataPath = GetMetadataPath();
             File.WriteAllText(metadataPath, JsonSerializer.Serialize(metadata, new JsonSerializerOptions { WriteIndented = true }));
 
-            // Register the composite locator with the project so it becomes a
-            // locator provider — LocatorManager.GeocodeAsync only searches
-            // registered providers.
+            // Register the locator(s) with the project so they become locator
+            // providers — LocatorManager.GeocodeAsync only searches
+            // registered providers. If the composite exists, one registration
+            // covers both; otherwise register address and place separately.
             string registrationNote = string.Empty;
             try
             {
-                bool added = await QueuedTask.Run(() =>
+                string[] locatorsToRegister = compositeBuilt
+                    ? [compositeLocatorPath]
+                    : [addressLocatorPath, placeLocatorPath];
+                int registered = await QueuedTask.Run(() =>
                 {
-                    var locatorItem = ItemFactory.Instance.Create(compositeLocatorPath) as IProjectItem;
-                    return locatorItem != null && Project.Current.AddItem(locatorItem);
+                    int count = 0;
+                    foreach (var path in locatorsToRegister)
+                    {
+                        var locatorItem = ItemFactory.Instance.Create(path) as IProjectItem;
+                        if (locatorItem != null && Project.Current.AddItem(locatorItem))
+                        {
+                            count++;
+                        }
+                    }
+                    return count;
                 });
-                registrationNote = added ? " Locator registered with the project." : string.Empty;
+                registrationNote = registered > 0 ? $" {registered} locator(s) registered with the project." : string.Empty;
             }
             catch (Exception ex)
             {
@@ -299,8 +314,8 @@ namespace DuckDBGeoparquet.Services
             return new LocatorBuildResult
             {
                 Succeeded = true,
-                LocatorPath = compositeLocatorPath,
-                Message = $"Hybrid locator built: {Path.GetFileName(compositeLocatorPath)}{registrationNote}" +
+                LocatorPath = metadata.LocatorPath,
+                Message = $"Hybrid locator built: {Path.GetFileName(metadata.LocatorPath)}{registrationNote}{compositeNote}" +
                     (string.IsNullOrWhiteSpace(addressBuildNotes) ? string.Empty : $" {addressBuildNotes}") +
                     (string.IsNullOrWhiteSpace(placeBuildNotes) ? string.Empty : $" {placeBuildNotes}")
             };
