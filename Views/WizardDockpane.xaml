@@ -6,6 +6,7 @@
              xmlns:extensions="clr-namespace:ArcGIS.Desktop.Extensions;assembly=ArcGIS.Desktop.Extensions"
              xmlns:ui="clr-namespace:ArcGIS.Desktop.Framework.Controls;assembly=ArcGIS.Desktop.Framework"
              xmlns:local="clr-namespace:DuckDBGeoparquet.Views"
+             xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
              xmlns:i="http://schemas.microsoft.com/xaml/behaviors"
              mc:Ignorable="d" 
              d:DesignHeight="600" d:DesignWidth="400"
@@ -338,7 +339,36 @@
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
-            <!-- Status Tab (index 1) -->
+            <!-- Preview Tab (WizardTab.Preview) -->
+            <TabItem Header="Preview">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Preview toolbar -->
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="8,6">
+                        <Button Content="Show Extent" Command="{Binding PreviewShowExtentCommand}"
+                                Style="{DynamicResource Esri_Button}" Margin="0,0,4,0"
+                                ToolTip="Draw the configured download extent on the preview map"/>
+                        <Button Content="Preview Data" Command="{Binding PreviewLoadDataCommand}"
+                                Style="{DynamicResource Esri_Button}" Margin="0,0,4,0"
+                                ToolTip="Render downloaded GeoParquet files on the preview map (SNAPPY/GZIP exports only)"/>
+                        <Button Content="Clear" Command="{Binding PreviewClearCommand}"
+                                Style="{DynamicResource Esri_Button}" Margin="0,0,12,0"/>
+                        <Button Content="Use Preview Extent →" Command="{Binding AdoptPreviewExtentCommand}"
+                                Style="{DynamicResource Esri_Button}"
+                                ToolTip="Adopt the current preview map extent as the custom download extent"/>
+                    </StackPanel>
+
+                    <!-- Embedded ArcGIS JS map -->
+                    <wv2:WebView2 Grid.Row="1"
+                                  x:Name="PreviewWebView"
+                                  Loaded="PreviewWebView_Loaded"/>
+                </Grid>
+            </TabItem>
+            <!-- Status Tab (WizardTab.Status) -->
             <TabItem Header="Status">
                 <StackPanel Margin="16,12,16,12">
                     <TextBlock Text="Operation Progress" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,4"/>
