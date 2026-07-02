@@ -33,6 +33,12 @@
 		<Content Include="Views\PreviewMap\preview.html">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</Content>
+		<!-- Bundled DuckDB extensions (not in source control; see Extensions/README.txt).
+		     When present they ship inside the .esriAddInX so the add-in works offline
+		     and on machines whose Application Control policy blocks runtime downloads. -->
+		<Content Include="Extensions\*.duckdb_extension">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
 	</ItemGroup>
 	<ItemGroup>
 		<None Include="Properties\launchSettings.json" />

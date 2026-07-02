@@ -44,6 +44,28 @@ jobs:
         $cleanVersion = $version -replace '-dev$', ''
         pwsh ./.github/workflows/update-version.ps1 -Version $cleanVersion -ConfigPath "Config.daml"
 
+    - name: Bundle DuckDB extensions (spatial, httpfs)
+      shell: powershell
+      run: |
+        # Must match the DuckDB.NET.Data.Full package version in the csproj.
+        $duckdbVersion = "1.5.3"
+        $platform = "windows_amd64"
+        New-Item -Path "Extensions" -ItemType Directory -Force | Out-Null
+        foreach ($ext in @("spatial", "httpfs")) {
+          $url = "https://extensions.duckdb.org/v$duckdbVersion/$platform/$ext.duckdb_extension.gz"
+          $gz = "Extensions\$ext.duckdb_extension.gz"
+          $out = "Extensions\$ext.duckdb_extension"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $gz
+          $in = [System.IO.File]::OpenRead($gz)
+          $gzip = New-Object System.IO.Compression.GzipStream($in, [System.IO.Compression.CompressionMode]::Decompress)
+          $of = [System.IO.File]::Create($out)
+          $gzip.CopyTo($of)
+          $of.Close(); $gzip.Close(); $in.Close()
+          Remove-Item $gz
+          Write-Host ("Bundled {0} ({1:N1} MB)" -f $ext, ((Get-Item $out).Length / 1MB))
+        }
+
     - name: Restore NuGet packages
       run: nuget restore DuckDBGeoparquet.sln
       

@@ -153,67 +153,63 @@ namespace DuckDBGeoparquet.Services
 
                 try
                 {
-                    // First try using direct INSTALL command - might work if user has admin rights
-                    command.CommandText = @"
-                        INSTALL spatial;
-                        INSTALL httpfs;
-                        LOAD spatial;
-                        LOAD httpfs;
-                    ";
+                    // Prefer bundled extensions when present. They load from the
+                    // add-in's own (trusted) install folder, so they work offline
+                    // and on machines where Application Control policies block
+                    // DLLs that DuckDB downloads to %USERPROFILE%\.duckdb at
+                    // runtime. LOAD takes the explicit file path — setting
+                    // extension_directory does not work here because DuckDB then
+                    // expects a v<version>/<platform> subfolder structure.
+                    string spatialBundled = Path.Combine(extensionsPath, "spatial.duckdb_extension");
+                    string httpfsBundled = Path.Combine(extensionsPath, "httpfs.duckdb_extension");
 
-                    bool installSuccess = false;
-                    int maxRetries = 3;
-                    for (int i = 0; i < maxRetries; i++)
+                    if (File.Exists(spatialBundled) && File.Exists(httpfsBundled))
                     {
-                        try
-                        {
-                            await command.ExecuteNonQueryAsync(cancellationToken);
-                            System.Diagnostics.Debug.WriteLine($"Successfully installed extensions directly on attempt {i + 1}");
-                            installSuccess = true;
-                            break; // Success, exit retry loop
-                        }
-                        catch (Exception ex)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"Direct installation attempt {i + 1} failed: {ex.Message}");
-                            if (i < maxRetries - 1)
-                            {
-                                await Task.Delay(2000, cancellationToken); // Wait 2 seconds before retrying
-                            }
-                            else
-                            {
-                                System.Diagnostics.Debug.WriteLine("All direct installation attempts failed. Trying bundled extensions...");
-                            }
-                        }
+                        command.CommandText = $@"
+                            LOAD '{spatialBundled.Replace('\\', '/')}';
+                            LOAD '{httpfsBundled.Replace('\\', '/')}';
+                        ";
+                        await command.ExecuteNonQueryAsync(cancellationToken);
+                        System.Diagnostics.Debug.WriteLine($"Loaded bundled DuckDB extensions from {extensionsPath}");
                     }
-
-                    if (!installSuccess)
+                    else
                     {
-                        // Try loading from our bundled extensions path
-                        if (Directory.Exists(extensionsPath))
-                        {
-                            var extensionFiles = Directory.GetFiles(extensionsPath, "*.duckdb_extension");
-                            System.Diagnostics.Debug.WriteLine($"Found {extensionFiles.Length} extension files in {extensionsPath}");
+                        System.Diagnostics.Debug.WriteLine($"No bundled extensions at {extensionsPath}; trying network INSTALL...");
 
-                            if (extensionFiles.Length > 0)
+                        command.CommandText = @"
+                            INSTALL spatial;
+                            INSTALL httpfs;
+                            LOAD spatial;
+                            LOAD httpfs;
+                        ";
+
+                        bool installSuccess = false;
+                        int maxRetries = 3;
+                        for (int i = 0; i < maxRetries; i++)
+                        {
+                            try
                             {
-                                // Make sure paths use forward slashes for DuckDB
-                                string normalizedPath = extensionsPath.Replace('\\', '/');
-                                command.CommandText = $@"
-                                    SET extension_directory='{normalizedPath}';
-                                    LOAD spatial;
-                                    LOAD httpfs;
-                                ";
                                 await command.ExecuteNonQueryAsync(cancellationToken);
-                                System.Diagnostics.Debug.WriteLine("Successfully loaded extensions from bundled directory");
+                                System.Diagnostics.Debug.WriteLine($"Successfully installed extensions directly on attempt {i + 1}");
+                                installSuccess = true;
+                                break; // Success, exit retry loop
                             }
-                            else
+                            catch (Exception ex)
                             {
-                                throw new Exception($"No extension files found in {extensionsPath}. Please follow the instructions in Extensions/README.txt to obtain the required DuckDB extensions.");
+                                System.Diagnostics.Debug.WriteLine($"Direct installation attempt {i + 1} failed: {ex.Message}");
+                                if (i < maxRetries - 1)
+                                {
+                                    await Task.Delay(2000, cancellationToken); // Wait 2 seconds before retrying
+                                }
                             }
                         }
-                        else
+
+                        if (!installSuccess)
                         {
-                            throw new Exception($"Extensions directory not found at {extensionsPath}. Please create this directory and add the required DuckDB extensions.");
+                            throw new Exception(
+                                $"Runtime installation of DuckDB extensions failed and no bundled extensions were found at {extensionsPath}. " +
+                                "If the error mentions an Application Control policy, your organization blocks DLLs downloaded to the user profile — " +
+                                "bundle the extensions with the add-in instead (see Extensions/README.txt).");
                         }
                     }
                 }
@@ -223,10 +219,9 @@ namespace DuckDBGeoparquet.Services
                     throw new Exception(
                         $"Failed to load DuckDB extensions: {ex.Message}\n\n" +
                         "To resolve this issue:\n" +
-                        "1. Make sure the add-in's Extensions folder contains spatial.duckdb_extension and httpfs.duckdb_extension\n" +
-                        "2. The extensions must match your DuckDB version\n" +
-                        "3. Download extensions from https://github.com/duckdb/duckdb/releases\n" +
-                        $"4. Current extension search path: {extensionsPath}", ex);
+                        "1. Place spatial.duckdb_extension and httpfs.duckdb_extension in the add-in's Extensions folder\n" +
+                        "2. The extensions must match the DuckDB version used by the add-in (see Extensions/README.txt)\n" +
+                        $"3. Current extension search path: {extensionsPath}", ex);
                 }
 
                 // Extensions loaded successfully — mark as initialized so a retry
