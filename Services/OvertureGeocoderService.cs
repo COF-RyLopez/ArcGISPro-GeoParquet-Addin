@@ -1,5 +1,6 @@
 using ArcGIS.Core.Geometry;
 using ArcGIS.Desktop.Core;
+using ArcGIS.Desktop.Mapping;
 using DuckDBGeoparquet.Models;
 using static DuckDBGeoparquet.Models.AddinConstants;
 using System;
@@ -46,6 +47,16 @@ namespace DuckDBGeoparquet.Services
                 return [];
             }
 
+            if (PreferLocatorSearch && IsLocatorReady())
+            {
+                var locatorCandidates = await TryLocatorSearchAsync(query, roiExtent, maxResults);
+                if (locatorCandidates.Count > 0)
+                {
+                    return locatorCandidates;
+                }
+                // No locator hits — fall through to the local DuckDB search.
+            }
+
             string addressParquetGlob = ResolveParquetGlobPath("address");
             string placeParquetGlob = ResolveParquetGlobPath("place");
             if (string.IsNullOrWhiteSpace(addressParquetGlob) && string.IsNullOrWhiteSpace(placeParquetGlob))
@@ -88,6 +99,74 @@ namespace DuckDBGeoparquet.Services
         public async Task<LocatorBuildResult> BuildLocatorAsync(bool forceRebuild)
         {
             return await _locatorBuildService.BuildOrRebuildLocatorAsync(forceRebuild);
+        }
+
+        /// <summary>
+        /// Searches the map's registered locator providers (including the
+        /// built hybrid locator) via LocatorManager.GeocodeAsync. Returns an
+        /// empty list on any failure so callers fall back to the local
+        /// DuckDB search.
+        /// </summary>
+        private static async Task<List<GeocodeCandidate>> TryLocatorSearchAsync(string query, Envelope roiExtent, int maxResults)
+        {
+            var candidates = new List<GeocodeCandidate>();
+            try
+            {
+                var mapView = MapView.Active;
+                if (mapView == null)
+                {
+                    return candidates;
+                }
+
+                var results = await mapView.LocatorManager.GeocodeAsync(query.Trim(), false, false);
+                if (results == null)
+                {
+                    return candidates;
+                }
+
+                foreach (var result in results)
+                {
+                    var location = result.DisplayLocation;
+                    if (location == null)
+                    {
+                        continue;
+                    }
+
+                    MapPoint wgsPoint = location;
+                    if (location.SpatialReference != null && location.SpatialReference.Wkid != 4326)
+                    {
+                        wgsPoint = GeometryEngine.Instance.Project(location, SpatialReferences.WGS84) as MapPoint ?? location;
+                    }
+
+                    if (roiExtent != null &&
+                        (wgsPoint.X < roiExtent.XMin || wgsPoint.X > roiExtent.XMax ||
+                         wgsPoint.Y < roiExtent.YMin || wgsPoint.Y > roiExtent.YMax))
+                    {
+                        continue;
+                    }
+
+                    int score = (int)Math.Round(result.Score);
+                    candidates.Add(new GeocodeCandidate
+                    {
+                        DisplayLabel = result.Label,
+                        Longitude = wgsPoint.X,
+                        Latitude = wgsPoint.Y,
+                        SourceType = "Locator",
+                        MatchTier = "locator",
+                        Score = score,
+                        ConfidenceTier = score >= 90 ? "High" : score >= 75 ? "Medium" : "Low"
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Locator search failed; falling back to local search: {ex.Message}");
+            }
+
+            return candidates
+                .OrderByDescending(c => c.Score)
+                .Take(Math.Clamp(maxResults, 1, 100))
+                .ToList();
         }
 
         private static string NormalizeQuery(string value)

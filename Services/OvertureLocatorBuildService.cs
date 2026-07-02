@@ -271,11 +271,29 @@ namespace DuckDBGeoparquet.Services
             string metadataPath = GetMetadataPath();
             File.WriteAllText(metadataPath, JsonSerializer.Serialize(metadata, new JsonSerializerOptions { WriteIndented = true }));
 
+            // Register the composite locator with the project so it becomes a
+            // locator provider — LocatorManager.GeocodeAsync only searches
+            // registered providers.
+            string registrationNote = string.Empty;
+            try
+            {
+                bool added = await QueuedTask.Run(() =>
+                {
+                    var locatorItem = ItemFactory.Instance.Create(compositeLocatorPath) as IProjectItem;
+                    return locatorItem != null && Project.Current.AddItem(locatorItem);
+                });
+                registrationNote = added ? " Locator registered with the project." : string.Empty;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Could not register locator with project: {ex.Message}");
+            }
+
             return new LocatorBuildResult
             {
                 Succeeded = true,
                 LocatorPath = compositeLocatorPath,
-                Message = $"Hybrid locator built: {Path.GetFileName(compositeLocatorPath)}" +
+                Message = $"Hybrid locator built: {Path.GetFileName(compositeLocatorPath)}{registrationNote}" +
                     (string.IsNullOrWhiteSpace(addressBuildNotes) ? string.Empty : $" {addressBuildNotes}") +
                     (string.IsNullOrWhiteSpace(placeBuildNotes) ? string.Empty : $" {placeBuildNotes}")
             };
