@@ -98,8 +98,14 @@ namespace DuckDBGeoparquet.Services
             string regionExpr = FirstExistingExpression(availableColumns, "region", "state", "province", "admin1");
             string postalExpr = FirstExistingExpression(availableColumns, "postcode", "postal_code", "zip");
             string countryExpr = FirstExistingExpression(availableColumns, "country", "country_code");
-            string placeNameExpr = FirstExistingExpression(availableColumns, "name", "name_primary", "names", "brand");
-            string categoryExpr = FirstExistingExpression(availableColumns, "category", "class", "subtype", "kind");
+            // Overture 'names'/'categories' are structs; casting the whole
+            // struct produced JSON-ish display labels — use the primary member.
+            string placeNameExpr = availableColumns.Contains("names")
+                ? "CAST(names.primary AS VARCHAR)"
+                : FirstExistingExpression(availableColumns, "name", "name_primary", "brand");
+            string categoryExpr = availableColumns.Contains("categories")
+                ? "CAST(categories.primary AS VARCHAR)"
+                : FirstExistingExpression(availableColumns, "category", "class", "subtype", "kind");
 
             string tokenCondition = string.Join(" AND ", normalizedQuery
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

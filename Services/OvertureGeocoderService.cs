@@ -86,6 +86,17 @@ namespace DuckDBGeoparquet.Services
                 .ToList();
         }
 
+        /// <summary>
+        /// Geocodes a single query and returns the best candidate (or null).
+        /// Used for file geocoding; goes through the same pipeline as
+        /// interactive search, so it honors PreferLocatorSearch.
+        /// </summary>
+        public async Task<GeocodeCandidate> GeocodeBestAsync(string query, CancellationToken cancellationToken = default)
+        {
+            var results = await SearchAsync(query, null, 1, cancellationToken);
+            return results.FirstOrDefault();
+        }
+
         public bool IsLocatorReady()
         {
             return _locatorBuildService.IsLocatorReady();

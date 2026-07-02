@@ -42,7 +42,7 @@
                 <TextBlock Text="2) Return here, enter an address/place name, then click Search."
                            TextWrapping="Wrap"
                            Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
-                <TextBlock Text="3) Select a result and click Zoom To Selected."
+                <TextBlock Text="3) Click a result to zoom to it, or add all results to the map as a feature class."
                            TextWrapping="Wrap"
                            Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
             </StackPanel>
@@ -143,6 +143,19 @@
                         Width="110"
                         Margin="8,0,0,0"
                         Command="{Binding ClearResultsCommand}"
+                        Style="{DynamicResource Esri_Button}" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                <Button Content="Add Results to Map"
+                        Width="130"
+                        Command="{Binding AddResultsToMapCommand}"
+                        Style="{DynamicResource Esri_Button}"
+                        ToolTip="Save the current results as a point feature class in the project geodatabase and add it to the map"/>
+                <Button Content="Geocode File..."
+                        Width="110"
+                        Margin="8,0,0,0"
+                        Command="{Binding GeocodeFileCommand}"
+                        ToolTip="Geocode a CSV of addresses (uses a column named 'address' if present, otherwise the first column) and add the matches to the map"
                         Style="{DynamicResource Esri_Button}" />
             </StackPanel>
             <TextBlock Margin="0,8,0,0"
