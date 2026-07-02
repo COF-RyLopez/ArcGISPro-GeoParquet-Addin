@@ -186,7 +186,7 @@ namespace DuckDBGeoparquet.Services
                 }
                 else
                 {
-                    addressBuildNotes = "Address role mapping failed; falling back to feature locator.";
+                    addressBuildNotes = $"Address role mapping failed; falling back to feature locator. ({GpMessages(addressCreateLocatorResult)})";
                 }
             }
 
@@ -202,7 +202,10 @@ namespace DuckDBGeoparquet.Services
                     };
                 }
 
-                var addressLocatorResult = await RunGpToolAsync("geocoding.CreateFeatureLocator", [addressFc, fallbackAddressField, addressLocatorPath]);
+                // The search-fields parameter is a mapping table: the
+                // locator's 'Name' role paired with the input field. A bare
+                // field name fails with ERROR 003057.
+                var addressLocatorResult = await RunGpToolAsync("geocoding.CreateFeatureLocator", [addressFc, $"Name {fallbackAddressField}", addressLocatorPath]);
                 if (addressLocatorResult.IsFailed)
                 {
                     return Fail("Failed to create address locator after role mapping fallback.", addressLocatorResult);
@@ -223,7 +226,7 @@ namespace DuckDBGeoparquet.Services
                 }
                 else
                 {
-                    placeBuildNotes = "POI role mapping failed; falling back to feature locator.";
+                    placeBuildNotes = $"POI role mapping failed; falling back to feature locator. ({GpMessages(placeCreateLocatorResult)})";
                 }
             }
 
@@ -239,7 +242,7 @@ namespace DuckDBGeoparquet.Services
                     };
                 }
 
-                var placeLocatorResult = await RunGpToolAsync("geocoding.CreateFeatureLocator", [placeFc, fallbackPlaceField, placeLocatorPath]);
+                var placeLocatorResult = await RunGpToolAsync("geocoding.CreateFeatureLocator", [placeFc, $"Name {fallbackPlaceField}", placeLocatorPath]);
                 if (placeLocatorResult.IsFailed)
                 {
                     return Fail("Failed to create place locator after role mapping fallback.", placeLocatorResult);
@@ -277,6 +280,9 @@ namespace DuckDBGeoparquet.Services
                     (string.IsNullOrWhiteSpace(placeBuildNotes) ? string.Empty : $" {placeBuildNotes}")
             };
         }
+
+        private static string GpMessages(IGPResult result) =>
+            result == null ? string.Empty : string.Join(" | ", result.Messages.Select(m => m.Text));
 
         private static LocatorBuildResult Fail(string message, IGPResult result)
         {
