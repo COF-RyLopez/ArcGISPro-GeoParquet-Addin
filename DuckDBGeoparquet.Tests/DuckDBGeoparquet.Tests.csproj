@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<IsPackable>false</IsPackable>
+	</PropertyGroup>
+	<ItemGroup>
+		<!-- Link testable, dependency-free sources instead of referencing the
+		     add-in project: a project reference would pull in the ArcGIS Pro
+		     SDK assemblies, which only resolve usefully on a machine with Pro
+		     installed. Anything linked here must stay free of ArcGIS types. -->
+		<Compile Include="..\Models\ExtentBounds.cs" Link="Linked\ExtentBounds.cs" />
+		<Compile Include="..\Services\GeoParquetSql.cs" Link="Linked\GeoParquetSql.cs" />
+		<Compile Include="..\Services\PreviewBridge.cs" Link="Linked\PreviewBridge.cs" />
+	</ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+		<PackageReference Include="xunit" Version="2.9.2" />
+		<PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+	</ItemGroup>
+</Project>

@@ -280,15 +280,7 @@ namespace DuckDBGeoparquet.Services
             string spatialFilter = "";
             if (extent != null)
             {
-                string xMinStr = ((double)extent.XMin).ToString("G", CultureInfo.InvariantCulture);
-                string yMinStr = ((double)extent.YMin).ToString("G", CultureInfo.InvariantCulture);
-                string xMaxStr = ((double)extent.XMax).ToString("G", CultureInfo.InvariantCulture);
-                string yMaxStr = ((double)extent.YMax).ToString("G", CultureInfo.InvariantCulture);
-                spatialFilter = $@"
-                    WHERE bbox.xmin <= {xMaxStr}
-                      AND bbox.xmax >= {xMinStr}
-                      AND bbox.ymin <= {yMaxStr}
-                      AND bbox.ymax >= {yMinStr}";
+                spatialFilter = $"WHERE {GeoParquetSql.BuildBboxOverlapPredicate(extent)}";
             }
 
             string normalizedOutput = outputGeoJsonPath.Replace('\\', '/');
@@ -376,25 +368,15 @@ namespace DuckDBGeoparquet.Services
                 string extentPolygon = "";
                 if (extent != null)
                 {
-                    // Use culture-invariant formatting for SQL to prevent German locale decimal separator issues
-                    string xMinStr = ((double)extent.XMin).ToString("G", CultureInfo.InvariantCulture);
-                    string yMinStr = ((double)extent.YMin).ToString("G", CultureInfo.InvariantCulture);
-                    string xMaxStr = ((double)extent.XMax).ToString("G", CultureInfo.InvariantCulture);
-                    string yMaxStr = ((double)extent.YMax).ToString("G", CultureInfo.InvariantCulture);
-                    
                     // Create a polygon from the extent for clipping
-                    // Format: POLYGON((xmin ymin, xmax ymin, xmax ymax, xmin ymax, xmin ymin))
-                    extentPolygon = $"ST_GeomFromText('POLYGON(({xMinStr} {yMinStr}, {xMaxStr} {yMinStr}, {xMaxStr} {yMaxStr}, {xMinStr} {yMaxStr}, {xMinStr} {yMinStr}))')";
+                    extentPolygon = GeoParquetSql.BuildExtentPolygon(extent);
 
                     // Bbox overlap first (pushdown), then ST_Intersects so only features whose geometry
                     // actually intersects the extent are kept — prevents data extending beyond the frame.
                     spatialFilter = $@"
-                        WHERE bbox.xmin <= {xMaxStr}
-                          AND bbox.xmax >= {xMinStr}
-                          AND bbox.ymin <= {yMaxStr}
-                          AND bbox.ymax >= {yMinStr}
+                        WHERE {GeoParquetSql.BuildBboxOverlapPredicate(extent)}
                           AND ST_Intersects(geometry, {extentPolygon})";
-                    System.Diagnostics.Debug.WriteLine($"[{actualS3Type}] Spatial filter: requested extent=({xMinStr}, {yMinStr}) to ({xMaxStr}, {yMaxStr}), bbox overlap + ST_Intersects");
+                    System.Diagnostics.Debug.WriteLine($"[{actualS3Type}] Spatial filter: requested extent=({GeoParquetSql.FormatCoordinate(extent.XMin)}, {GeoParquetSql.FormatCoordinate(extent.YMin)}) to ({GeoParquetSql.FormatCoordinate(extent.XMax)}, {GeoParquetSql.FormatCoordinate(extent.YMax)}), bbox overlap + ST_Intersects");
                     progress?.Report($"Applying spatial filter for current map extent...");
                 }
                 else
@@ -1144,7 +1126,7 @@ namespace DuckDBGeoparquet.Services
                     System.Diagnostics.Debug.WriteLine($"File still locked, using temporary export path: {actualOutputPath}");
                 }
                 
-                command.CommandText = BuildGeoParquetCopyCommand(query, actualOutputPath, compression);
+                command.CommandText = GeoParquetSql.BuildCopyCommand(query, actualOutputPath, compression);
                 await command.ExecuteNonQueryAsync(cancellationToken);
                 
                 // If we used a temp file, try to replace the original
@@ -1191,34 +1173,6 @@ namespace DuckDBGeoparquet.Services
                 System.Diagnostics.Debug.WriteLine($"Error in ExportToGeoParquet for {_layerName} to {outputPath}: {ex.Message}");
                 throw; // Re-throw to be caught by ExportByGeometryType
             }
-        }
-
-        private static string BuildGeoParquetCopyCommand(string selectQuery, string outputPath, string compression = "ZSTD")
-        {
-            // Validate compression type
-            string validCompression = compression?.ToUpperInvariant() switch
-            {
-                "SNAPPY" => "SNAPPY",
-                "GZIP" => "GZIP",
-                "ZSTD" => "ZSTD",
-                _ => "ZSTD" // Default to ZSTD if invalid
-            };
-
-            // Optimized row group size: 128MB target (approximately 100k-200k rows depending on data)
-            // Larger row groups improve compression and read performance, but increase memory usage
-            // 100000 is a good balance for most GeoParquet datasets
-            // For very large datasets, consider increasing to 200000-500000
-            int rowGroupSize = 100000;
-
-            return $@"
-                COPY (
-                    {selectQuery}
-                ) TO '{outputPath.Replace('\\', '/')}' 
-                WITH (
-                    FORMAT 'PARQUET',
-                    ROW_GROUP_SIZE {rowGroupSize},
-                    COMPRESSION '{validCompression}'
-                );";
         }
 
         // Helper method to get a more descriptive geometry type name
