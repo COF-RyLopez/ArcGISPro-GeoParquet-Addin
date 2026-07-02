@@ -67,18 +67,30 @@ drives the extent.
 6. If Pro's bundled WebView2 assemblies conflict with the NuGet version,
    pin `Microsoft.Web.WebView2` to the version Pro ships.
 
-## Phase 2c — Decomposition + tests (NEXT)
+## Phase 2c — Decomposition + tests (IN PROGRESS)
 
-Extract from `WizardDockpaneViewModel.cs` (~1,850 lines) into services:
-`DataLoadOrchestrator` (load pipeline, bulk replacement, P/Invoke deletion,
-extent resolution) and `MfcOrchestrator` (`CreateMfcAsync` + helpers).
-Split `DataProcessor.cs` (2,323 lines) into `DuckDBManager`, `S3Ingester`,
-`ParquetExporter`, `LayerManager`, `GeocoderEngine`, with `DataProcessor` as
-a thin façade.
+**Stage 1 (done):** unit-test foundation + first extraction.
+- `DuckDBGeoparquet.Tests` — xunit on net10.0. It links dependency-free
+  sources (`Compile Include`) instead of referencing the add-in project, so
+  tests build and run without the ArcGIS Pro SDK; CI runs `dotnet test`
+  after the msbuild step. Anything moved into a pure class becomes testable
+  by adding one line to the test csproj.
+- `Services/GeoParquetSql.cs` — pure SQL-fragment builders extracted from
+  `DataProcessor`: compression validation, GeoParquet COPY command, extent
+  polygon WKT, bbox pushdown predicate. Covered by tests including a
+  regression pin for the German-locale decimal-separator bug.
+- `Services/PreviewBridge.cs` message handling is covered by tests
+  (camelCase contract, wkid default, malformed-message tolerance).
 
-**Land this with a unit-test project** — the point of the extraction is that
-the services become testable without Pro running. Until then "automated
-tests" is just `dotnet build`.
+**Remaining stages** (each is its own PR-sized chunk):
+- Stage 2: split `DataProcessor.cs` — `DuckDBManager` (connection +
+  extension loading), `S3Ingester`, `ParquetExporter`, `LayerManager`,
+  `GeocoderEngine`, with `DataProcessor` as a thin façade. Extract the pure
+  parts (column projection, query text builders) into testable classes as
+  they move.
+- Stage 3: extract `DataLoadOrchestrator` and `MfcOrchestrator` from
+  `WizardDockpaneViewModel.cs` (load pipeline, bulk replacement, P/Invoke
+  deletion, extent resolution; MFC creation).
 
 ## Phase 2d — UI restructure (LAST)
 
