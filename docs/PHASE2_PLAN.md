@@ -86,9 +86,14 @@ drives the extent.
 - `DuckDBManager` (connection lifecycle + extension loading) — DONE.
   `DataProcessor` proxies `_connection`/`_isInitialized` so call sites are
   unchanged; behavior and error messages are moved verbatim.
-- Remaining: `S3Ingester`, `ParquetExporter`, `LayerManager`,
-  `GeocoderEngine`. Extract the pure parts (column projection, query text
-  builders) into testable classes as they move.
+- `GeocoderEngine` (address/place candidate search) — DONE. Query logic
+  moved verbatim; `DataProcessor` keeps thin delegating wrappers for its
+  public search API. `EscapeSqlLiteral` promoted to `GeoParquetSql` with
+  test coverage.
+- Remaining: `S3Ingester`, `ParquetExporter`, `LayerManager`. These share
+  mutable per-load state (`_pendingLayers`, `_currentExtent`, session
+  suffix), so extract them together or thread the state through a small
+  load-context object.
 - Stage 3: extract `DataLoadOrchestrator` and `MfcOrchestrator` from
   `WizardDockpaneViewModel.cs` (load pipeline, bulk replacement, P/Invoke
   deletion, extent resolution; MFC creation).

@@ -52,6 +52,10 @@ namespace DuckDBGeoparquet.Services
         public static string FormatCoordinate(double value) =>
             value.ToString("G", CultureInfo.InvariantCulture);
 
+        /// <summary>Escapes a value for embedding in a single-quoted SQL literal.</summary>
+        public static string EscapeSqlLiteral(string value) =>
+            string.IsNullOrEmpty(value) ? string.Empty : value.Replace("'", "''");
+
         /// <summary>
         /// Builds the ST_GeomFromText expression for an extent's polygon,
         /// used for ST_Intersects checks and geometry clipping.
