@@ -9,6 +9,9 @@
 		<NoWarn>CA1416</NoWarn>
 		<PlatformTarget>x64</PlatformTarget>
 		<EnableWindowsTargeting>true</EnableWindowsTargeting>
+		<!-- This project lives at the repo root, so default item globs would
+		     otherwise swallow the test project's sources. -->
+		<DefaultItemExcludes>$(DefaultItemExcludes);DuckDBGeoparquet.Tests\**</DefaultItemExcludes>
 	</PropertyGroup>
 	<ItemGroup>
 		<Content Include="Config.daml" />
