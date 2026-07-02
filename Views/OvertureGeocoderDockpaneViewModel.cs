@@ -210,10 +210,18 @@ namespace DuckDBGeoparquet.Views
             try
             {
                 var result = await _geocoderService.BuildLocatorAsync(forceRebuild);
-                LocatorStatusText = result.Message;
-                StatusText = result.Succeeded
-                    ? "Hybrid locator build completed."
-                    : "Hybrid locator build failed. See locator status for details.";
+                if (result.Succeeded)
+                {
+                    StatusText = "Hybrid locator build completed.";
+                    RefreshLocatorStatus();
+                }
+                else
+                {
+                    // Keep the failure message visible — RefreshLocatorStatus
+                    // would replace it with the generic "not built yet" text.
+                    LocatorStatusText = result.Message;
+                    StatusText = "Hybrid locator build failed. See locator status for details.";
+                }
             }
             catch (Exception ex)
             {
@@ -225,7 +233,6 @@ namespace DuckDBGeoparquet.Views
                 _isBuildingLocator = false;
                 (BuildLocatorCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 (RebuildLocatorCommand as RelayCommand)?.RaiseCanExecuteChanged();
-                RefreshLocatorStatus();
             }
         }
 

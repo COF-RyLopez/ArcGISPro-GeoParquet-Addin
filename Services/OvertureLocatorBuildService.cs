@@ -294,11 +294,15 @@ namespace DuckDBGeoparquet.Services
             {
                 var parameters = Geoprocessing.MakeValueArray(values.ToArray());
                 var environment = Geoprocessing.MakeEnvironmentArray(overwriteoutput: true);
+                // GPExecuteToolFlags.Default adds tool outputs to the active
+                // map — the staged scratch feature classes would appear as
+                // layers AND hold locks on the scratch geodatabase, breaking
+                // every subsequent rebuild.
                 return await Geoprocessing.ExecuteToolAsync(
                     toolName,
                     parameters,
                     environment,
-                    flags: GPExecuteToolFlags.Default);
+                    flags: GPExecuteToolFlags.None);
             });
         }
 
