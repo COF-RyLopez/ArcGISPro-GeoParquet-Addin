@@ -82,12 +82,13 @@ drives the extent.
 - `Services/PreviewBridge.cs` message handling is covered by tests
   (camelCase contract, wkid default, malformed-message tolerance).
 
-**Remaining stages** (each is its own PR-sized chunk):
-- Stage 2: split `DataProcessor.cs` — `DuckDBManager` (connection +
-  extension loading), `S3Ingester`, `ParquetExporter`, `LayerManager`,
-  `GeocoderEngine`, with `DataProcessor` as a thin façade. Extract the pure
-  parts (column projection, query text builders) into testable classes as
-  they move.
+**Stage 2 (in progress):** split `DataProcessor.cs` behind a thin façade.
+- `DuckDBManager` (connection lifecycle + extension loading) — DONE.
+  `DataProcessor` proxies `_connection`/`_isInitialized` so call sites are
+  unchanged; behavior and error messages are moved verbatim.
+- Remaining: `S3Ingester`, `ParquetExporter`, `LayerManager`,
+  `GeocoderEngine`. Extract the pure parts (column projection, query text
+  builders) into testable classes as they move.
 - Stage 3: extract `DataLoadOrchestrator` and `MfcOrchestrator` from
   `WizardDockpaneViewModel.cs` (load pipeline, bulk replacement, P/Invoke
   deletion, extent resolution; MFC creation).
