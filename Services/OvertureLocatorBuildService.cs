@@ -87,8 +87,15 @@ namespace DuckDBGeoparquet.Services
                 };
             }
 
-            string addressParquet = Directory.EnumerateFiles(addressDir, "*.parquet").FirstOrDefault();
-            string placeParquet = Directory.EnumerateFiles(placeDir, "*.parquet").FirstOrDefault();
+            // Load cleanups skip locked files, so these folders can hold
+            // several session-stamped parquet files — build from the newest.
+            static string NewestParquet(string dir) => Directory
+                .EnumerateFiles(dir, "*.parquet")
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .FirstOrDefault();
+
+            string addressParquet = NewestParquet(addressDir);
+            string placeParquet = NewestParquet(placeDir);
             if (string.IsNullOrWhiteSpace(addressParquet) || string.IsNullOrWhiteSpace(placeParquet))
             {
                 return new LocatorBuildResult
@@ -112,7 +119,18 @@ namespace DuckDBGeoparquet.Services
                 }
                 catch (Exception ex)
                 {
+                    // Continuing into a half-cleared, locked geodatabase makes
+                    // the export steps fail confusingly later — stop here with
+                    // an actionable message instead.
                     System.Diagnostics.Debug.WriteLine($"Could not clear scratch geodatabase: {ex.Message}");
+                    return new LocatorBuildResult
+                    {
+                        Succeeded = false,
+                        Message = "The previous locator scratch geodatabase is locked by another process " +
+                                  "(usually ArcGIS Pro itself — a locator registered in the project or a layer " +
+                                  "referencing it). Remove those references, restart ArcGIS Pro, and rebuild. " +
+                                  $"Locked path: {scratchGdbPath} ({ex.Message})"
+                    };
                 }
             }
 
