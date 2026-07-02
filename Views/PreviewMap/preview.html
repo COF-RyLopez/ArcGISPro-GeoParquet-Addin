@@ -7,11 +7,16 @@
 
     <!--
       ArcGIS Maps SDK for JavaScript 5.1 via CDN.
-      Modules are loaded with $arcgis.import() (the Esri-recommended CDN
+      type="module" is REQUIRED on the script tag at 5.x — the CDN entry is an
+      ES module and a classic script tag silently fails to define $arcgis.
+      Modules are then loaded with $arcgis.import() (the Esri-recommended CDN
       pattern; AMD require() is deprecated at 5.0 and removed at 6.0).
+      Both theme stylesheet paths are referenced; whichever the CDN serves for
+      this version wins and the other 404s harmlessly.
     -->
     <link rel="stylesheet" href="https://js.arcgis.com/5.1/esri/themes/dark/main.css" />
-    <script src="https://js.arcgis.com/5.1/"></script>
+    <link rel="stylesheet" href="https://js.arcgis.com/5.1/@arcgis/core/assets/esri/themes/dark/main.css" />
+    <script type="module" src="https://js.arcgis.com/5.1/"></script>
 
     <style>
         html, body {
@@ -161,14 +166,28 @@
             postToHost({ type: "previewUnavailable", error: "ArcGIS JS SDK failed to load from CDN" });
         }
 
-        if (!window.$arcgis) {
-            // The CDN script tag failed to load (offline or blocked).
-            showOfflineNotice();
-        } else {
-            initMap().catch((err) => {
+        // Wait for the CDN module to define $arcgis. Module execution order
+        // usually guarantees it's ready, but polling briefly makes this robust
+        // to slow proxies and async global definition.
+        async function waitForSdk(timeoutMs) {
+            const start = Date.now();
+            while (!window.$arcgis) {
+                if (Date.now() - start > timeoutMs) return false;
+                await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+            return true;
+        }
+
+        if (await waitForSdk(8000)) {
+            try {
+                await initMap();
+            } catch (err) {
                 console.error("Preview init failed:", err);
                 showOfflineNotice();
-            });
+            }
+        } else {
+            // The CDN script failed to load (offline or blocked).
+            showOfflineNotice();
         }
 
         async function initMap() {
