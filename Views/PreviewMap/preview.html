@@ -360,8 +360,7 @@
                     postToHost({ type: "layerLoaded", name: name, featureCount: -1 });
                 }, (error) => {
                     hideLoading();
-                    setStatus("Error loading " + name + ": " + error.message +
-                        " (note: ZSTD-compressed files are not supported — re-export with SNAPPY or GZIP)");
+                    setStatus("Error loading " + name + ": " + error.message);
                     console.error("ParquetLayer error:", error);
                     postToHost({ type: "layerError", name: name, error: error.message });
                 });
