@@ -202,10 +202,10 @@ namespace DuckDBGeoparquet.Services
                     };
                 }
 
-                // The search-fields parameter is a mapping table: the
-                // locator's 'Name' role paired with the input field. A bare
-                // field name fails with ERROR 003057.
-                var addressLocatorResult = await RunGpToolAsync("geocoding.CreateFeatureLocator", [addressFc, $"Name {fallbackAddressField}", addressLocatorPath]);
+                // The search-fields parameter is a mapping table entry in the
+                // form "*Name <inputField> VISIBLE NONE" (per Esri's tool
+                // examples); anything else fails with ERROR 003057.
+                var addressLocatorResult = await RunGpToolAsync("geocoding.CreateFeatureLocator", [addressFc, $"*Name {fallbackAddressField} VISIBLE NONE", addressLocatorPath]);
                 if (addressLocatorResult.IsFailed)
                 {
                     return Fail("Failed to create address locator after role mapping fallback.", addressLocatorResult);
@@ -242,7 +242,7 @@ namespace DuckDBGeoparquet.Services
                     };
                 }
 
-                var placeLocatorResult = await RunGpToolAsync("geocoding.CreateFeatureLocator", [placeFc, $"Name {fallbackPlaceField}", placeLocatorPath]);
+                var placeLocatorResult = await RunGpToolAsync("geocoding.CreateFeatureLocator", [placeFc, $"*Name {fallbackPlaceField} VISIBLE NONE", placeLocatorPath]);
                 if (placeLocatorResult.IsFailed)
                 {
                     return Fail("Failed to create place locator after role mapping fallback.", placeLocatorResult);
