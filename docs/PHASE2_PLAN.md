@@ -42,8 +42,19 @@ first and the risky pieces are de-risked before they're built on.
   cache); `appassets` virtual host serves the bundled page over an https
   origin; `overturedata` virtual host is (re)mapped to the current data
   folder on each preview.
-- `Views/WizardDockpaneViewModel.Preview.cs`: Show Extent / Preview Data /
-  Clear / Use Preview Extent commands.
+- `Views/WizardDockpaneViewModel.Preview.cs`: Show Extent / Preview Sample /
+  Clear commands.
+
+**Post-verification design change:** field testing showed the beta
+`ParquetLayer` fails to parse the add-in's DuckDB exports even with SNAPPY
+compression (likely Overture's nested columns), and previewing files already
+loaded onto the Pro map is redundant anyway. The preview was refocused as a
+**pre-load dry run**: "Preview Sample" uses DuckDB (extent-filtered, capped
+at 2,000 features per type) to pull a GeoJSON sample straight from Overture
+S3 in seconds and renders it via `GeoJSONLayer` — answering "is there data
+here and is it what I expect?" before committing to a full download. The
+"Use Preview Extent" adoption feature was dropped: the Pro map view already
+drives the extent.
 
 **Verification checklist (requires ArcGIS Pro 3.7 on Windows):**
 1. `dotnet build` — confirm removing `Esri.ArcGISRuntime` broke nothing.

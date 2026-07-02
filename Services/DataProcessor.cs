@@ -260,6 +260,50 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
+        /// <summary>
+        /// Exports a small GeoJSON sample of an Overture S3 dataset for the
+        /// preview map — a cheap dry-run of a load. Uses the same bbox
+        /// pushdown filter as the real load but skips ST_Intersects and caps
+        /// the row count, so it returns in seconds. Only id + geometry are
+        /// selected: flat columns keep the GDAL GeoJSON writer happy and the
+        /// output small.
+        /// </summary>
+        /// <param name="s3Path">Overture S3 glob (same format as IngestFileAsync).</param>
+        /// <param name="outputGeoJsonPath">Destination .geojson file path.</param>
+        /// <param name="extent">Optional WGS84 extent filter.</param>
+        /// <param name="maxFeatures">Row cap for the sample.</param>
+        public async Task ExportPreviewSampleAsync(string s3Path, string outputGeoJsonPath, ExtentBounds extent = null, int maxFeatures = 2000, CancellationToken cancellationToken = default)
+        {
+            if (!_isInitialized)
+                throw new InvalidOperationException("DuckDB is not initialized yet.");
+
+            string spatialFilter = "";
+            if (extent != null)
+            {
+                string xMinStr = ((double)extent.XMin).ToString("G", CultureInfo.InvariantCulture);
+                string yMinStr = ((double)extent.YMin).ToString("G", CultureInfo.InvariantCulture);
+                string xMaxStr = ((double)extent.XMax).ToString("G", CultureInfo.InvariantCulture);
+                string yMaxStr = ((double)extent.YMax).ToString("G", CultureInfo.InvariantCulture);
+                spatialFilter = $@"
+                    WHERE bbox.xmin <= {xMaxStr}
+                      AND bbox.xmax >= {xMinStr}
+                      AND bbox.ymin <= {yMaxStr}
+                      AND bbox.ymax >= {yMinStr}";
+            }
+
+            string normalizedOutput = outputGeoJsonPath.Replace('\\', '/');
+            using var command = _connection.CreateCommand();
+            command.CommandText = $@"
+                COPY (
+                    SELECT id, geometry
+                    FROM read_parquet('{s3Path}', hive_partitioning=1)
+                    {spatialFilter}
+                    LIMIT {maxFeatures}
+                ) TO '{normalizedOutput}' WITH (FORMAT GDAL, DRIVER 'GeoJSON');
+            ";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
         public async Task<bool> IngestFileAsync(string s3Path, ExtentBounds extent = null, string actualS3Type = null, IProgress<string> progress = null, CancellationToken cancellationToken = default)
         {
             try

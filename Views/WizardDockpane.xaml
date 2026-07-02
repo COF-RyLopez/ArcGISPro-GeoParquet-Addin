@@ -352,14 +352,11 @@
                         <Button Content="Show Extent" Command="{Binding PreviewShowExtentCommand}"
                                 Style="{DynamicResource Esri_Button}" Margin="0,0,4,0"
                                 ToolTip="Draw the configured download extent on the preview map"/>
-                        <Button Content="Preview Data" Command="{Binding PreviewLoadDataCommand}"
+                        <Button Content="Preview Sample" Command="{Binding PreviewSampleCommand}"
                                 Style="{DynamicResource Esri_Button}" Margin="0,0,4,0"
-                                ToolTip="Render downloaded GeoParquet files on the preview map (SNAPPY/GZIP exports only)"/>
+                                ToolTip="Pull a small sample of the selected themes directly from Overture S3 and render it — a quick dry run before the full download"/>
                         <Button Content="Clear" Command="{Binding PreviewClearCommand}"
-                                Style="{DynamicResource Esri_Button}" Margin="0,0,12,0"/>
-                        <Button Content="Use Preview Extent →" Command="{Binding AdoptPreviewExtentCommand}"
-                                Style="{DynamicResource Esri_Button}"
-                                ToolTip="Adopt the current preview map extent as the custom download extent"/>
+                                Style="{DynamicResource Esri_Button}"/>
                     </StackPanel>
 
                     <!-- Embedded ArcGIS JS map -->
