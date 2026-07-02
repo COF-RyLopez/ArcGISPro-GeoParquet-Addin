@@ -2,6 +2,7 @@ using ArcGIS.Core.Geometry;
 using ArcGIS.Desktop.Framework;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
 using ArcGIS.Desktop.Mapping;
+using DuckDBGeoparquet.Models;
 using DuckDBGeoparquet.Services;
 using System;
 using System.IO;
