@@ -74,9 +74,7 @@ namespace DuckDBGeoparquet.Views
                 };
 
                 viewModel?.AttachPreview(
-                    postMessage: json => PreviewWebView.CoreWebView2?.PostWebMessageAsString(json),
-                    mapVirtualHost: (host, folder) => PreviewWebView.CoreWebView2?.SetVirtualHostNameToFolderMapping(
-                        host, folder, CoreWebView2HostResourceAccessKind.Allow));
+                    postMessage: json => PreviewWebView.CoreWebView2?.PostWebMessageAsString(json));
 
                 core.Navigate("https://appassets/preview.html");
             }

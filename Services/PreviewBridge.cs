@@ -95,13 +95,15 @@ namespace DuckDBGeoparquet.Services
         }
 
         /// <summary>
-        /// Adds a GeoJSON file as a GeoJSONLayer on the preview map.
-        /// Used as a fallback when ParquetLayer is unavailable.
+        /// Adds inline GeoJSON as a GeoJSONLayer on the preview map. The text
+        /// is sent through the message bridge and turned into a blob URL on
+        /// the JS side — WebView2 virtual-host fetches are unreliable from the
+        /// SDK's web workers, so no URL fetch is involved.
         /// </summary>
-        public void AddGeoJsonLayer(string fileUrl, string displayName, object renderer = null)
+        public void AddGeoJsonLayer(string displayName, string geoJsonText, object renderer = null)
         {
-            _logAction?.Invoke($"Preview: adding GeoJSONLayer '{displayName}' from {fileUrl}");
-            PostMessage(new { type = "addGeoJsonLayer", url = fileUrl, name = displayName, renderer });
+            _logAction?.Invoke($"Preview: adding GeoJSON layer '{displayName}' ({(geoJsonText?.Length ?? 0):N0} chars)");
+            PostMessage(new { type = "addGeoJsonLayer", name = displayName, data = geoJsonText, renderer });
         }
 
         /// <summary>

@@ -23,10 +23,8 @@ namespace DuckDBGeoparquet.Views
     /// </summary>
     internal partial class WizardDockpaneViewModel
     {
-        private const string PreviewDataHostName = "overturedata";
         private const int PreviewSampleMaxFeatures = 2000;
 
-        private Action<string, string> _mapPreviewVirtualHost;
         private bool _isPreviewSampling;
 
         public PreviewBridge PreviewBridge { get; private set; }
@@ -61,11 +59,8 @@ namespace DuckDBGeoparquet.Views
         /// the browser without holding a reference to the control itself.
         /// </summary>
         /// <param name="postMessage">Posts a JSON string to the page.</param>
-        /// <param name="mapVirtualHost">Maps a virtual host name to a local folder.</param>
-        internal void AttachPreview(Action<string> postMessage, Action<string, string> mapVirtualHost)
+        internal void AttachPreview(Action<string> postMessage)
         {
-            _mapPreviewVirtualHost = mapVirtualHost;
-
             PreviewBridge = new PreviewBridge(postMessage, AddToLog);
             PreviewBridge.MapReady += () =>
             {
@@ -175,8 +170,6 @@ namespace DuckDBGeoparquet.Views
                 catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Preview sample cleanup: {ex.Message}"); }
                 Directory.CreateDirectory(sampleDir);
 
-                _mapPreviewVirtualHost?.Invoke(PreviewDataHostName, sampleDir);
-
                 PreviewBridge?.ClearLayers();
                 if (extent != null)
                     PreviewBridge?.ShowExtent(extent.XMin, extent.YMin, extent.XMax, extent.YMax);
@@ -193,14 +186,16 @@ namespace DuckDBGeoparquet.Views
                     AddToLog($"Preview: sampling {item.DisplayName} from S3 (up to {PreviewSampleMaxFeatures} features)...");
                     try
                     {
+                        string samplePath = Path.Combine(sampleDir, fileName);
                         await _dataProcessor.ExportPreviewSampleAsync(
                             s3Path,
-                            Path.Combine(sampleDir, fileName),
+                            samplePath,
                             extentBounds,
                             PreviewSampleMaxFeatures);
-                        PreviewBridge?.AddGeoJsonLayer(
-                            $"https://{PreviewDataHostName}/{Uri.EscapeDataString(fileName)}",
-                            $"{item.DisplayName} (sample)");
+                        // Send the GeoJSON text through the bridge; the page
+                        // renders it via a blob URL (worker-safe, no fetch).
+                        string geoJsonText = await File.ReadAllTextAsync(samplePath);
+                        PreviewBridge?.AddGeoJsonLayer($"{item.DisplayName} (sample)", geoJsonText);
                         rendered++;
                     }
                     catch (Exception ex)

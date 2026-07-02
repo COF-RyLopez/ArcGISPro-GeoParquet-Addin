@@ -268,7 +268,7 @@
                             break;
 
                         case "addGeoJsonLayer":
-                            addGeoJsonPreview(msg.url, msg.name, msg.renderer);
+                            addGeoJsonPreview(msg.data, msg.name, msg.renderer);
                             break;
 
                         case "clearLayers":
@@ -369,13 +369,27 @@
                 previewLayers.push(layer);
             }
 
-            async function addGeoJsonPreview(url, name, rendererDef) {
+            const blobUrls = [];
+
+            async function addGeoJsonPreview(geojsonText, name, rendererDef) {
+                if (!geojsonText) {
+                    setStatus("No data received for " + name);
+                    postToHost({ type: "layerError", name: name, error: "empty GeoJSON payload" });
+                    return;
+                }
                 showLoading("Loading " + name + "...");
 
                 const [GeoJSONLayer] = await $arcgis.import(["@arcgis/core/layers/GeoJSONLayer.js"]);
 
+                // Blob URL instead of a virtual-host URL: the SDK fetches
+                // GeoJSON from a web worker, where WebView2 virtual-host
+                // mappings are unreliable ("Failed to fetch").
+                const blobUrl = URL.createObjectURL(
+                    new Blob([geojsonText], { type: "application/json" }));
+                blobUrls.push(blobUrl);
+
                 const layerConfig = {
-                    url: url,
+                    url: blobUrl,
                     title: name
                 };
                 if (rendererDef) {
@@ -402,6 +416,8 @@
             function clearAllPreviewLayers() {
                 previewLayers.forEach((layer) => map.remove(layer));
                 previewLayers.length = 0;
+                blobUrls.forEach((u) => URL.revokeObjectURL(u));
+                blobUrls.length = 0;
                 extentLayer.removeAll();
                 setStatus("Preview cleared");
                 updateLayerCount();
