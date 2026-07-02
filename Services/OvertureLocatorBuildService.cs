@@ -192,13 +192,15 @@ namespace DuckDBGeoparquet.Services
 
             if (!addressBuilt)
             {
-                string fallbackAddressField = SelectFieldName(addressFields, "street", "street_name", "road", "name");
+                string fallbackAddressField = SelectFieldName(addressFields,
+                    "street", "street_name", "road", "name", "names_primary", "full_address", "address");
                 if (string.IsNullOrWhiteSpace(fallbackAddressField))
                 {
                     return new LocatorBuildResult
                     {
                         Succeeded = false,
-                        Message = "Address locator mapping could not find a usable street/name field."
+                        Message = "Address locator mapping could not find a usable street/name field. " +
+                                  $"Available fields: {string.Join(", ", addressFields.OrderBy(f => f))}"
                     };
                 }
 
@@ -232,13 +234,18 @@ namespace DuckDBGeoparquet.Services
 
             if (!placeBuilt)
             {
-                string fallbackPlaceField = SelectFieldName(placeFields, "name", "name_primary", "brand", "category");
+                // Overture 'names'/'categories' are nested structs that the
+                // parquet→GDB conversion flattens (e.g. names_primary).
+                string fallbackPlaceField = SelectFieldName(placeFields,
+                    "name", "name_primary", "names_primary", "primary_name", "names",
+                    "brand", "category", "categories_primary", "category_primary", "categories");
                 if (string.IsNullOrWhiteSpace(fallbackPlaceField))
                 {
                     return new LocatorBuildResult
                     {
                         Succeeded = false,
-                        Message = "Place locator mapping could not find a usable name/category field."
+                        Message = "Place locator mapping could not find a usable name/category field. " +
+                                  $"Available fields: {string.Join(", ", placeFields.OrderBy(f => f))}"
                     };
                 }
 
