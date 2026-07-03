@@ -56,13 +56,11 @@ namespace DuckDBGeoparquet.Views
                 PreviewBridge.LayerLoaded += (name, count) => StatusText = $"Loaded {name} in preview";
                 PreviewBridge.LayerError += (name, err) => {
                     StatusText = $"Preview Error ({name}): {err}";
-                    LogOutputText += $"Preview Error ({name}): {err}
-";
+                    LogOutputText += $"Preview Error ({name}): {err}\\n";
                 };
                 PreviewBridge.PreviewUnavailable += (err) => {
                     StatusText = $"Preview Unavailable: {err}";
-                    LogOutputText += $"Preview Unavailable: {err}
-";
+                    LogOutputText += $"Preview Unavailable: {err}\\n";
                 };
                 PreviewBridge.MapReady += () => {
                     StatusText = "Preview map ready";
@@ -70,6 +68,9 @@ namespace DuckDBGeoparquet.Views
                     if (PreviewSampleCommand is RelayCommand smpCmd) smpCmd.RaiseCanExecuteChanged();
                     if (PreviewClearCommand is RelayCommand clrCmd) clrCmd.RaiseCanExecuteChanged();
                 };
+            }
+        }
+
         private void OnPreviewShowExtent()
         {
             if (_customExtentTool?.CurrentExtent != null)
@@ -131,19 +132,14 @@ namespace DuckDBGeoparquet.Views
             catch (Exception ex)
             {
                 StatusText = $"Preview failed: {ex.Message}";
-                LogOutputText += $"[Error] {ex}
-";
-            }
-        }
-
+                LogOutputText += $"[Error] {ex}\\n";
             }
         }
 
         public void NotifyPreviewInitFailed(string message)
         {
             StatusText = $"Preview failed to initialize: {message}";
-            LogOutputText += $"WebView2 Error: {message}
-";
+            LogOutputText += $"WebView2 Error: {message}\\n";
         }
 
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
