@@ -32,10 +32,10 @@
                         Download Overture Maps data as GeoParquet files
 						<disabledText>Unable to launch Overture Maps Data Loader at this time</disabledText></tooltip>
 				</button>
-				<button id="DuckDBGeoparquet_Views_OvertureGeocoderDockpane_ShowButton" caption="Overture Geocoder" className="DuckDBGeoparquet.Views.OvertureGeocoderShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="G" condition="esri_mapping_mapPane" extendedCaption="Search Overture ROI Address and Place Data">
-					<tooltip heading="Overture ROI Geocoder">
-                        Search loaded Overture address and place data in your region of interest
-						<disabledText>Unable to open Overture ROI Geocoder at this time</disabledText></tooltip>
+				<button id="DuckDBGeoparquet_Views_OvertureGeocoderDockpane_ShowButton" caption="Overture Geocoder" className="DuckDBGeoparquet.Views.OvertureGeocoderShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="G" condition="esri_mapping_mapPane" extendedCaption="Search Loaded Overture Address and Place Data">
+					<tooltip heading="Overture Geocoder">
+                        Search loaded Overture address and place data
+						<disabledText>Unable to open Overture Geocoder at this time</disabledText></tooltip>
 				</button>
 				<!-- Custom Extent Tool -->
 				<tool id="DuckDBGeoparquet_CustomExtentTool" className="DuckDBGeoparquet.Views.CustomExtentTool" caption="Draw Custom Extent" loadOnClick="true" smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool16.png" largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool32.png" condition="esri_mapping_mapPane" keytip="E">
@@ -48,7 +48,7 @@
 				<dockPane id="DuckDBGeoparquet_Views_WizardDockpane" caption="Overture Maps Data Loader" className="DuckDBGeoparquet.Views.WizardDockpaneViewModel" dock="right" dockWith="esri_core_contentsDockPane">
 					<content className="DuckDBGeoparquet.Views.WizardDockpaneView" />
 				</dockPane>
-				<dockPane id="DuckDBGeoparquet_Views_OvertureGeocoderDockpane" caption="Overture ROI Geocoder" className="DuckDBGeoparquet.Views.OvertureGeocoderDockpaneViewModel" dock="right" dockWith="esri_core_contentsDockPane">
+				<dockPane id="DuckDBGeoparquet_Views_OvertureGeocoderDockpane" caption="Overture Geocoder" className="DuckDBGeoparquet.Views.OvertureGeocoderDockpaneViewModel" dock="right" dockWith="esri_core_contentsDockPane">
 					<content className="DuckDBGeoparquet.Views.OvertureGeocoderDockpaneView" />
 				</dockPane>
 			</dockPanes>

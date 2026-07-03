@@ -73,6 +73,16 @@ namespace DuckDBGeoparquet.Tests
             Assert.Contains("bbox.ymax >= 2", predicate);
         }
 
+        [Theory]
+        [InlineData(null, "")]
+        [InlineData("", "")]
+        [InlineData("plain", "plain")]
+        [InlineData("O'Brien's", "O''Brien''s")]
+        public void EscapeSqlLiteral_DoublesSingleQuotes(string input, string expected)
+        {
+            Assert.Equal(expected, GeoParquetSql.EscapeSqlLiteral(input));
+        }
+
         [Fact]
         public void BuildExtentPolygon_ClosesTheRing()
         {
