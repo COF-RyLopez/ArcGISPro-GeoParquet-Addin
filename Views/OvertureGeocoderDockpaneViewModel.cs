@@ -298,11 +298,20 @@ namespace DuckDBGeoparquet.Views
                 int done = 0;
                 foreach (var q in queries)
                 {
-                    var best = await _geocoderService.GeocodeBestAsync(q);
+                    GeocodeCandidate best = null;
+                    foreach (var searchQuery in q.SearchQueries)
+                    {
+                        best = await _geocoderService.GeocodeBestAsync(searchQuery);
+                        if (HasUsableLocation(best))
+                        {
+                            break;
+                        }
+                    }
+
                     if (HasUsableLocation(best))
                     {
                         matched.Add(best);
-                        matchedQueries.Add(q);
+                        matchedQueries.Add(q.SourceQuery);
                     }
                     done++;
                     if (done % 20 == 0)
@@ -380,11 +389,11 @@ namespace DuckDBGeoparquet.Views
                     "Could not find an address column. Include an 'address' field or separate street fields in the file.");
             }
 
-            var queries = new List<string>();
+            var queries = new List<GeocodeFileQuery>();
             for (int i = firstRow; i < lines.Length && queries.Count < maxRows; i++)
             {
                 var cells = SplitDelimitedLine(lines[i], delimiter);
-                string query = BuildGeocodeQuery(
+                var searchQueries = BuildGeocodeQueries(
                     cells,
                     addressColumn,
                     houseNumberColumn,
@@ -397,21 +406,25 @@ namespace DuckDBGeoparquet.Views
                     stateColumn,
                     zipColumn);
 
-                if (string.IsNullOrWhiteSpace(query) && !looksLikeHeader && cells.Length > 0)
+                if (searchQueries.Count == 0 && !looksLikeHeader && cells.Length > 0)
                 {
-                    query = CleanCell(cells[0]);
+                    string fallback = CleanCell(cells[0]);
+                    if (!string.IsNullOrWhiteSpace(fallback))
+                    {
+                        searchQueries = [fallback];
+                    }
                 }
 
-                if (!string.IsNullOrWhiteSpace(query))
+                if (searchQueries.Count > 0)
                 {
-                    queries.Add(query);
+                    queries.Add(new GeocodeFileQuery(searchQueries[0], searchQueries));
                 }
             }
 
             return new ParsedGeocodeFile(queries, lines.Length - firstRow > maxRows);
         }
 
-        private static string BuildGeocodeQuery(
+        private static IReadOnlyList<string> BuildGeocodeQueries(
             string[] cells,
             int addressColumn,
             int houseNumberColumn,
@@ -442,26 +455,14 @@ namespace DuckDBGeoparquet.Views
 
             if (string.IsNullOrWhiteSpace(address))
             {
-                return string.Empty;
+                return [];
             }
 
             string city = CleanCell(GetCell(cells, cityColumn));
             string state = CleanCell(GetCell(cells, stateColumn));
             string zip = CleanCell(GetCell(cells, zipColumn));
 
-            string locality = string.Join(", ",
-                new[] { city, state }
-                    .Where(part => !string.IsNullOrWhiteSpace(part)));
-            if (!string.IsNullOrWhiteSpace(zip))
-            {
-                locality = string.IsNullOrWhiteSpace(locality)
-                    ? zip
-                    : $"{locality} {zip}";
-            }
-
-            return string.IsNullOrWhiteSpace(locality)
-                ? address
-                : $"{address}, {locality}";
+            return GeocodeFileQueryBuilder.BuildQueryVariants(address, city, state, zip);
         }
 
         private static int FindColumn(string[] normalizedHeader, params string[] aliases)
@@ -614,7 +615,8 @@ namespace DuckDBGeoparquet.Views
             return [.. cells];
         }
 
-        private sealed record ParsedGeocodeFile(IReadOnlyList<string> Queries, bool WasTruncated);
+        private sealed record GeocodeFileQuery(string SourceQuery, IReadOnlyList<string> SearchQueries);
+        private sealed record ParsedGeocodeFile(IReadOnlyList<GeocodeFileQuery> Queries, bool WasTruncated);
 
         private async Task SearchAsync()
         {
