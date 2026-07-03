@@ -1,3 +1,4 @@
+using ArcGIS.Core.Data;
 using ArcGIS.Core.Geometry;
 using ArcGIS.Desktop.Core;
 using ArcGIS.Desktop.Core.Geoprocessing;
@@ -69,6 +70,13 @@ namespace DuckDBGeoparquet.Services
                         string.Join(" | ", result.Messages.Select(m => m.Text)));
                 }
 
+                int outputCount = await CountFeaturesAsync(outputPath);
+                if (outputCount != candidates.Count)
+                {
+                    throw new Exception(
+                        $"Output feature class contains {outputCount} row(s), but {candidates.Count} geocode result(s) were expected.");
+                }
+
                 await QueuedTask.Run(() =>
                 {
                     var map = MapView.Active?.Map;
@@ -84,6 +92,27 @@ namespace DuckDBGeoparquet.Services
             {
                 try { File.Delete(csvPath); } catch { /* temp file; best effort */ }
             }
+        }
+
+        private static async Task<int> CountFeaturesAsync(string featureClassPath)
+        {
+            return await QueuedTask.Run(() =>
+            {
+                string gdbPath = Path.GetDirectoryName(featureClassPath);
+                string featureClassName = Path.GetFileName(featureClassPath);
+                var gdbConnectionPath = new FileGeodatabaseConnectionPath(new Uri(gdbPath));
+                using var gdb = new Geodatabase(gdbConnectionPath);
+                using var featureClass = gdb.OpenDataset<FeatureClass>(featureClassName);
+                using var cursor = featureClass.Search(new QueryFilter(), false);
+
+                int count = 0;
+                while (cursor.MoveNext())
+                {
+                    count++;
+                }
+
+                return count;
+            });
         }
 
         private static string Csv(string value)

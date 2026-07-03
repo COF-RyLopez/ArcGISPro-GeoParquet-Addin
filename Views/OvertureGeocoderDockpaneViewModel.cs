@@ -265,7 +265,7 @@ namespace DuckDBGeoparquet.Views
             var dialog = new Microsoft.Win32.OpenFileDialog
             {
                 Title = "Select a file of addresses to geocode",
-                Filter = "Delimited text (*.csv;*.txt)|*.csv;*.txt|All files (*.*)|*.*"
+                Filter = "Delimited text (*.csv;*.txt;*.tsv)|*.csv;*.txt;*.tsv|All files (*.*)|*.*"
             };
             if (dialog.ShowDialog() != true)
             {
@@ -283,36 +283,9 @@ namespace DuckDBGeoparquet.Views
                     return;
                 }
 
-                // Use a column named address/single line when the header has
-                // one; otherwise treat every row's first column as the query.
-                string[] header = SplitCsvLine(lines[0]);
-                string[] knownNames = ["address", "singleline", "single_line", "single line input", "full_address", "street"];
-                int column = -1;
-                for (int i = 0; i < header.Length; i++)
-                {
-                    if (knownNames.Contains(header[i].Trim().Trim('"').ToLowerInvariant()))
-                    {
-                        column = i;
-                        break;
-                    }
-                }
-                int firstRow = column >= 0 ? 1 : 0;
-                if (column < 0) column = 0;
-
                 const int MaxRows = 500;
-                var queries = new List<string>();
-                for (int i = firstRow; i < lines.Length && queries.Count < MaxRows; i++)
-                {
-                    var cells = SplitCsvLine(lines[i]);
-                    if (cells.Length > column)
-                    {
-                        string q = cells[column].Trim().Trim('"');
-                        if (!string.IsNullOrWhiteSpace(q))
-                        {
-                            queries.Add(q);
-                        }
-                    }
-                }
+                var parseResult = ParseGeocodeFileQueries(lines, MaxRows);
+                var queries = parseResult.Queries;
 
                 if (queries.Count == 0)
                 {
@@ -326,7 +299,7 @@ namespace DuckDBGeoparquet.Views
                 foreach (var q in queries)
                 {
                     var best = await _geocoderService.GeocodeBestAsync(q);
-                    if (best != null)
+                    if (HasUsableLocation(best))
                     {
                         matched.Add(best);
                         matchedQueries.Add(q);
@@ -346,9 +319,8 @@ namespace DuckDBGeoparquet.Views
 
                 string name = $"OvertureGeocodeFile_{DateTime.Now:yyyyMMdd_HHmmss}";
                 await GeocodeResultWriter.WriteToFeatureClassAsync(matched, name, matchedQueries);
-                bool truncated = lines.Length - firstRow > MaxRows;
                 StatusText = $"Geocoded {matched.Count} of {queries.Count} address(es)" +
-                             (truncated ? $" (first {MaxRows} rows)" : string.Empty) +
+                             (parseResult.WasTruncated ? $" (first {MaxRows} rows)" : string.Empty) +
                              $"; added layer '{name}'.";
             }
             catch (Exception ex)
@@ -362,9 +334,255 @@ namespace DuckDBGeoparquet.Views
             }
         }
 
-        private static string[] SplitCsvLine(string line)
+        private static ParsedGeocodeFile ParseGeocodeFileQueries(string[] lines, int maxRows)
         {
-            // Minimal CSV split honoring double-quoted cells.
+            char delimiter = DetectDelimiter(lines[0]);
+            string[] header = SplitDelimitedLine(lines[0], delimiter);
+            string[] normalizedHeader = [.. header.Select(NormalizeHeaderToken)];
+
+            bool looksLikeHeader = normalizedHeader.Any(IsKnownGeocodeHeaderName);
+            int firstRow = looksLikeHeader ? 1 : 0;
+
+            int addressColumn = looksLikeHeader
+                ? FindColumn(normalizedHeader, "address", "singleline", "single_line", "single line input", "full_address")
+                : (header.Length == 1 ? 0 : -1);
+            int streetColumn = looksLikeHeader
+                ? FindColumn(normalizedHeader, "street", "street_name", "road", "name", "saddstr")
+                : -1;
+            int houseNumberColumn = looksLikeHeader
+                ? FindColumn(normalizedHeader, "number", "housenumber", "house_number", "saddno")
+                : -1;
+            int housePrefixColumn = looksLikeHeader
+                ? FindColumn(normalizedHeader, "prefix", "predir", "streetprefix", "saddpref")
+                : -1;
+            int streetTypeColumn = looksLikeHeader
+                ? FindColumn(normalizedHeader, "streettype", "street_type", "sttype", "saddsttyp")
+                : -1;
+            int streetSuffixColumn = looksLikeHeader
+                ? FindColumn(normalizedHeader, "suffix", "postdir", "streetsuffix", "saddstsuf")
+                : -1;
+            int unitColumn = looksLikeHeader
+                ? FindColumn(normalizedHeader, "unit", "apt", "apartment", "suite", "sunit")
+                : -1;
+            int cityColumn = looksLikeHeader
+                ? FindColumn(normalizedHeader, "city", "scity", "locality")
+                : -1;
+            int stateColumn = looksLikeHeader
+                ? FindColumn(normalizedHeader, "state", "state2", "region", "province")
+                : -1;
+            int zipColumn = looksLikeHeader
+                ? FindColumn(normalizedHeader, "zip", "zip5", "szip", "szip5", "postcode", "postalcode")
+                : -1;
+
+            if (looksLikeHeader && addressColumn < 0 && streetColumn < 0)
+            {
+                throw new InvalidOperationException(
+                    "Could not find an address column. Include an 'address' field or separate street fields in the file.");
+            }
+
+            var queries = new List<string>();
+            for (int i = firstRow; i < lines.Length && queries.Count < maxRows; i++)
+            {
+                var cells = SplitDelimitedLine(lines[i], delimiter);
+                string query = BuildGeocodeQuery(
+                    cells,
+                    addressColumn,
+                    houseNumberColumn,
+                    housePrefixColumn,
+                    streetColumn,
+                    streetTypeColumn,
+                    streetSuffixColumn,
+                    unitColumn,
+                    cityColumn,
+                    stateColumn,
+                    zipColumn);
+
+                if (string.IsNullOrWhiteSpace(query) && !looksLikeHeader && cells.Length > 0)
+                {
+                    query = CleanCell(cells[0]);
+                }
+
+                if (!string.IsNullOrWhiteSpace(query))
+                {
+                    queries.Add(query);
+                }
+            }
+
+            return new ParsedGeocodeFile(queries, lines.Length - firstRow > maxRows);
+        }
+
+        private static string BuildGeocodeQuery(
+            string[] cells,
+            int addressColumn,
+            int houseNumberColumn,
+            int housePrefixColumn,
+            int streetColumn,
+            int streetTypeColumn,
+            int streetSuffixColumn,
+            int unitColumn,
+            int cityColumn,
+            int stateColumn,
+            int zipColumn)
+        {
+            string address = CleanCell(GetCell(cells, addressColumn));
+            if (string.IsNullOrWhiteSpace(address))
+            {
+                var addressParts = new[]
+                {
+                    CleanCell(GetCell(cells, houseNumberColumn)),
+                    CleanCell(GetCell(cells, housePrefixColumn)),
+                    CleanCell(GetCell(cells, streetColumn)),
+                    CleanCell(GetCell(cells, streetTypeColumn)),
+                    CleanCell(GetCell(cells, streetSuffixColumn)),
+                    CleanCell(GetCell(cells, unitColumn))
+                };
+
+                address = string.Join(" ", addressParts.Where(part => !string.IsNullOrWhiteSpace(part)));
+            }
+
+            if (string.IsNullOrWhiteSpace(address))
+            {
+                return string.Empty;
+            }
+
+            string city = CleanCell(GetCell(cells, cityColumn));
+            string state = CleanCell(GetCell(cells, stateColumn));
+            string zip = CleanCell(GetCell(cells, zipColumn));
+
+            string locality = string.Join(", ",
+                new[] { city, state }
+                    .Where(part => !string.IsNullOrWhiteSpace(part)));
+            if (!string.IsNullOrWhiteSpace(zip))
+            {
+                locality = string.IsNullOrWhiteSpace(locality)
+                    ? zip
+                    : $"{locality} {zip}";
+            }
+
+            return string.IsNullOrWhiteSpace(locality)
+                ? address
+                : $"{address}, {locality}";
+        }
+
+        private static int FindColumn(string[] normalizedHeader, params string[] aliases)
+        {
+            var normalizedAliases = aliases
+                .Select(NormalizeHeaderToken)
+                .Where(alias => !string.IsNullOrWhiteSpace(alias))
+                .ToHashSet(StringComparer.Ordinal);
+
+            for (int i = 0; i < normalizedHeader.Length; i++)
+            {
+                if (normalizedAliases.Contains(normalizedHeader[i]))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private static bool IsKnownGeocodeHeaderName(string name)
+        {
+            return FindColumn(
+                [name],
+                "address",
+                "singleline",
+                "single_line",
+                "single line input",
+                "full_address",
+                "street",
+                "street_name",
+                "road",
+                "name",
+                "saddstr",
+                "saddno",
+                "city",
+                "scity",
+                "state",
+                "state2",
+                "zip",
+                "szip",
+                "postcode") >= 0;
+        }
+
+        private static string NormalizeHeaderToken(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            var normalized = new StringBuilder(value.Length);
+            foreach (char ch in value.Trim().Trim('"').ToLowerInvariant())
+            {
+                if (char.IsLetterOrDigit(ch))
+                {
+                    normalized.Append(ch);
+                }
+            }
+
+            return normalized.ToString();
+        }
+
+        private static string GetCell(string[] cells, int index)
+        {
+            return index >= 0 && index < cells.Length ? cells[index] : string.Empty;
+        }
+
+        private static string CleanCell(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            return string.Join(" ",
+                value.Trim().Trim('"')
+                    .Split((char[])null, StringSplitOptions.RemoveEmptyEntries));
+        }
+
+        private static char DetectDelimiter(string line)
+        {
+            char bestDelimiter = ',';
+            int bestCount = -1;
+
+            foreach (char candidate in new[] { '\t', ',', ';', '|' })
+            {
+                int count = 0;
+                bool inQuotes = false;
+                for (int i = 0; i < line.Length; i++)
+                {
+                    char ch = line[i];
+                    if (ch == '"')
+                    {
+                        if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                        {
+                            i++;
+                            continue;
+                        }
+
+                        inQuotes = !inQuotes;
+                    }
+                    else if (ch == candidate && !inQuotes)
+                    {
+                        count++;
+                    }
+                }
+
+                if (count > bestCount)
+                {
+                    bestDelimiter = candidate;
+                    bestCount = count;
+                }
+            }
+
+            return bestDelimiter;
+        }
+
+        private static string[] SplitDelimitedLine(string line, char delimiter)
+        {
+            // Minimal delimited split honoring double-quoted cells.
             var cells = new List<string>();
             var sb = new StringBuilder();
             bool inQuotes = false;
@@ -382,7 +600,7 @@ namespace DuckDBGeoparquet.Views
 
                     inQuotes = !inQuotes;
                 }
-                else if (ch == ',' && !inQuotes)
+                else if (ch == delimiter && !inQuotes)
                 {
                     cells.Add(sb.ToString());
                     sb.Clear();
@@ -395,6 +613,8 @@ namespace DuckDBGeoparquet.Views
             cells.Add(sb.ToString());
             return [.. cells];
         }
+
+        private sealed record ParsedGeocodeFile(IReadOnlyList<string> Queries, bool WasTruncated);
 
         private async Task SearchAsync()
         {
