@@ -41,7 +41,7 @@ namespace DuckDBGeoparquet.Services
         {
             await InitializeAsync();
 
-            string normalizedQuery = NormalizeQuery(query);
+            string normalizedQuery = GeocodeTextNormalizer.NormalizeForSearch(query);
             if (string.IsNullOrWhiteSpace(normalizedQuery))
             {
                 return [];
@@ -178,19 +178,6 @@ namespace DuckDBGeoparquet.Services
                 .OrderByDescending(c => c.Score)
                 .Take(Math.Clamp(maxResults, 1, 100))
                 .ToList();
-        }
-
-        private static string NormalizeQuery(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return string.Empty;
-            }
-
-            return string.Join(" ", value
-                .Trim()
-                .ToLowerInvariant()
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         }
 
         private static string ResolveParquetGlobPath(string dataType)

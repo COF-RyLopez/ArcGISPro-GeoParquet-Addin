@@ -159,7 +159,7 @@
                         Width="110"
                         Margin="8,0,0,0"
                         Command="{Binding GeocodeFileCommand}"
-                        ToolTip="Geocode a CSV of addresses (uses a column named 'address' if present, otherwise the first column) and add the matches to the map"
+                        ToolTip="Geocode a delimited text file of addresses (auto-detects common address columns such as address, city, state, and ZIP) and add the matches to the map"
                         Style="{DynamicResource Esri_Button}" />
             </StackPanel>
             <TextBlock Margin="0,8,0,0"
