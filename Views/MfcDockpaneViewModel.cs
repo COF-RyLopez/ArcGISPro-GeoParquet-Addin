@@ -8,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Forms;
 using DuckDBGeoparquet.Services;
 using ArcGIS.Desktop.Core;
+using ArcGIS.Desktop.Core.Geoprocessing;
 
 namespace DuckDBGeoparquet.Views
 {

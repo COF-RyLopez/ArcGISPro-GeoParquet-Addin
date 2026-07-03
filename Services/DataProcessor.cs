@@ -42,9 +42,6 @@ namespace DuckDBGeoparquet.Services
         private ExtentBounds _currentExtent;
 
 
-        private string _currentActualS3Type;
-
-
         private string _outputSessionSuffix = DateTime.UtcNow.ToString("yyyyMMddHHmmssfff", CultureInfo.InvariantCulture);
 
         /// <summary>
