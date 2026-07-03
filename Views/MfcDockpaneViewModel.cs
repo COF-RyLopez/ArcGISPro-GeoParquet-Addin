@@ -213,7 +213,7 @@ namespace DuckDBGeoparquet.Views
     /// <summary>
     /// Button implementation to show the DockPane.
     /// </summary>
-    internal class MfcDockpane_ShowButton : Button
+    internal class MfcDockpane_ShowButton : ArcGIS.Desktop.Framework.Contracts.Button
     {
         protected override void OnClick()
         {
