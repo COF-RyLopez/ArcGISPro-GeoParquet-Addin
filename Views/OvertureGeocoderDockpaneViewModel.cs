@@ -445,17 +445,26 @@ namespace DuckDBGeoparquet.Views
                 return;
             }
 
+            double lon = SelectedCandidate.Longitude;
+            double lat = SelectedCandidate.Latitude;
+            string label = SelectedCandidate.DisplayLabel;
             try
             {
-                var wgs84 = SpatialReferenceBuilder.CreateSpatialReference(4326);
-                var location = MapPointBuilderEx.CreateMapPoint(SelectedCandidate.Longitude, SelectedCandidate.Latitude, wgs84);
-                var marker = SymbolFactory.Instance.ConstructPointSymbol(ColorFactory.Instance.RedRGB, 11.0, SimpleMarkerStyle.Circle);
+                // Geometry/symbol construction and overlay/zoom must run on the
+                // MCT (QueuedTask), not the UI thread that raised the selection.
+                var overlay = await QueuedTask.Run(() =>
+                {
+                    var wgs84 = SpatialReferenceBuilder.CreateSpatialReference(4326);
+                    var location = MapPointBuilderEx.CreateMapPoint(lon, lat, wgs84);
+                    var marker = SymbolFactory.Instance.ConstructPointSymbol(ColorFactory.Instance.RedRGB, 11.0, SimpleMarkerStyle.Circle);
+                    var handle = mapView.AddOverlay(location, marker.MakeSymbolReference());
+                    mapView.ZoomTo(location);
+                    return handle;
+                });
 
                 _selectionOverlay?.Dispose();
-                _selectionOverlay = mapView.AddOverlay(location, marker.MakeSymbolReference());
-
-                await QueuedTask.Run(() => mapView.ZoomTo(location));
-                StatusText = $"Zoomed to {SelectedCandidate.DisplayLabel}";
+                _selectionOverlay = overlay;
+                StatusText = $"Zoomed to {label}";
             }
             catch (Exception ex)
             {
