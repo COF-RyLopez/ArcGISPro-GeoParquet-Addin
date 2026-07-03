@@ -24,6 +24,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <!-- Header with title and version info -->
         <StackPanel Grid.Row="0" Margin="16,12,16,0">
@@ -49,6 +50,11 @@
         </StackPanel>
         <!-- Main content area with TabControl -->
         <TabControl Grid.Row="1" Margin="0,8,0,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
+            <TabControl.Resources>
+        <Style TargetType="TabItem">
+            <Setter Property="Visibility" Value="Collapsed"/>
+        </Style>
+            </TabControl.Resources>
             <!-- Select Data Tab -->
             <TabItem Header="Select Data">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -331,11 +337,7 @@
                                 </Grid>
                             </StackPanel>
                         </Border>
-                        <!-- Action Buttons -->
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
-                            <Button Content="Cancel" Command="{Binding CancelCommand}" Style="{DynamicResource Esri_Button}" Margin="0,0,8,0" Width="80"/>
-                            <Button Content="Load Data" Command="{Binding LoadDataCommand}" Style="{DynamicResource Esri_Button}" Width="120"/>
-                        </StackPanel>
+                        
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -392,79 +394,10 @@
                                  Foreground="{DynamicResource Esri_TextControlBrush}"                                 TextChanged="LogTextBox_TextChanged"/>
                     </Border>
 
-                    <!-- Navigation Buttons -->
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
-                        <Button Content="Go to Create MFC" Command="{Binding GoToCreateMfcTabCommand}" Style="{DynamicResource Esri_Button}" Width="120"/>
-                    </StackPanel>
+                    
                 </StackPanel>
             </TabItem>
-            <!-- Create MFC Tab -->
-            <TabItem Header="Create MFC">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="16,12,16,12" Orientation="Vertical">
-                        <TextBlock Text="Create Multifile Feature Connection" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,12"/>
-
-                        <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
-                                BorderBrush="{DynamicResource Esri_BorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="2"
-                                Padding="8"
-                                Margin="0,0,0,12">
-                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
-                                A Multifile Feature Connection (MFC) allows ArcGIS Pro to work efficiently with multiple GeoParquet files as a single dataset. This makes it easier to visualize and analyze the Overture Maps data.
-                                <LineBreak/><LineBreak/>
-                                Note: Creating an MFC can take some time as it indexes all of your data files.
-                            </TextBlock>
-                        </Border>
-
-                        <TextBlock Text="MFC Settings" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
-                        <Border 
-                                BorderBrush="{DynamicResource Esri_BorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="2"
-                                Padding="8"
-                                Margin="0,0,0,12">
-                            <StackPanel>
-                                <!-- Data Source Group -->
-                                <TextBlock Text="Data Source:" FontWeight="SemiBold" Margin="0,0,0,2"/>
-                                <RadioButton Content="Use previously loaded data (recommended)" GroupName="MfcDataSource" IsChecked="{Binding UsePreviouslyLoadedData}" Margin="0,0,0,5"
-                                             ToolTipService.ToolTip="Create MFC from data downloaded by this add-in in the current session."/>
-                                <RadioButton Content="Use custom data folder" GroupName="MfcDataSource" IsChecked="{Binding UseCustomDataFolder}"
-                                             ToolTipService.ToolTip="Create MFC from GeoParquet files you have in a different folder."/>
-                                <StackPanel Orientation="Horizontal" Margin="20,5,0,5" IsEnabled="{Binding UseCustomDataFolder}">
-                                    <TextBox Text="{Binding CustomDataFolderPath, UpdateSourceTrigger=PropertyChanged}" Width="250" Margin="0,0,5,0"
-                                             ToolTipService.ToolTip="Path to your folder containing GeoParquet files."/>
-                                    <Button Content="Browse..." Command="{Binding BrowseCustomDataFolderCommand}"/>
-                                </StackPanel>
-                                <TextBlock Margin="20,2,0,10" IsEnabled="{Binding UseCustomDataFolder}" TextWrapping="Wrap">
-                                    <Run Text="If using a custom folder, data should be organized with each dataset type in its own subfolder (e.g., YourFolder/buildings/building.parquet). The add-in handles this for downloaded data. "/>
-                                    <Hyperlink NavigateUri="https://pro.arcgis.com/en/pro-app/latest/help/data/big-data-connections/big-data-connections.htm" RequestNavigate="Hyperlink_RequestNavigate">
-                                        <Run Text="Learn more about MFC structure."/>
-                                    </Hyperlink>
-                                </TextBlock>
-
-                                <!-- MFC Output Location Group -->
-                                <TextBlock Text="MFC Output Location:" FontWeight="SemiBold" Margin="0,10,0,2"/>
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
-                                    <TextBox Text="{Binding MfcOutputPath, UpdateSourceTrigger=PropertyChanged}" Width="300" Margin="0,0,5,0"
-                                             ToolTipService.ToolTip="Folder where the .mfc connection file will be saved."/>
-                                    <Button Content="Browse..." Command="{Binding BrowseMfcLocationCommand}"/>
-                                </StackPanel>
-
-                                <!-- MFC Options Group -->
-                                <TextBlock Text="MFC Options:" FontWeight="SemiBold" Margin="0,10,0,2"/>
-                                <CheckBox IsChecked="{Binding IsSharedMfc}" Content="Create as Shared Connection" Margin="0,0,0,5"
-                                          ToolTipService.ToolTip="Shared connections can be used by multiple projects. Standalone connections are specific to the current project."/>
-                                <!-- <CheckBox IsChecked="{Binding UseSpatialIndex}" Content="Use Spatial Index (if applicable)" Margin="0,0,0,10"
-                                          ToolTipService.ToolTip="Enable spatial indexing for faster queries. Generally recommended."/> -->
-
-                                <!-- Action Button -->
-                                <Button Content="Create Multifile Feature Connection" Command="{Binding CreateMfcCommand}" HorizontalAlignment="Left" Margin="0,15,0,0" Style="{DynamicResource Esri_Button}"/>
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </ScrollViewer>
-            </TabItem>
+            
             
             <!-- Cache Management Tab (Pro 3.6+) -->
             <TabItem Header="Cache Management" Visibility="{Binding IsCacheManagementTabVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
@@ -548,5 +481,21 @@
                 <TextBlock Text="Please wait while we set things up" Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}" Opacity="0.7" Margin="0,4,0,0" HorizontalAlignment="Center"/>
             </StackPanel>
         </Grid>
+
+        <!-- Bottom Navigation Bar -->
+        <Border Grid.Row="2" BorderBrush="{DynamicResource Esri_BorderBrush}" BorderThickness="0,1,0,0" Padding="16,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Content="Back" Command="{Binding BackCommand}" Style="{DynamicResource Esri_Button}" Width="80" Visibility="{Binding IsBackButtonVisible, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button Content="Cancel" Command="{Binding CancelCommand}" Style="{DynamicResource Esri_Button}" Margin="0,0,8,0" Width="80"/>
+                    <Button Content="{Binding NextButtonText}" Command="{Binding NextCommand}" Style="{DynamicResource Esri_Button}" Width="120" Visibility="{Binding IsNextButtonVisible, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                </StackPanel>
+            </Grid>
+        </Border>
     </Grid>
 </UserControl>

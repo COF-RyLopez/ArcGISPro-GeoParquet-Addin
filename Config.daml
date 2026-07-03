@@ -23,6 +23,8 @@
 					<labelControl refID="DuckDBGeoparquet_OvertureMapDescription" />
 					<button refID="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" size="large" />
 					<button refID="DuckDBGeoparquet_Views_OvertureGeocoderDockpane_ShowButton" size="large" />
+					<button refID="DuckDBGeoparquet_Views_MfcDockpane_ShowButton" size="large" />
+
 				</group>
 			</groups>
 			<controls>
@@ -37,6 +39,11 @@
                         Search loaded Overture address and place data
 						<disabledText>Unable to open Overture Geocoder at this time</disabledText></tooltip>
 				</button>
+								<button id="DuckDBGeoparquet_Views_MfcDockpane_ShowButton" caption="Create MFC" className="DuckDBGeoparquet.Views.MfcDockpane_ShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="C" condition="esri_mapping_mapPane" extendedCaption="Create Multifile Feature Connection">
+					<tooltip heading="Create MFC">
+                        Create an MFC from downloaded GeoParquet data
+						<disabledText>Unable to open MFC tool at this time</disabledText></tooltip>
+				</button>
 				<!-- Custom Extent Tool -->
 				<tool id="DuckDBGeoparquet_CustomExtentTool" className="DuckDBGeoparquet.Views.CustomExtentTool" caption="Draw Custom Extent" loadOnClick="true" smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool16.png" largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool32.png" condition="esri_mapping_mapPane" keytip="E">
 					<tooltip heading="Draw Custom Extent">
@@ -50,6 +57,9 @@
 				</dockPane>
 				<dockPane id="DuckDBGeoparquet_Views_OvertureGeocoderDockpane" caption="Overture Geocoder" className="DuckDBGeoparquet.Views.OvertureGeocoderDockpaneViewModel" dock="right" dockWith="esri_core_contentsDockPane">
 					<content className="DuckDBGeoparquet.Views.OvertureGeocoderDockpaneView" />
+				</dockPane>
+							<dockPane id="DuckDBGeoparquet_Views_MfcDockpane" caption="Create Overture MFC" className="DuckDBGeoparquet.Views.MfcDockpaneViewModel" dock="right" dockWith="esri_core_contentsDockPane">
+					<content className="DuckDBGeoparquet.Views.MfcDockpaneView" />
 				</dockPane>
 			</dockPanes>
 		</insertModule>

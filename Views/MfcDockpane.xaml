@@ -1,0 +1,81 @@
+<UserControl x:Class="DuckDBGeoparquet.Views.MfcDockpaneView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:extensions="clr-namespace:ArcGIS.Desktop.Extensions;assembly=ArcGIS.Desktop.Extensions"
+             xmlns:local="clr-namespace:DuckDBGeoparquet.Views"
+             mc:Ignorable="d" 
+             d:DesignHeight="600" d:DesignWidth="400"
+             d:DataContext="{d:DesignInstance local:MfcDockpaneViewModel, IsDesignTimeCreatable=True}">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <extensions:DesignOnlyResourceDictionary Source="pack://application:,,,/ArcGIS.Desktop.Framework;component\Themes\Default.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid>
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="16,12,16,12" Orientation="Vertical">
+                <TextBlock Text="Create Multifile Feature Connection" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,12"/>
+
+                <Border Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                        BorderBrush="{DynamicResource Esri_BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="2"
+                        Padding="8"
+                        Margin="0,0,0,12">
+                    <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
+                        A Multifile Feature Connection (MFC) allows ArcGIS Pro to work efficiently with multiple GeoParquet files as a single dataset. This makes it easier to visualize and analyze the Overture Maps data.
+                        <LineBreak/><LineBreak/>
+                        Note: Creating an MFC can take some time as it indexes all of your data files.
+                    </TextBlock>
+                </Border>
+
+                <TextBlock Text="MFC Settings" Style="{DynamicResource Esri_TextBlockH4}" Margin="0,0,0,4"/>
+                <Border 
+                        BorderBrush="{DynamicResource Esri_BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="2"
+                        Padding="8"
+                        Margin="0,0,0,12">
+                    <StackPanel>
+                        <!-- Data Source Group -->
+                        <TextBlock Text="Data Source:" FontWeight="SemiBold" Margin="0,0,0,2"/>
+                        <RadioButton Content="Use previously loaded data (recommended)" IsChecked="{Binding UsePreviouslyLoadedData, Mode=TwoWay}" Margin="0,0,0,5"
+                                     ToolTipService.ToolTip="Create MFC from data downloaded by this add-in in the current session."/>
+                        <RadioButton Content="Use custom data folder" IsChecked="{Binding UseCustomDataFolder, Mode=TwoWay}"
+                                     ToolTipService.ToolTip="Create MFC from GeoParquet files you have in a different folder."/>
+                        <StackPanel Orientation="Horizontal" Margin="20,5,0,5" IsEnabled="{Binding UseCustomDataFolder}">
+                            <TextBox Text="{Binding CustomDataFolderPath, UpdateSourceTrigger=PropertyChanged}" Width="250" Margin="0,0,5,0"
+                                     ToolTipService.ToolTip="Path to your folder containing GeoParquet files."/>
+                            <Button Content="Browse..." Command="{Binding BrowseCustomDataFolderCommand}"/>
+                        </StackPanel>
+                        <TextBlock Margin="20,2,0,10" IsEnabled="{Binding UseCustomDataFolder}" TextWrapping="Wrap">
+                            <Run Text="If using a custom folder, data should be organized with each dataset type in its own subfolder (e.g., YourFolder/buildings/building.parquet). "/>
+                        </TextBlock>
+
+                        <!-- MFC Output Location Group -->
+                        <TextBlock Text="MFC Output Location:" FontWeight="SemiBold" Margin="0,10,0,2"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBox Text="{Binding MfcOutputPath, UpdateSourceTrigger=PropertyChanged}" Width="250" Margin="0,0,5,0"
+                                     ToolTipService.ToolTip="Folder where the .mfc connection file will be saved."/>
+                            <Button Content="Browse..." Command="{Binding BrowseMfcLocationCommand}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource Esri_TextCaptionActiveBrush}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                
+                <!-- Action Buttons -->
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Create MFC" Command="{Binding CreateMfcCommand}" Style="{DynamicResource Esri_Button}" Width="120"
+                            ToolTipService.ToolTip="Creates the connection. This may take a while for large datasets."/>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

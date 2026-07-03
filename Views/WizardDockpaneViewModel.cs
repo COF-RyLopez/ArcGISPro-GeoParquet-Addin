@@ -46,6 +46,106 @@ namespace DuckDBGeoparquet.Views
         private CancellationTokenSource _cts;
         private bool _skipExistingData;
 
+        public PreviewBridge PreviewBridge { get; private set; }
+
+        public void AttachPreview(Action<string> postMessage)
+        {
+            if (PreviewBridge == null)
+            {
+                PreviewBridge = new PreviewBridge(postMessage);
+                PreviewBridge.LayerLoaded += (name, count) => StatusText = $"Loaded {name} in preview";
+                PreviewBridge.LayerError += (name, err) => {
+                    StatusText = $"Preview Error ({name}): {err}";
+                    LogOutputText += $"Preview Error ({name}): {err}
+";
+                };
+                PreviewBridge.PreviewUnavailable += (err) => {
+                    StatusText = $"Preview Unavailable: {err}";
+                    LogOutputText += $"Preview Unavailable: {err}
+";
+                };
+                PreviewBridge.MapReady += () => {
+                    StatusText = "Preview map ready";
+                    if (PreviewShowExtentCommand is RelayCommand extCmd) extCmd.RaiseCanExecuteChanged();
+                    if (PreviewSampleCommand is RelayCommand smpCmd) smpCmd.RaiseCanExecuteChanged();
+                    if (PreviewClearCommand is RelayCommand clrCmd) clrCmd.RaiseCanExecuteChanged();
+                };
+        private void OnPreviewShowExtent()
+        {
+            if (_customExtentTool?.CurrentExtent != null)
+            {
+                PreviewBridge?.ShowExtent(
+                    _customExtentTool.CurrentExtent.XMin,
+                    _customExtentTool.CurrentExtent.YMin,
+                    _customExtentTool.CurrentExtent.XMax,
+                    _customExtentTool.CurrentExtent.YMax);
+            }
+        }
+
+        private async Task OnPreviewSampleAsync()
+        {
+            if (PreviewBridge == null || !PreviewBridge.IsMapReady)
+            {
+                StatusText = "Preview map not ready.";
+                return;
+            }
+
+            try
+            {
+                StatusText = "Generating preview sample...";
+                ProgressValue = 10;
+                
+                await _dataProcessor.InitializeDuckDBAsync(_cts.Token);
+                
+                ExtentBounds extent = null;
+                if (UseCustomExtent && _customExtentTool?.CurrentExtent != null)
+                {
+                    extent = new ExtentBounds
+                    {
+                        XMin = _customExtentTool.CurrentExtent.XMin,
+                        YMin = _customExtentTool.CurrentExtent.YMin,
+                        XMax = _customExtentTool.CurrentExtent.XMax,
+                        YMax = _customExtentTool.CurrentExtent.YMax
+                    };
+                }
+
+                var sampleItem = GetSelectedLeafItems().FirstOrDefault();
+                if (sampleItem != null)
+                {
+                    string s3Path = $"{S3_BASE_PATH}/{LatestRelease}/theme={sampleItem.ParentThemeForS3}/type={sampleItem.ActualType}/*";
+                    string tempGeoJson = Path.Combine(Path.GetTempPath(), $"preview_{Guid.NewGuid():N}.geojson");
+                    
+                    await _dataProcessor.ExportPreviewSampleAsync(s3Path, tempGeoJson, extent, 2000, _cts.Token);
+                    
+                    if (File.Exists(tempGeoJson))
+                    {
+                        string geojson = await File.ReadAllTextAsync(tempGeoJson);
+                        PreviewBridge.AddGeoJsonLayer(sampleItem.DisplayName, geojson);
+                        File.Delete(tempGeoJson);
+                    }
+                }
+                
+                StatusText = "Preview sample loaded.";
+                ProgressValue = 100;
+            }
+            catch (Exception ex)
+            {
+                StatusText = $"Preview failed: {ex.Message}";
+                LogOutputText += $"[Error] {ex}
+";
+            }
+        }
+
+            }
+        }
+
+        public void NotifyPreviewInitFailed(string message)
+        {
+            StatusText = $"Preview failed to initialize: {message}";
+            LogOutputText += $"WebView2 Error: {message}
+";
+        }
+
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true
@@ -248,13 +348,7 @@ namespace DuckDBGeoparquet.Views
             RefreshCacheInfoCommand = new RelayCommand(() => RefreshCacheInfo());
             ClearCacheCommand = new RelayCommand(() => ClearCache(), () => ArcGISProVersionHelper.IsPro36OrLater);
             ShowThemeInfoCommand = new RelayCommand(() => ShowThemeInfo(), () => SelectedItemForPreview != null);
-            SetCustomExtentCommand = new RelayCommand(() => SetCustomExtent(), () => UseCustomExtent);
-            BrowseMfcLocationCommand = new RelayCommand(() => BrowseMfcLocation());
-            BrowseDataLocationCommand = new RelayCommand(() => BrowseDataLocation());
-            BrowseCustomDataFolderCommand = new RelayCommand(() => BrowseCustomDataFolder());
-            CreateMfcCommand = new RelayCommand(async () => await CreateMfcAsync(), () => (UsePreviouslyLoadedData && !string.IsNullOrEmpty(_lastLoadedDataPath)) || (UseCustomDataFolder && !string.IsNullOrEmpty(CustomDataFolderPath)));
-            GoToCreateMfcTabCommand = new RelayCommand(() => ShowCreateMfcTab(), () => true);
-            ApplyManualReleaseCommand = new RelayCommand(() => ApplyManualRelease(), () => !string.IsNullOrWhiteSpace(ManualReleaseText));
+            SetCustomExtentCommand = new RelayCommand(() => SetCustomExtent(), () => UseCustomExtent);            BrowseDataLocationCommand = new RelayCommand(() => BrowseDataLocation());            ApplyManualReleaseCommand = new RelayCommand(() => ApplyManualRelease(), () => !string.IsNullOrWhiteSpace(ManualReleaseText));
             CancelCommand = new RelayCommand(() =>
             {
                 if (_cts != null && !_cts.IsCancellationRequested) { _cts.Cancel(); AddToLog("Operation cancelled by user."); }
@@ -279,11 +373,7 @@ namespace DuckDBGeoparquet.Views
 
             // Set default paths immediately, they might be updated by InitializeAsync if LatestRelease changes
             var defaultBasePath = DeterminedDefaultMfcBasePath;
-            DataOutputPath = Path.Combine(defaultBasePath, "Data", LatestRelease ?? "latest");
-            MfcOutputPath = Path.Combine(defaultBasePath, "Connections");
-            NotifyPropertyChanged(nameof(DataOutputPath)); // Notify for initial value
-            NotifyPropertyChanged(nameof(MfcOutputPath)); // Notify for initial value
-
+            DataOutputPath = Path.Combine(defaultBasePath, "Data", LatestRelease ?? "latest");            NotifyPropertyChanged(nameof(DataOutputPath)); // Notify for initial value
             IsLoading = true; // Set IsLoading to true before starting async init
             StatusText = "Initializing..."; // Initial status
             NotifyPropertyChanged(nameof(IsLoading));
@@ -1015,152 +1105,7 @@ namespace DuckDBGeoparquet.Views
             return true;
         }
 
-        private async Task LoadOvertureDataAsync()
-        {
-            try
-            {
-                var selectedLeafItems = GetSelectedLeafItems();
-                if (selectedLeafItems.Count == 0)
-                {
-                    AddToLog("No themes or sub-themes selected.");
-                    return;
-                }
-
-                // Initialize a new cancellation token source
-                _cts?.Dispose();
-                _cts = new CancellationTokenSource();
-                var cancellationToken = _cts.Token;
-
-                // Switch to status tab
-                SelectedTabIndex = (int)WizardTab.Status;
-
-                StatusText = $"Loading {selectedLeafItems.Count} selected data types...";
-                AddToLog($"Starting to load {selectedLeafItems.Count} data type(s) from release {LatestRelease}");
-                DateTime loadStartUtc = DateTime.UtcNow;
-
-                AddToLog("Capturing current map extent once for this load (extent will not change if you zoom/pan during load).");
-                Envelope extent = await GetLoadExtentAsync();
-
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    StatusText = "Operation cancelled";
-                    AddToLog("Operation was cancelled");
-                    return;
-                }
-
-                string dataPath = DataOutputPath;
-                if (!await CheckAndReplaceExistingDataAsync(selectedLeafItems, dataPath))
-                    return;
-
-                _dataProcessor.BeginNewOutputSession();
-                _dataProcessor.SelectedCartographicProfile = SelectedCartographicProfile;
-                _dataProcessor.SelectedMapStyle = null;
-                if (SelectedCartographicProfile != null)
-                {
-                    AddToLog($"Map purpose: {SelectedCartographicProfile.DisplayName} — layers will receive intent-driven cartography");
-                }
-
-                int totalDataTypesToProcess = selectedLeafItems.Count;
-                int processedDataTypes = 0;
-
-                for (int itemIndex = 0; itemIndex < selectedLeafItems.Count; itemIndex++)
-                {
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        StatusText = "Operation cancelled";
-                        AddToLog("Operation was cancelled");
-                        return;
-                    }
-
-                    bool success = await LoadAndCreateLayersForItemAsync(
-                        selectedLeafItems[itemIndex], itemIndex, totalDataTypesToProcess,
-                        processedDataTypes, extent, cancellationToken);
-
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        StatusText = "Operation cancelled";
-                        AddToLog("Operation was cancelled");
-                        return;
-                    }
-
-                    if (success)
-                        processedDataTypes++;
-                }
-
-                // Check for cancellation
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    StatusText = "Operation cancelled";
-                    AddToLog("Operation was cancelled");
-                    return;
-                }
-
-                // Now that all data is processed, add all layers to map in optimal stacking order
-                StatusText = "Adding layers to map in optimal stacking order...";
-                AddToLog("🗺️ All data exported successfully. Now adding layers to map with optimal stacking order...");
-
-                // Add UI yield before final layer creation
-                await Task.Delay(100);
-
-                var progressReporter = new Progress<string>(status =>
-                {
-                    StatusText = status;
-                    AddToLog(status);
-                });
-
-                await _dataProcessor.AddAllLayersToMapAsync(progressReporter);
-
-                // Restore map view to extent user had when they clicked Load (prevents zoom-out after adding layers)
-                if (_savedViewExtentForRestore != null)
-                {
-                    await QueuedTask.Run(() =>
-                    {
-                        if (MapView.Active != null)
-                        {
-                            MapView.Active.ZoomTo(_savedViewExtentForRestore);
-                            System.Diagnostics.Debug.WriteLine("[Load complete] Restored map view to saved extent.");
-                        }
-                        _savedViewExtentForRestore = null;
-                    });
-                }
-
-                // Store the data path for potential MFC creation later
-                _lastLoadedDataPath = DataOutputPath;
-
-                var loadElapsed = DateTime.UtcNow - loadStartUtc;
-                string summaryStyle = SelectedCartographicProfile?.DisplayName ?? "Default";
-                string summaryExtent = extent != null
-                    ? $"{extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}"
-                    : "none";
-                string loadSummary = $"Load summary: layers={_dataProcessor.LastAddedLayerCount}, map purpose={summaryStyle}, elapsed={loadElapsed:hh\\:mm\\:ss}, extent={summaryExtent}";
-                AddToLog(loadSummary);
-                System.Diagnostics.Debug.WriteLine($"[Load summary] {loadSummary}");
-
-                // Now that the data is loaded, inform the user they can create an MFC if desired
-                AddToLog("----------------");
-                AddToLog("Data loading complete. You can now:");
-                AddToLog("1. Work with the loaded GeoParquet data directly");
-                AddToLog("2. Create a Multifile Feature Connection (MFC) from the 'Create MFC' tab");
-                AddToLog("Note: Layers have been added with optimal drawing order (points on top → lines → polygons on bottom)");
-                AddToLog("----------------");
-
-                // Show a message box offering to go to the Create MFC tab
-                var result = ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
-                    "Data loading complete. Would you like to create a Multifile Feature Connection (MFC) now?",
-                    "Create MFC?",
-                    System.Windows.MessageBoxButton.YesNo,
-                    System.Windows.MessageBoxImage.Question);
-
-                if (result == System.Windows.MessageBoxResult.Yes)
-                {
-                    // Navigate to the Create MFC tab
-                    ShowCreateMfcTab();
-                }
-
-                // Update the Create MFC command can-execute state
-                (CreateMfcCommand as RelayCommand)?.RaiseCanExecuteChanged();
-
-                StatusText = $"Successfully loaded all selected themes from release {LatestRelease}";
+        ";
                 AddToLog($"All selected themes loaded successfully");
                 
                 AddToLog("🚀 Data loaded successfully");
@@ -1275,154 +1220,6 @@ namespace DuckDBGeoparquet.Views
             return true;
         }
 
-        private async Task CreateMfcAsync()
-        {
-            try
-            {
-                // Initialize a new cancellation token source
-                _cts?.Dispose();
-                _cts = new CancellationTokenSource();
-                var cancellationToken = _cts.Token;
-
-                // Switch to status tab
-                SelectedTabIndex = (int)WizardTab.Status;
-
-                StatusText = "Creating Multifile Feature Connection...";
-                AddToLog("Setting up Multifile Feature Connection for data");
-                ProgressValue = 0;
-
-                string dataFolder = ResolveDataFolder();
-                if (dataFolder == null)
-                    return;
-
-                string connectionFolder = MfcOutputPath;
-                if (!Directory.Exists(connectionFolder))
-                {
-                    AddToLog($"Creating connection folder: {connectionFolder}");
-                    Directory.CreateDirectory(connectionFolder);
-                }
-
-                if (!ValidateDataFolder(dataFolder))
-                    return;
-
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    StatusText = "Operation cancelled";
-                    AddToLog("Operation was cancelled before MFC creation");
-                    return;
-                }
-
-                // Create a nice MFC filename based on the release and sanitize it
-                string releaseName = LatestRelease?.Replace("-", "") ?? "Latest";
-                string mfcName = $"OvertureRelease_{releaseName}";
-                string mfcFilePath = Path.Combine(connectionFolder, $"{mfcName}.mfc");
-
-                AddToLog($"MFC source folder: {dataFolder}");
-                AddToLog($"MFC output location: {connectionFolder}");
-                AddToLog($"MFC name: {mfcName}");
-
-                ProgressValue = 30; // Show progress starting
-
-                try
-                {
-                    // Get the add-in's execution path to help locate bundled DuckDB extensions
-                    string addinExecutionPath = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
-
-                    bool success = await Services.MfcUtility.GenerateMfcFileAsync(
-                        dataFolder,         // Source folder with the properly structured datasets
-                        mfcFilePath,        // Full path to the output MFC file
-                        addinExecutionPath, // Path to the add-in's executing directory
-                        (logMessage) => AddToLog(logMessage) // Pass the AddToLog method for logging within the utility
-                    );
-
-                    // Check for cancellation
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        StatusText = "Operation cancelled";
-                        AddToLog("Operation was cancelled during MFC creation");
-                        return;
-                    }
-
-                    ProgressValue = 100; // Complete
-
-                    if (success)
-                    {
-                        StatusText = "Successfully created Multifile Feature Connection";
-                        AddToLog($"MFC created at: {mfcFilePath}");
-
-                        // Provide simplified instructions for adding the MFC to the project
-                        try
-                        {
-                            AddToLog("----------------");
-                            AddToLog("To use the MFC in your project:");
-                            AddToLog("1. In the Catalog pane, navigate to the location of the MFC file");
-                            AddToLog($"2. Right-click on the file: {Path.GetFileName(mfcFilePath)}");
-                            AddToLog("3. Select 'Add To Project'");
-                            AddToLog("4. The MFC will appear in the 'Multifile Feature Connections' section");
-                            AddToLog("----------------");
-
-                            // Display a message box with instructions
-                            ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
-                                $"Multifile Feature Connection created successfully!\n\n" +
-                                $"Location: {mfcFilePath}\n\n" +
-                                "To add it to your project:\n" +
-                                "1. Navigate to the MFC file in the Catalog pane\n" +
-                                $"2. Right-click on '{Path.GetFileName(mfcFilePath)}'\n" +
-                                "3. Select 'Add To Project'",
-                                "MFC Created Successfully",
-                                System.Windows.MessageBoxButton.OK,
-                                System.Windows.MessageBoxImage.Information);
-                        }
-                        catch (Exception ex)
-                        {
-                            AddToLog($"Warning: {ex.Message}");
-                        }
-                    }
-                    else
-                    {
-                        StatusText = "Error creating Multifile Feature Connection";
-                        AddToLog("Failed to create MFC. See ArcGIS Pro logs for details.");
-
-                        // Show a message box with more details to help the user
-                        ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
-                            "The Multifile Feature Connection could not be created.\n\n" +
-                            "Possible reasons:\n" +
-                            "1. No data files were found in the expected folder structure\n" +
-                            "2. The GeoParquet files don't have the correct structure\n" +
-                            "3. ArcGIS Pro doesn't have permission to create the MFC file\n\n" +
-                            "Check the log tab for more details.",
-                            "MFC Creation Failed",
-                            System.Windows.MessageBoxButton.OK,
-                            System.Windows.MessageBoxImage.Warning);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    StatusText = "Error creating Multifile Feature Connection";
-                    AddToLog($"ERROR: Exception creating MFC: {ex.Message}");
-                    AddToLog($"Stack trace: {ex.StackTrace}");
-                    ProgressValue = 0;
-                }
-            }
-            catch (Exception ex)
-            {
-                StatusText = $"Error creating MFC: {ex.Message}";
-                AddToLog($"ERROR: {ex.Message}");
-                AddToLog($"Stack trace: {ex.StackTrace}");
-                ProgressValue = 0;
-                System.Diagnostics.Debug.WriteLine($"MFC creation error: {ex}");
-            }
-            finally
-            {
-                // Clean up the cancellation token source
-                if (_cts != null)
-                {
-                    _cts.Dispose();
-                    _cts = null;
-                }
-            }
-        }
-
         private class ReleaseInfo
         {
             public string Latest { get; set; }
@@ -1485,7 +1282,6 @@ namespace DuckDBGeoparquet.Views
             }
 
             // Clear selected themes list - no longer needed
-            // _selectedThemes.Clear();
             // NotifyPropertyChanged(nameof(SelectedThemes));
 
             // Reset other properties
