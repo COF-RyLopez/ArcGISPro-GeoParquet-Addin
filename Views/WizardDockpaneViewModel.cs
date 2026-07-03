@@ -1101,22 +1101,100 @@ namespace DuckDBGeoparquet.Views
             return true;
         }
 
-        ";
-                AddToLog($"All selected themes loaded successfully");
-                
+        private async Task LoadOvertureDataAsync()
+        {
+            try
+            {
+                var selectedLeafItems = GetSelectedLeafItems();
+                if (selectedLeafItems.Count == 0)
+                {
+                    AddToLog("No themes or sub-themes selected.");
+                    return;
+                }
+
+                _cts?.Dispose();
+                _cts = new CancellationTokenSource();
+                var cancellationToken = _cts.Token;
+
+                SelectedTabIndex = (int)WizardTab.Status;
+                StatusText = $"Loading {selectedLeafItems.Count} selected data types...";
+                AddToLog($"Starting to load {selectedLeafItems.Count} data type(s) from release {LatestRelease}");
+                DateTime loadStartUtc = DateTime.UtcNow;
+                Envelope extent = await GetLoadExtentAsync();
+
+                if (cancellationToken.IsCancellationRequested) return;
+
+                string dataPath = DataOutputPath;
+                if (!await CheckAndReplaceExistingDataAsync(selectedLeafItems, dataPath)) return;
+
+                _dataProcessor.BeginNewOutputSession();
+                _dataProcessor.SelectedCartographicProfile = SelectedCartographicProfile;
+                _dataProcessor.SelectedMapStyle = null;
+
+                int totalDataTypesToProcess = selectedLeafItems.Count;
+                int processedDataTypes = 0;
+
+                for (int itemIndex = 0; itemIndex < selectedLeafItems.Count; itemIndex++)
+                {
+                    if (cancellationToken.IsCancellationRequested) return;
+
+                    bool success = await LoadAndCreateLayersForItemAsync(
+                        selectedLeafItems[itemIndex], itemIndex, totalDataTypesToProcess,
+                        processedDataTypes, extent, cancellationToken);
+
+                    if (success) processedDataTypes++;
+                }
+
+                if (cancellationToken.IsCancellationRequested) return;
+
+                StatusText = "Adding layers to map in optimal stacking order...";
+                AddToLog("🗺️ All data exported successfully. Now adding layers to map with optimal stacking order...");
+
+                await Task.Delay(100);
+
+                var progressReporter = new Progress<string>(status =>
+                {
+                    StatusText = status;
+                    AddToLog(status);
+                });
+
+                await _dataProcessor.AddAllLayersToMapAsync(progressReporter);
+
+                if (_savedViewExtentForRestore != null)
+                {
+                    await QueuedTask.Run(() =>
+                    {
+                        if (MapView.Active != null)
+                        {
+                            MapView.Active.ZoomTo(_savedViewExtentForRestore);
+                        }
+                        _savedViewExtentForRestore = null;
+                    });
+                }
+
+                _lastLoadedDataPath = DataOutputPath;
+
+                var loadElapsed = DateTime.UtcNow - loadStartUtc;
+                string summaryStyle = SelectedCartographicProfile?.DisplayName ?? "Default";
+                string summaryExtent = extent != null
+                    ? $"{extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}"
+                    : "none";
+                AddToLog($"Load summary: layers={_dataProcessor.LastAddedLayerCount}, map purpose={summaryStyle}, elapsed={loadElapsed:hh\:mm\:ss}, extent={summaryExtent}");
+
+                StatusText = $"Successfully loaded all selected themes from release {LatestRelease}";
+                AddToLog("All selected themes loaded successfully");
                 AddToLog("🚀 Data loaded successfully");
                 AddToLog("----------------");
                 if (extent != null)
                 {
                     AddToLog($"Data was loaded for this extent only: {extent.XMin:F2}, {extent.YMin:F2}, {extent.XMax:F2}, {extent.YMax:F2}");
-                    System.Diagnostics.Debug.WriteLine($"[Load complete] Extent used for this load: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
                     AddToLog("When you load data for a different extent, the existing data will be replaced.");
                     AddToLog("This ensures a clean folder structure for MFC creation.");
-                    AddToLog("Rename the output folder OvertureProAddinData if you don't want to overwrite");
                 }
                 AddToLog("----------------");
                 ProgressValue = 100;
             }
+
             catch (Exception ex)
             {
                 // Determine if this is a file access issue
@@ -1154,66 +1232,6 @@ namespace DuckDBGeoparquet.Views
                     _cts = null;
                 }
             }
-        }
-
-        private string ResolveDataFolder()
-        {
-            if (UsePreviouslyLoadedData && !string.IsNullOrEmpty(_lastLoadedDataPath))
-            {
-                AddToLog($"Using previously loaded data from: {_lastLoadedDataPath}");
-                return _lastLoadedDataPath;
-            }
-
-            if (UseCustomDataFolder && !string.IsNullOrEmpty(CustomDataFolderPath))
-            {
-                AddToLog($"Using custom data folder: {CustomDataFolderPath}");
-                return CustomDataFolderPath;
-            }
-
-            StatusText = "Error: No valid data folder specified";
-            AddToLog("ERROR: No valid data folder specified for MFC creation");
-            return null;
-        }
-
-        private bool ValidateDataFolder(string dataFolder)
-        {
-            if (!Directory.Exists(dataFolder))
-            {
-                AddToLog($"ERROR: Data folder does not exist: {dataFolder}");
-                StatusText = "Error creating Multifile Feature Connection - data folder not found";
-                return false;
-            }
-
-            int fileCount = Directory.GetFiles(dataFolder, "*.parquet", SearchOption.AllDirectories).Length;
-            AddToLog($"Found {fileCount} parquet files in data folder");
-
-            if (fileCount == 0)
-            {
-                var themeFolders = Directory.GetDirectories(dataFolder);
-                AddToLog($"Found {themeFolders.Length} theme folders in {dataFolder}");
-
-                foreach (var folder in themeFolders)
-                {
-                    AddToLog($"Theme folder: {Path.GetFileName(folder)}");
-                    var typeFolders = Directory.GetDirectories(folder);
-                    AddToLog($"  Contains {typeFolders.Length} type folders");
-
-                    foreach (var typeFolder in typeFolders)
-                    {
-                        var filesInType = Directory.GetFiles(typeFolder, "*.parquet");
-                        AddToLog($"  Type folder {Path.GetFileName(typeFolder)} contains {filesInType.Length} parquet files");
-                    }
-                }
-
-                if (fileCount == 0)
-                {
-                    AddToLog("No data files were found in the specified folder. Cannot create MFC.");
-                    StatusText = "Error creating Multifile Feature Connection - no data files found";
-                    return false;
-                }
-            }
-
-            return true;
         }
 
         private class ReleaseInfo
@@ -1334,13 +1352,6 @@ namespace DuckDBGeoparquet.Views
 
             UpdateIsSelectAllCheckedStatus(); // Ensure Select All checkbox is correctly updated
             System.Diagnostics.Debug.WriteLine("Add-in state has been reset");
-        }
-
-        private void ShowCreateMfcTab()
-        {
-            SelectedTabIndex = (int)WizardTab.CreateMfc;
-            StatusText = "Ready to create Multifile Feature Connection";
-            AddToLog("Create MFC tab activated");
         }
 
         private static string MakeFriendlyName(string s3TypeName) // CA1822 Made static
