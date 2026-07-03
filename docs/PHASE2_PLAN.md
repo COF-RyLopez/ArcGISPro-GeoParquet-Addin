@@ -59,10 +59,10 @@ drives the extent.
 **Verification checklist (requires ArcGIS Pro 3.7 on Windows):**
 1. `dotnet build` — confirm removing `Esri.ArcGISRuntime` broke nothing.
 2. Open Preview tab → map loads, "Preview map ready." appears in the log.
-3. Show Extent draws the configured extent; Use Preview Extent round-trips
-   (pan/zoom, adopt, confirm the WGS84 coords in Select Data).
-4. Export a small area with **SNAPPY**, Preview Data → layers render.
-   Repeat with ZSTD → per-layer error + the compression warning in the log.
+3. Show Extent draws the configured extent from the active Pro map or custom
+   extent.
+4. Select one or more themes, click Preview Sample, and confirm capped
+   GeoJSON sample layers render from S3.
 5. Disconnect from the network, reload the pane → offline notice, no crash.
 6. If Pro's bundled WebView2 assemblies conflict with the NuGet version,
    pin `Microsoft.Web.WebView2` to the version Pro ships.
@@ -86,6 +86,10 @@ drives the extent.
 - `DuckDBManager` (connection lifecycle + extension loading) — DONE.
   `DataProcessor` proxies `_connection`/`_isInitialized` so call sites are
   unchanged; behavior and error messages are moved verbatim.
+- `GeocoderEngine` (address/place candidate search) — DONE. Query logic
+  moved verbatim; `DataProcessor` keeps thin delegating wrappers for its
+  public search API. `EscapeSqlLiteral` promoted to `GeoParquetSql` with
+  test coverage.
 - `S3Ingester` — pure ingest query builders extracted and DONE.
   `Services/S3Ingester.cs` owns `BuildColumnProjection` (type-specific
   column drops) and `BuildLoadQuery` (the `current_table` query: bbox
@@ -93,8 +97,10 @@ drives the extent.
   bbox struct repack when present). `DataProcessor.IngestFileAsync` now
   calls it; the SQL is moved verbatim. Covered by `S3IngesterTests`. The
   stateful S3 read (schema discovery, execution) stays in `DataProcessor`.
-- Remaining: `ParquetExporter`, `LayerManager`, `GeocoderEngine`. Extract
-  the pure parts (query text builders) into testable classes as they move.
+- Remaining: `ParquetExporter`, `LayerManager`. These share
+  mutable per-load state (`_pendingLayers`, `_currentExtent`, session
+  suffix), so extract them together or thread the state through a small
+  load-context object.
 - Stage 3: extract `DataLoadOrchestrator` and `MfcOrchestrator` from
   `WizardDockpaneViewModel.cs` (load pipeline, bulk replacement, P/Invoke
   deletion, extent resolution; MFC creation).

@@ -1,5 +1,6 @@
 using ArcGIS.Core.Geometry;
 using ArcGIS.Desktop.Core;
+using ArcGIS.Desktop.Mapping;
 using DuckDBGeoparquet.Models;
 using static DuckDBGeoparquet.Models.AddinConstants;
 using System;
@@ -36,14 +37,24 @@ namespace DuckDBGeoparquet.Services
             _isInitialized = true;
         }
 
-        public async Task<List<GeocodeCandidate>> SearchAsync(string query, Envelope roiExtent = null, int maxResults = 25, CancellationToken cancellationToken = default)
+        public async Task<List<GeocodeCandidate>> SearchAsync(string query, Envelope searchExtent = null, int maxResults = 25, CancellationToken cancellationToken = default)
         {
             await InitializeAsync();
 
-            string normalizedQuery = NormalizeQuery(query);
+            string normalizedQuery = GeocodeTextNormalizer.NormalizeForSearch(query);
             if (string.IsNullOrWhiteSpace(normalizedQuery))
             {
                 return [];
+            }
+
+            if (PreferLocatorSearch && IsLocatorReady())
+            {
+                var locatorCandidates = await TryLocatorSearchAsync(query, searchExtent, maxResults);
+                if (locatorCandidates.Count > 0)
+                {
+                    return locatorCandidates;
+                }
+                // No locator hits — fall through to the local DuckDB search.
             }
 
             string addressParquetGlob = ResolveParquetGlobPath("address");
@@ -58,13 +69,13 @@ namespace DuckDBGeoparquet.Services
 
             if (!string.IsNullOrWhiteSpace(addressParquetGlob))
             {
-                var addressCandidates = await _dataProcessor.SearchAddressCandidatesAsync(addressParquetGlob, normalizedQuery, roiExtent == null ? null : new ExtentBounds(roiExtent.XMin, roiExtent.YMin, roiExtent.XMax, roiExtent.YMax), perSourceLimit, cancellationToken);
+                var addressCandidates = await _dataProcessor.SearchAddressCandidatesAsync(addressParquetGlob, normalizedQuery, searchExtent == null ? null : new ExtentBounds(searchExtent.XMin, searchExtent.YMin, searchExtent.XMax, searchExtent.YMax), perSourceLimit, cancellationToken);
                 merged.AddRange(addressCandidates);
             }
 
             if (!string.IsNullOrWhiteSpace(placeParquetGlob))
             {
-                var placeCandidates = await _dataProcessor.SearchPlaceCandidatesAsync(placeParquetGlob, normalizedQuery, roiExtent == null ? null : new ExtentBounds(roiExtent.XMin, roiExtent.YMin, roiExtent.XMax, roiExtent.YMax), perSourceLimit, cancellationToken);
+                var placeCandidates = await _dataProcessor.SearchPlaceCandidatesAsync(placeParquetGlob, normalizedQuery, searchExtent == null ? null : new ExtentBounds(searchExtent.XMin, searchExtent.YMin, searchExtent.XMax, searchExtent.YMax), perSourceLimit, cancellationToken);
                 merged.AddRange(placeCandidates);
             }
 
@@ -73,6 +84,17 @@ namespace DuckDBGeoparquet.Services
                 .ThenBy(c => c.DisplayLabel, StringComparer.OrdinalIgnoreCase)
                 .Take(Math.Clamp(maxResults, 1, 100))
                 .ToList();
+        }
+
+        /// <summary>
+        /// Geocodes a single query and returns the best candidate (or null).
+        /// Used for file geocoding; goes through the same pipeline as
+        /// interactive search, so it honors PreferLocatorSearch.
+        /// </summary>
+        public async Task<GeocodeCandidate> GeocodeBestAsync(string query, CancellationToken cancellationToken = default)
+        {
+            var results = await SearchAsync(query, null, 1, cancellationToken);
+            return results.FirstOrDefault();
         }
 
         public bool IsLocatorReady()
@@ -90,17 +112,72 @@ namespace DuckDBGeoparquet.Services
             return await _locatorBuildService.BuildOrRebuildLocatorAsync(forceRebuild);
         }
 
-        private static string NormalizeQuery(string value)
+        /// <summary>
+        /// Searches the map's registered locator providers (including the
+        /// built hybrid locator) via LocatorManager.GeocodeAsync. Returns an
+        /// empty list on any failure so callers fall back to the local
+        /// DuckDB search.
+        /// </summary>
+        private static async Task<List<GeocodeCandidate>> TryLocatorSearchAsync(string query, Envelope searchExtent, int maxResults)
         {
-            if (string.IsNullOrWhiteSpace(value))
+            var candidates = new List<GeocodeCandidate>();
+            try
             {
-                return string.Empty;
+                var mapView = MapView.Active;
+                if (mapView == null)
+                {
+                    return candidates;
+                }
+
+                var results = await mapView.LocatorManager.GeocodeAsync(query.Trim(), false, false);
+                if (results == null)
+                {
+                    return candidates;
+                }
+
+                foreach (var result in results)
+                {
+                    var location = result.DisplayLocation;
+                    if (location == null)
+                    {
+                        continue;
+                    }
+
+                    MapPoint wgsPoint = location;
+                    if (location.SpatialReference != null && location.SpatialReference.Wkid != 4326)
+                    {
+                        wgsPoint = GeometryEngine.Instance.Project(location, SpatialReferences.WGS84) as MapPoint ?? location;
+                    }
+
+                    if (searchExtent != null &&
+                        (wgsPoint.X < searchExtent.XMin || wgsPoint.X > searchExtent.XMax ||
+                         wgsPoint.Y < searchExtent.YMin || wgsPoint.Y > searchExtent.YMax))
+                    {
+                        continue;
+                    }
+
+                    int score = (int)Math.Round(result.Score);
+                    candidates.Add(new GeocodeCandidate
+                    {
+                        DisplayLabel = result.Label,
+                        Longitude = wgsPoint.X,
+                        Latitude = wgsPoint.Y,
+                        SourceType = "Locator",
+                        MatchTier = "locator",
+                        Score = score,
+                        ConfidenceTier = score >= 90 ? "High" : score >= 75 ? "Medium" : "Low"
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Locator search failed; falling back to local search: {ex.Message}");
             }
 
-            return string.Join(" ", value
-                .Trim()
-                .ToLowerInvariant()
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+            return candidates
+                .OrderByDescending(c => c.Score)
+                .Take(Math.Clamp(maxResults, 1, 100))
+                .ToList();
         }
 
         private static string ResolveParquetGlobPath(string dataType)
