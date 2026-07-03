@@ -90,7 +90,14 @@ drives the extent.
   moved verbatim; `DataProcessor` keeps thin delegating wrappers for its
   public search API. `EscapeSqlLiteral` promoted to `GeoParquetSql` with
   test coverage.
-- Remaining: `S3Ingester`, `ParquetExporter`, `LayerManager`. These share
+- `S3Ingester` — pure ingest query builders extracted and DONE.
+  `Services/S3Ingester.cs` owns `BuildColumnProjection` (type-specific
+  column drops) and `BuildLoadQuery` (the `current_table` query: bbox
+  pushdown + `ST_Intersects` filter and `ST_Intersection` clipping, with
+  bbox struct repack when present). `DataProcessor.IngestFileAsync` now
+  calls it; the SQL is moved verbatim. Covered by `S3IngesterTests`. The
+  stateful S3 read (schema discovery, execution) stays in `DataProcessor`.
+- Remaining: `ParquetExporter`, `LayerManager`. These share
   mutable per-load state (`_pendingLayers`, `_currentExtent`, session
   suffix), so extract them together or thread the state through a small
   load-context object.
