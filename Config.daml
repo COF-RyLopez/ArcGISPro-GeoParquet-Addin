@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <ArcGIS defaultAssembly="DuckDBGeoparquet.dll" defaultNamespace="DuckDBGeoparquet" xmlns="http://schemas.esri.com/DADF/Registry" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 	<AddInInfo id="{9e44d8fc-6e1a-4513-9992-85c2de3e2d61}" version="0.5.0" desktopVersion="3.7">
 		<Name>DuckDBGeoparquet</Name>
@@ -29,17 +29,17 @@
 			</groups>
 			<controls>
 				<labelControl id="DuckDBGeoparquet_OvertureMapDescription" caption="Import and explore GeoParquet data" />
-				<button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" caption="Download Overture" className="DuckDBGeoparquet.Views.WizardDockpaneShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="L" condition="esri_mapping_mapPane" extendedCaption="Download Overture Maps Data">
+				<button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" caption="Download Overture" className="DuckDBGeoparquet.Views.WizardDockpaneShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="L" extendedCaption="Download Overture Maps Data">
 					<tooltip heading="Overture Maps Data Loader">
                         Download Overture Maps data as GeoParquet files
 						<disabledText>Unable to launch Overture Maps Data Loader at this time</disabledText></tooltip>
 				</button>
-				<button id="DuckDBGeoparquet_Views_OvertureGeocoderDockpane_ShowButton" caption="Overture Geocoder" className="DuckDBGeoparquet.Views.OvertureGeocoderShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="G" condition="esri_mapping_mapPane" extendedCaption="Search Loaded Overture Address and Place Data">
+				<button id="DuckDBGeoparquet_Views_OvertureGeocoderDockpane_ShowButton" caption="Overture Geocoder" className="DuckDBGeoparquet.Views.OvertureGeocoderShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="G" extendedCaption="Search Loaded Overture Address and Place Data">
 					<tooltip heading="Overture Geocoder">
                         Search loaded Overture address and place data
 						<disabledText>Unable to open Overture Geocoder at this time</disabledText></tooltip>
 				</button>
-								<button id="DuckDBGeoparquet_Views_MfcDockpane_ShowButton" caption="Create MFC" className="DuckDBGeoparquet.Views.MfcDockpane_ShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="C" condition="esri_mapping_mapPane" extendedCaption="Create Multifile Feature Connection">
+								<button id="DuckDBGeoparquet_Views_MfcDockpane_ShowButton" caption="Create MFC" className="DuckDBGeoparquet.Views.MfcDockpane_ShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="C" extendedCaption="Create Multifile Feature Connection">
 					<tooltip heading="Create MFC">
                         Create an MFC from downloaded GeoParquet data
 						<disabledText>Unable to open MFC tool at this time</disabledText></tooltip>
