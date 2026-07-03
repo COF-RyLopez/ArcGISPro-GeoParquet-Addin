@@ -162,6 +162,11 @@ namespace DuckDBGeoparquet.Services
             string placeLocatorPath = Path.Combine(locatorRoot, "OverturePlace.loc");
             string compositeLocatorPath = Path.Combine(locatorRoot, "OvertureHybrid.loc");
 
+            // Locator tools do NOT honor the overwriteOutput environment, so a
+            // previous build's .loc outputs cause ERROR 000725. Delete them
+            // first so the build is idempotent for both Build and Rebuild.
+            await CleanupExistingLocatorsAsync(addressLocatorPath, placeLocatorPath, compositeLocatorPath);
+
             var addressFields = await GetFeatureClassFieldNamesAsync(addressFc);
             var placeFields = await GetFeatureClassFieldNamesAsync(placeFc);
 
@@ -332,6 +337,35 @@ namespace DuckDBGeoparquet.Services
                 Succeeded = false,
                 Message = $"{message}{(string.IsNullOrWhiteSpace(gpMessages) ? string.Empty : $"{Environment.NewLine}{gpMessages}")}"
             };
+        }
+
+        /// <summary>
+        /// Removes any previously built locator outputs before a rebuild.
+        /// Locator geoprocessing tools ignore the overwrite environment, so a
+        /// leftover .loc dataset otherwise fails with ERROR 000725. Uses the
+        /// Delete GP tool, which removes the locator's companion files too.
+        /// </summary>
+        private static async Task CleanupExistingLocatorsAsync(params string[] locatorPaths)
+        {
+            foreach (var path in locatorPaths)
+            {
+                if (!File.Exists(path) && !Directory.Exists(path))
+                {
+                    continue;
+                }
+                try
+                {
+                    var result = await RunGpToolAsync("management.Delete", [path]);
+                    if (result.IsFailed)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Could not delete existing locator {path}: {GpMessages(result)}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Delete existing locator {path} threw: {ex.Message}");
+                }
+            }
         }
 
         private static async Task<IGPResult> RunGpToolAsync(string toolName, IEnumerable<object> values)
