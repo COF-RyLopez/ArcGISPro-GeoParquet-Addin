@@ -51,7 +51,7 @@
             </Border>
         </StackPanel>
         <!-- Main content area with TabControl -->
-        <TabControl Grid.Row="1" Margin="0,8,0,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}" Background="Transparent" BorderThickness="0">
+        <TabControl Grid.Row="1" Margin="0,8,0,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource Esri_TextElementBrush}" TextElement.Foreground="{DynamicResource Esri_TextElementBrush}">
             <TabControl.Resources>
         <Style TargetType="TabItem">
             <Setter Property="Visibility" Value="Collapsed"/>
