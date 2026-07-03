@@ -1,4 +1,5 @@
 using ArcGIS.Core.Data;
+using ArcGIS.Desktop.Catalog;
 using ArcGIS.Desktop.Core;
 using ArcGIS.Desktop.Core.Geoprocessing;
 using ArcGIS.Desktop.Framework.Threading.Tasks;
@@ -109,38 +110,24 @@ namespace DuckDBGeoparquet.Services
             Directory.CreateDirectory(locatorRoot);
             string scratchGdbFolder = Path.Combine(locatorRoot, "scratch");
             Directory.CreateDirectory(scratchGdbFolder);
-            string scratchGdbPath = Path.Combine(scratchGdbFolder, "overture_locator_input.gdb");
 
-            if (Directory.Exists(scratchGdbPath) && forceRebuild)
-            {
-                try
-                {
-                    Directory.Delete(scratchGdbPath, true);
-                }
-                catch (Exception ex)
-                {
-                    // Continuing into a half-cleared, locked geodatabase makes
-                    // the export steps fail confusingly later — stop here with
-                    // an actionable message instead.
-                    System.Diagnostics.Debug.WriteLine($"Could not clear scratch geodatabase: {ex.Message}");
-                    return new LocatorBuildResult
-                    {
-                        Succeeded = false,
-                        Message = "The previous locator scratch geodatabase is locked by another process " +
-                                  "(usually ArcGIS Pro itself — a locator registered in the project or a layer " +
-                                  "referencing it). Remove those references, restart ArcGIS Pro, and rebuild. " +
-                                  $"Locked path: {scratchGdbPath} ({ex.Message})"
-                    };
-                }
-            }
+            // A feature locator holds a live reference to its input feature
+            // classes, so once registered it locks the scratch geodatabase and
+            // its own .loc files — the previous build's outputs can never be
+            // deleted or overwritten. Unregister the old Overture locators to
+            // release those locks, then use fresh timestamped names so this
+            // build can never be blocked by a still-locked predecessor.
+            await UnregisterProjectLocatorsAsync(locatorRoot);
+            CleanupOldLocatorArtifacts(locatorRoot, scratchGdbFolder);
 
-            if (!Directory.Exists(scratchGdbPath))
+            string buildStamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
+            string scratchGdbName = $"locator_input_{buildStamp}.gdb";
+            string scratchGdbPath = Path.Combine(scratchGdbFolder, scratchGdbName);
+
+            var createGdbResult = await RunGpToolAsync("management.CreateFileGDB", [scratchGdbFolder, scratchGdbName]);
+            if (createGdbResult.IsFailed)
             {
-                var createGdbResult = await RunGpToolAsync("management.CreateFileGDB", [scratchGdbFolder, "overture_locator_input.gdb"]);
-                if (createGdbResult.IsFailed)
-                {
-                    return Fail("Failed to create scratch geodatabase.", createGdbResult);
-                }
+                return Fail("Failed to create scratch geodatabase.", createGdbResult);
             }
 
             string addressFc = Path.Combine(scratchGdbPath, "address_points");
@@ -158,14 +145,9 @@ namespace DuckDBGeoparquet.Services
                 return Fail("Failed to export place parquet to feature class.", exportPlaceResult);
             }
 
-            string addressLocatorPath = Path.Combine(locatorRoot, "OvertureAddress.loc");
-            string placeLocatorPath = Path.Combine(locatorRoot, "OverturePlace.loc");
-            string compositeLocatorPath = Path.Combine(locatorRoot, "OvertureHybrid.loc");
-
-            // Locator tools do NOT honor the overwriteOutput environment, so a
-            // previous build's .loc outputs cause ERROR 000725. Delete them
-            // first so the build is idempotent for both Build and Rebuild.
-            await CleanupExistingLocatorsAsync(addressLocatorPath, placeLocatorPath, compositeLocatorPath);
+            string addressLocatorPath = Path.Combine(locatorRoot, $"OvertureAddress_{buildStamp}.loc");
+            string placeLocatorPath = Path.Combine(locatorRoot, $"OverturePlace_{buildStamp}.loc");
+            string compositeLocatorPath = Path.Combine(locatorRoot, $"OvertureHybrid_{buildStamp}.loc");
 
             var addressFields = await GetFeatureClassFieldNamesAsync(addressFc);
             var placeFields = await GetFeatureClassFieldNamesAsync(placeFc);
@@ -340,32 +322,68 @@ namespace DuckDBGeoparquet.Services
         }
 
         /// <summary>
-        /// Removes any previously built locator outputs before a rebuild.
-        /// Locator geoprocessing tools ignore the overwrite environment, so a
-        /// leftover .loc dataset otherwise fails with ERROR 000725. Uses the
-        /// Delete GP tool, which removes the locator's companion files too.
+        /// Unregisters this add-in's previously built locators (any locator
+        /// project item under <paramref name="locatorRoot"/>) so the files
+        /// they reference are released and can be cleaned up.
         /// </summary>
-        private static async Task CleanupExistingLocatorsAsync(params string[] locatorPaths)
+        private static async Task UnregisterProjectLocatorsAsync(string locatorRoot)
         {
-            foreach (var path in locatorPaths)
+            try
             {
-                if (!File.Exists(path) && !Directory.Exists(path))
+                string rootFull = Path.GetFullPath(locatorRoot);
+                await QueuedTask.Run(() =>
                 {
-                    continue;
-                }
-                try
-                {
-                    var result = await RunGpToolAsync("management.Delete", [path]);
-                    if (result.IsFailed)
+                    foreach (var item in Project.Current.GetItems<LocatorsConnectionProjectItem>().ToList())
                     {
-                        System.Diagnostics.Debug.WriteLine($"Could not delete existing locator {path}: {GpMessages(result)}");
+                        if (string.IsNullOrWhiteSpace(item.Path))
+                        {
+                            continue;
+                        }
+                        if (Path.GetFullPath(item.Path).StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+                        {
+                            Project.Current.RemoveItem(item as IProjectItem);
+                        }
                     }
-                }
-                catch (Exception ex)
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Unregister project locators skipped: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Best-effort removal of prior builds' locator files and scratch
+        /// geodatabases. Anything still locked (e.g. a locator Pro hasn't
+        /// released yet) is left for a future run; the current build uses
+        /// fresh timestamped names, so leftovers never block it.
+        /// </summary>
+        private static void CleanupOldLocatorArtifacts(string locatorRoot, string scratchGdbFolder)
+        {
+            try
+            {
+                foreach (var loc in Directory.EnumerateFiles(locatorRoot, "Overture*.loc"))
                 {
-                    System.Diagnostics.Debug.WriteLine($"Delete existing locator {path} threw: {ex.Message}");
+                    TryDeleteFile(loc);
+                    TryDeleteFile(loc + ".xml");
+                    TryDeleteFile(Path.ChangeExtension(loc, ".loz"));
+                }
+                foreach (var gdb in Directory.EnumerateDirectories(scratchGdbFolder, "*.gdb"))
+                {
+                    try { Directory.Delete(gdb, true); }
+                    catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Leaving locked scratch gdb {gdb}: {ex.Message}"); }
                 }
             }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Old locator artifact cleanup skipped: {ex.Message}");
+            }
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Leaving locked file {path}: {ex.Message}"); }
         }
 
         private static async Task<IGPResult> RunGpToolAsync(string toolName, IEnumerable<object> values)
