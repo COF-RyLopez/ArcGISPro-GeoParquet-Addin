@@ -9,6 +9,7 @@
 		     SDK assemblies, which only resolve usefully on a machine with Pro
 		     installed. Anything linked here must stay free of ArcGIS types. -->
 		<Compile Include="..\Models\ExtentBounds.cs" Link="Linked\ExtentBounds.cs" />
+		<Compile Include="..\Services\GeocodeResultLabels.cs" Link="Linked\GeocodeResultLabels.cs" />
 		<Compile Include="..\Services\GeocodeFileQueryBuilder.cs" Link="Linked\GeocodeFileQueryBuilder.cs" />
 		<Compile Include="..\Services\GeocodeTextNormalizer.cs" Link="Linked\GeocodeTextNormalizer.cs" />
 		<Compile Include="..\Services\GeoParquetSql.cs" Link="Linked\GeoParquetSql.cs" />

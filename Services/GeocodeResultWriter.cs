@@ -51,8 +51,8 @@ namespace DuckDBGeoparquet.Services
                     c.Longitude.ToString("G", CultureInfo.InvariantCulture),
                     c.Latitude.ToString("G", CultureInfo.InvariantCulture),
                     Csv(c.SourceType),
-                    Csv(c.MatchTier),
-                    Csv(c.ConfidenceTier),
+                    Csv(c.MatchSummary),
+                    Csv(c.ConfidenceSummary),
                     c.Score.ToString(CultureInfo.InvariantCulture)));
             }
             File.WriteAllText(csvPath, sb.ToString(), Encoding.UTF8);

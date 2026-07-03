@@ -1,3 +1,5 @@
+using DuckDBGeoparquet.Services;
+
 namespace DuckDBGeoparquet.Models
 {
     public class GeocodeCandidate
@@ -9,5 +11,7 @@ namespace DuckDBGeoparquet.Models
         public string MatchTier { get; set; }
         public string ConfidenceTier { get; set; }
         public int Score { get; set; }
+        public string MatchSummary => GeocodeResultLabels.GetMatchSummary(MatchTier, SourceType);
+        public string ConfidenceSummary => GeocodeResultLabels.GetConfidenceSummary(ConfidenceTier);
     }
 }

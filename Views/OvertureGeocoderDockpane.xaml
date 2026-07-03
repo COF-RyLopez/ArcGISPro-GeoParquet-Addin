@@ -119,11 +119,11 @@
                                 <TextBlock Text="{Binding DisplayLabel}"
                                            TextWrapping="Wrap"
                                            FontWeight="SemiBold"/>
-                                <TextBlock Text="{Binding MatchTier, StringFormat='Match: {0}'}"
+                                <TextBlock Text="{Binding MatchSummary, StringFormat='Match: {0}'}"
                                            Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
                                 <TextBlock Text="{Binding SourceType, StringFormat='Source: {0}'}"
                                            Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
-                                <TextBlock Text="{Binding ConfidenceTier, StringFormat='Confidence: {0}'}"
+                                <TextBlock Text="{Binding ConfidenceSummary, StringFormat='Confidence: {0}'}"
                                            Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
                             </StackPanel>
                         </DataTemplate>
