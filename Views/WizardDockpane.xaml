@@ -11,7 +11,7 @@
              mc:Ignorable="d" 
              d:DesignHeight="600" d:DesignWidth="400"
              Background="{DynamicResource Esri_DockPaneClientAreaBackgroundBrush}"
-             TextElement.Foreground="{DynamicResource Esri_TextElementBrush}"
+             TextElement.Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"
              d:DataContext="{d:DesignInstance local:WizardDockpaneViewModel, IsDesignTimeCreatable=True}">
     <UserControl.Resources>
         <ResourceDictionary>
@@ -51,7 +51,7 @@
             </Border>
         </StackPanel>
         <!-- Main content area with TabControl -->
-        <TabControl Grid.Row="1" Margin="0,8,0,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource Esri_TextElementBrush}" TextElement.Foreground="{DynamicResource Esri_TextElementBrush}">
+        <TabControl Grid.Row="1" Margin="0,8,0,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}" Background="Transparent" BorderThickness="0" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}" TextElement.Foreground="{DynamicResource Esri_TextStyleDefaultBrush}">
             <TabControl.Resources>
         <Style TargetType="TabItem">
             <Setter Property="Visibility" Value="Collapsed"/>
