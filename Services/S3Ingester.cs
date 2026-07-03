@@ -1,0 +1,144 @@
+using DuckDBGeoparquet.Models;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace DuckDBGeoparquet.Services
+{
+    /// <summary>
+    /// Pure query-text builders for the S3 → DuckDB ingest step. Given a set of
+    /// discovered column names and the requested extent, these produce the
+    /// column projection and the CREATE OR REPLACE TABLE current_table query
+    /// that <see cref="DataProcessor.IngestFileAsync"/> executes.
+    ///
+    /// No ArcGIS or DuckDB dependencies — everything here is deterministic
+    /// string construction, which makes it unit-testable without ArcGIS Pro
+    /// running (see DuckDBGeoparquet.Tests). Extracted from DataProcessor
+    /// (Phase 2c stage 2).
+    /// </summary>
+    public static class S3Ingester
+    {
+        private const string BboxColumn = "bbox";
+        private const string GeometryColumn = "geometry";
+
+        /// <summary>
+        /// Build a projection list that drops known heavy optional columns for the given dataset type.
+        /// Returns null to indicate "SELECT *" when no drops apply.
+        /// </summary>
+        public static string BuildColumnProjection(string actualS3Type, IReadOnlyList<string> columnNames)
+        {
+            if (string.IsNullOrWhiteSpace(actualS3Type) || columnNames == null || columnNames.Count == 0)
+                return null;
+
+            if (!OvertureSchema.ColumnExclusions.TryGetValue(actualS3Type, out var dropSet) || dropSet.Count == 0)
+                return null;
+
+            var projected = columnNames
+                .Where(name =>
+                    // Never drop geometry or bbox even if listed
+                    name.Equals(GeometryColumn, StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith($"{BboxColumn}_", StringComparison.OrdinalIgnoreCase) ||
+                    !dropSet.Contains(name))
+                .ToList();
+
+            // If projection would drop everything (unlikely), fall back to *
+            if (!projected.Any())
+                return null;
+
+            return string.Join(", ", projected);
+        }
+
+        /// <summary>
+        /// Builds the CREATE OR REPLACE TABLE current_table query for an ingest.
+        /// Applies the type-specific column projection, and — when an extent is
+        /// supplied — the bbox pushdown + ST_Intersects spatial filter and
+        /// ST_Intersection clipping (preserving the bbox struct when present).
+        /// </summary>
+        public static string BuildLoadQuery(string s3Path, string actualS3Type, IReadOnlyList<string> columnNames, ExtentBounds extent)
+        {
+            var projectedColumns = BuildColumnProjection(actualS3Type, columnNames);
+
+            string spatialFilter = "";
+            string extentPolygon = "";
+            if (extent != null)
+            {
+                extentPolygon = GeoParquetSql.BuildExtentPolygon(extent);
+
+                // Bbox overlap first (pushdown), then ST_Intersects so only features whose geometry
+                // actually intersects the extent are kept — prevents data extending beyond the frame.
+                spatialFilter = $@"
+                        WHERE {GeoParquetSql.BuildBboxOverlapPredicate(extent)}
+                          AND ST_Intersects(geometry, {extentPolygon})";
+            }
+
+            // Determine which columns to project (if any) while always retaining geometry
+            var projectedColumnList = projectedColumns ?? "*";
+            bool hasBboxColumn = columnNames != null && columnNames.Any(c => c.Equals(BboxColumn, StringComparison.OrdinalIgnoreCase));
+            var projectedColumnsWithoutGeometry = projectedColumns != null
+                ? string.Join(", ", projectedColumns.Split(',').Select(c => c.Trim()).Where(c => !c.Equals("geometry", StringComparison.OrdinalIgnoreCase)))
+                : "* EXCLUDE(geometry)";
+            var projectedColumnsWithoutGeometryOrBbox = projectedColumns != null
+                ? string.Join(", ", projectedColumns.Split(',').Select(c => c.Trim()).Where(c =>
+                    !c.Equals("geometry", StringComparison.OrdinalIgnoreCase) &&
+                    !c.Equals(BboxColumn, StringComparison.OrdinalIgnoreCase)))
+                : (hasBboxColumn ? "* EXCLUDE(geometry, bbox)" : "* EXCLUDE(geometry)");
+            if (string.IsNullOrWhiteSpace(projectedColumnsWithoutGeometry))
+                projectedColumnsWithoutGeometry = "* EXCLUDE(geometry)";
+            if (string.IsNullOrWhiteSpace(projectedColumnsWithoutGeometryOrBbox))
+                projectedColumnsWithoutGeometryOrBbox = hasBboxColumn ? "* EXCLUDE(geometry, bbox)" : "* EXCLUDE(geometry)";
+
+            if (extent != null && !string.IsNullOrEmpty(extentPolygon))
+            {
+                // Clip geometries to extent - this keeps all intersecting features but clips them to the extent
+                // Use ST_Intersection to clip, and only include features that actually intersect
+                if (hasBboxColumn)
+                {
+                    return $@"
+                        CREATE OR REPLACE TABLE current_table AS
+                        WITH clipped AS (
+                            SELECT
+                                {projectedColumnsWithoutGeometryOrBbox},
+                                CASE
+                                    WHEN ST_Intersects(geometry, {extentPolygon})
+                                    THEN ST_Intersection(geometry, {extentPolygon})
+                                    ELSE NULL
+                                END AS clipped_geometry
+                            FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
+                            {spatialFilter}
+                        )
+                        SELECT
+                            * EXCLUDE(clipped_geometry),
+                            clipped_geometry AS geometry,
+                            CASE
+                                WHEN clipped_geometry IS NOT NULL THEN struct_pack(
+                                    xmin := ST_XMin(clipped_geometry),
+                                    ymin := ST_YMin(clipped_geometry),
+                                    xmax := ST_XMax(clipped_geometry),
+                                    ymax := ST_YMax(clipped_geometry)
+                                )
+                                ELSE NULL
+                            END AS bbox
+                        FROM clipped";
+                }
+
+                return $@"
+                        CREATE OR REPLACE TABLE current_table AS
+                        SELECT
+                            {projectedColumnsWithoutGeometry},
+                            CASE
+                                WHEN ST_Intersects(geometry, {extentPolygon})
+                                THEN ST_Intersection(geometry, {extentPolygon})
+                                ELSE NULL
+                            END as geometry
+                        FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
+                        {spatialFilter}";
+            }
+
+            return $@"
+                        CREATE OR REPLACE TABLE current_table AS
+                        SELECT {projectedColumnList}
+                        FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
+                        {spatialFilter}";
+        }
+    }
+}

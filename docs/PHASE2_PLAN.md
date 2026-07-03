@@ -86,9 +86,15 @@ drives the extent.
 - `DuckDBManager` (connection lifecycle + extension loading) — DONE.
   `DataProcessor` proxies `_connection`/`_isInitialized` so call sites are
   unchanged; behavior and error messages are moved verbatim.
-- Remaining: `S3Ingester`, `ParquetExporter`, `LayerManager`,
-  `GeocoderEngine`. Extract the pure parts (column projection, query text
-  builders) into testable classes as they move.
+- `S3Ingester` — pure ingest query builders extracted and DONE.
+  `Services/S3Ingester.cs` owns `BuildColumnProjection` (type-specific
+  column drops) and `BuildLoadQuery` (the `current_table` query: bbox
+  pushdown + `ST_Intersects` filter and `ST_Intersection` clipping, with
+  bbox struct repack when present). `DataProcessor.IngestFileAsync` now
+  calls it; the SQL is moved verbatim. Covered by `S3IngesterTests`. The
+  stateful S3 read (schema discovery, execution) stays in `DataProcessor`.
+- Remaining: `ParquetExporter`, `LayerManager`, `GeocoderEngine`. Extract
+  the pure parts (query text builders) into testable classes as they move.
 - Stage 3: extract `DataLoadOrchestrator` and `MfcOrchestrator` from
   `WizardDockpaneViewModel.cs` (load pipeline, bulk replacement, P/Invoke
   deletion, extent resolution; MFC creation).

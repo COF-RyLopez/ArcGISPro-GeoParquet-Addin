@@ -9,7 +9,9 @@
 		     SDK assemblies, which only resolve usefully on a machine with Pro
 		     installed. Anything linked here must stay free of ArcGIS types. -->
 		<Compile Include="..\Models\ExtentBounds.cs" Link="Linked\ExtentBounds.cs" />
+		<Compile Include="..\Models\OvertureSchema.cs" Link="Linked\OvertureSchema.cs" />
 		<Compile Include="..\Services\GeoParquetSql.cs" Link="Linked\GeoParquetSql.cs" />
+		<Compile Include="..\Services\S3Ingester.cs" Link="Linked\S3Ingester.cs" />
 		<Compile Include="..\Services\PreviewBridge.cs" Link="Linked\PreviewBridge.cs" />
 	</ItemGroup>
 	<ItemGroup>
