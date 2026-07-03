@@ -15,8 +15,8 @@ namespace DuckDBGeoparquet.Views
             {
                 System.Diagnostics.Debug.WriteLine($"Error opening Overture geocoder: {ex.Message}");
                 ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
-                    "Unable to open Overture ROI Geocoder. See ArcGIS Pro logs for details.",
-                    "Overture ROI Geocoder",
+                    "Unable to open Overture Geocoder. See ArcGIS Pro logs for details.",
+                    "Overture Geocoder",
                     System.Windows.MessageBoxButton.OK,
                     System.Windows.MessageBoxImage.Error);
             }

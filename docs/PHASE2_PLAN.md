@@ -59,10 +59,10 @@ drives the extent.
 **Verification checklist (requires ArcGIS Pro 3.7 on Windows):**
 1. `dotnet build` — confirm removing `Esri.ArcGISRuntime` broke nothing.
 2. Open Preview tab → map loads, "Preview map ready." appears in the log.
-3. Show Extent draws the configured extent; Use Preview Extent round-trips
-   (pan/zoom, adopt, confirm the WGS84 coords in Select Data).
-4. Export a small area with **SNAPPY**, Preview Data → layers render.
-   Repeat with ZSTD → per-layer error + the compression warning in the log.
+3. Show Extent draws the configured extent from the active Pro map or custom
+   extent.
+4. Select one or more themes, click Preview Sample, and confirm capped
+   GeoJSON sample layers render from S3.
 5. Disconnect from the network, reload the pane → offline notice, no crash.
 6. If Pro's bundled WebView2 assemblies conflict with the NuGet version,
    pin `Microsoft.Web.WebView2` to the version Pro ships.

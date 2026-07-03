@@ -36,13 +36,13 @@
                 <TextBlock Text="How to use this geocoder"
                            FontWeight="SemiBold"
                            Margin="0,0,0,4"/>
-                <TextBlock Text="1) Open Overture Maps Data Loader and load at least Addresses and Places for your area."
+                <TextBlock Text="1) Open Overture Maps Data Loader and load at least Addresses and Places."
                            TextWrapping="Wrap"
                            Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
-                <TextBlock Text="2) Return here, enter an address/place name, then click Search."
+                <TextBlock Text="2) Search covers the loaded Overture datasets, not just the current map view."
                            TextWrapping="Wrap"
                            Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
-                <TextBlock Text="3) Click a result to zoom to it, or add all results to the map as a feature class."
+                <TextBlock Text="3) Select one or more candidates to zoom or add selected results to the map."
                            TextWrapping="Wrap"
                            Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
             </StackPanel>
@@ -55,7 +55,8 @@
             </Grid.ColumnDefinitions>
             <TextBox Grid.Column="0"
                      Margin="0,0,8,0"
-                     Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}" />
+                     Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                     KeyDown="SearchTextBox_KeyDown" />
             <Button Grid.Column="1"
                     Content="Search"
                     Width="80"
@@ -106,9 +107,12 @@
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
-                <ListBox Grid.Row="0"
+                <ListBox x:Name="ResultsListBox"
+                         Grid.Row="0"
                          ItemsSource="{Binding Results}"
-                         SelectedItem="{Binding SelectedCandidate, Mode=TwoWay}">
+                         SelectedItem="{Binding SelectedCandidate, Mode=TwoWay}"
+                         SelectionMode="Extended"
+                         SelectionChanged="ResultsListBox_SelectionChanged">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <StackPanel Margin="0,2,0,4">
@@ -150,7 +154,7 @@
                         Width="130"
                         Command="{Binding AddResultsToMapCommand}"
                         Style="{DynamicResource Esri_Button}"
-                        ToolTip="Save the current results as a point feature class in the project geodatabase and add it to the map"/>
+                        ToolTip="Save selected results, or all results if none are selected, as a point feature class in the project geodatabase and add it to the map"/>
                 <Button Content="Geocode File..."
                         Width="110"
                         Margin="8,0,0,0"

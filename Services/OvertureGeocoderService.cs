@@ -37,7 +37,7 @@ namespace DuckDBGeoparquet.Services
             _isInitialized = true;
         }
 
-        public async Task<List<GeocodeCandidate>> SearchAsync(string query, Envelope roiExtent = null, int maxResults = 25, CancellationToken cancellationToken = default)
+        public async Task<List<GeocodeCandidate>> SearchAsync(string query, Envelope searchExtent = null, int maxResults = 25, CancellationToken cancellationToken = default)
         {
             await InitializeAsync();
 
@@ -49,7 +49,7 @@ namespace DuckDBGeoparquet.Services
 
             if (PreferLocatorSearch && IsLocatorReady())
             {
-                var locatorCandidates = await TryLocatorSearchAsync(query, roiExtent, maxResults);
+                var locatorCandidates = await TryLocatorSearchAsync(query, searchExtent, maxResults);
                 if (locatorCandidates.Count > 0)
                 {
                     return locatorCandidates;
@@ -69,13 +69,13 @@ namespace DuckDBGeoparquet.Services
 
             if (!string.IsNullOrWhiteSpace(addressParquetGlob))
             {
-                var addressCandidates = await _dataProcessor.SearchAddressCandidatesAsync(addressParquetGlob, normalizedQuery, roiExtent == null ? null : new ExtentBounds(roiExtent.XMin, roiExtent.YMin, roiExtent.XMax, roiExtent.YMax), perSourceLimit, cancellationToken);
+                var addressCandidates = await _dataProcessor.SearchAddressCandidatesAsync(addressParquetGlob, normalizedQuery, searchExtent == null ? null : new ExtentBounds(searchExtent.XMin, searchExtent.YMin, searchExtent.XMax, searchExtent.YMax), perSourceLimit, cancellationToken);
                 merged.AddRange(addressCandidates);
             }
 
             if (!string.IsNullOrWhiteSpace(placeParquetGlob))
             {
-                var placeCandidates = await _dataProcessor.SearchPlaceCandidatesAsync(placeParquetGlob, normalizedQuery, roiExtent == null ? null : new ExtentBounds(roiExtent.XMin, roiExtent.YMin, roiExtent.XMax, roiExtent.YMax), perSourceLimit, cancellationToken);
+                var placeCandidates = await _dataProcessor.SearchPlaceCandidatesAsync(placeParquetGlob, normalizedQuery, searchExtent == null ? null : new ExtentBounds(searchExtent.XMin, searchExtent.YMin, searchExtent.XMax, searchExtent.YMax), perSourceLimit, cancellationToken);
                 merged.AddRange(placeCandidates);
             }
 
@@ -118,7 +118,7 @@ namespace DuckDBGeoparquet.Services
         /// empty list on any failure so callers fall back to the local
         /// DuckDB search.
         /// </summary>
-        private static async Task<List<GeocodeCandidate>> TryLocatorSearchAsync(string query, Envelope roiExtent, int maxResults)
+        private static async Task<List<GeocodeCandidate>> TryLocatorSearchAsync(string query, Envelope searchExtent, int maxResults)
         {
             var candidates = new List<GeocodeCandidate>();
             try
@@ -149,9 +149,9 @@ namespace DuckDBGeoparquet.Services
                         wgsPoint = GeometryEngine.Instance.Project(location, SpatialReferences.WGS84) as MapPoint ?? location;
                     }
 
-                    if (roiExtent != null &&
-                        (wgsPoint.X < roiExtent.XMin || wgsPoint.X > roiExtent.XMax ||
-                         wgsPoint.Y < roiExtent.YMin || wgsPoint.Y > roiExtent.YMax))
+                    if (searchExtent != null &&
+                        (wgsPoint.X < searchExtent.XMin || wgsPoint.X > searchExtent.XMax ||
+                         wgsPoint.Y < searchExtent.YMin || wgsPoint.Y > searchExtent.YMax))
                     {
                         continue;
                     }

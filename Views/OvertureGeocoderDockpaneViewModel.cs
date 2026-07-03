@@ -23,7 +23,8 @@ namespace DuckDBGeoparquet.Views
     {
         private const string DockPaneId = "DuckDBGeoparquet_Views_OvertureGeocoderDockpane";
         private OvertureGeocoderService _geocoderService;
-        private IDisposable _selectionOverlay;
+        private readonly List<IDisposable> _candidateOverlays = [];
+        private readonly List<IDisposable> _selectionOverlays = [];
         private string _searchQuery;
         private GeocodeCandidate _selectedCandidate;
         private string _statusText = "Load Addresses + Places first in Overture Maps Data Loader, then search here.";
@@ -31,12 +32,14 @@ namespace DuckDBGeoparquet.Views
         private bool _isBuildingLocator;
         private bool _isAddingToMap;
         private bool _isGeocodingFile;
+        private bool _suppressSelectionZoom;
         private bool _useLocatorSearch;
         private string _locatorStatusText = "Locator not built.";
 
         public OvertureGeocoderDockpaneViewModel()
         {
             Results = [];
+            SelectedCandidates = [];
 
             if (DesignerProperties.GetIsInDesignMode(new DependencyObject()))
             {
@@ -52,6 +55,7 @@ namespace DuckDBGeoparquet.Views
                     Score = 300
                 });
                 SelectedCandidate = Results.FirstOrDefault();
+                SelectedCandidates.Add(SelectedCandidate);
                 return;
             }
 
@@ -84,6 +88,7 @@ namespace DuckDBGeoparquet.Views
         }
 
         public ObservableCollection<GeocodeCandidate> Results { get; }
+        public ObservableCollection<GeocodeCandidate> SelectedCandidates { get; }
 
         public string SearchQuery
         {
@@ -104,8 +109,8 @@ namespace DuckDBGeoparquet.Views
             {
                 if (SetProperty(ref _selectedCandidate, value))
                 {
-                    (ZoomToSelectedCommand as RelayCommand)?.RaiseCanExecuteChanged();
-                    if (value != null)
+                    RaiseResultCommandStatesChanged();
+                    if (value != null && !_suppressSelectionZoom)
                     {
                         // Like Pro's Locate pane: clicking a result zooms to it.
                         _ = ZoomToSelectedAsync();
@@ -155,14 +160,55 @@ namespace DuckDBGeoparquet.Views
         {
             _geocoderService = new OvertureGeocoderService();
 
-            SearchAddressCommand = new RelayCommand(async () => await SearchAsync(), () => !_isSearching && !string.IsNullOrWhiteSpace(SearchQuery));
-            ZoomToSelectedCommand = new RelayCommand(async () => await ZoomToSelectedAsync(), () => SelectedCandidate != null);
+            SearchAddressCommand = new RelayCommand(async () => await SearchAsync(), () => !_isSearching && !_isAddingToMap && !_isGeocodingFile && !string.IsNullOrWhiteSpace(SearchQuery));
+            ZoomToSelectedCommand = new RelayCommand(async () => await ZoomToSelectedAsync(), () => GetSelectedCandidatesForAction().Count > 0);
             ClearResultsCommand = new RelayCommand(ClearResults);
-            AddResultsToMapCommand = new RelayCommand(async () => await AddResultsToMapAsync(), () => !_isAddingToMap);
-            GeocodeFileCommand = new RelayCommand(async () => await GeocodeFileAsync(), () => !_isGeocodingFile);
+            AddResultsToMapCommand = new RelayCommand(async () => await AddResultsToMapAsync(), () => !_isSearching && !_isAddingToMap && !_isGeocodingFile && Results.Count > 0);
+            GeocodeFileCommand = new RelayCommand(async () => await GeocodeFileAsync(), () => !_isSearching && !_isAddingToMap && !_isGeocodingFile);
             BuildLocatorCommand = new RelayCommand(async () => await BuildLocatorAsync(false), () => !_isBuildingLocator);
             RebuildLocatorCommand = new RelayCommand(async () => await BuildLocatorAsync(true), () => !_isBuildingLocator);
             RefreshLocatorStatusCommand = new RelayCommand(RefreshLocatorStatus);
+        }
+
+        private void RaiseResultCommandStatesChanged()
+        {
+            (ZoomToSelectedCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (AddResultsToMapCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        }
+
+        private void RaiseFileWorkflowCommandStatesChanged()
+        {
+            (SearchAddressCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (AddResultsToMapCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (GeocodeFileCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        }
+
+        internal void SetSelectedCandidates(IEnumerable<GeocodeCandidate> candidates)
+        {
+            SelectedCandidates.Clear();
+            foreach (var candidate in candidates.Where(c => c != null))
+            {
+                SelectedCandidates.Add(candidate);
+            }
+
+            RaiseResultCommandStatesChanged();
+        }
+
+        private List<GeocodeCandidate> GetSelectedCandidatesForAction()
+        {
+            var selected = SelectedCandidates.Where(HasUsableLocation).ToList();
+            if (selected.Count == 0 && HasUsableLocation(SelectedCandidate))
+            {
+                selected.Add(SelectedCandidate);
+            }
+
+            return selected;
+        }
+
+        private List<GeocodeCandidate> GetCandidatesToWrite()
+        {
+            var selected = SelectedCandidates.ToList();
+            return selected.Count > 0 ? selected : Results.ToList();
         }
 
         /// <summary>
@@ -179,12 +225,23 @@ namespace DuckDBGeoparquet.Views
             }
 
             _isAddingToMap = true;
+            RaiseFileWorkflowCommandStatesChanged();
             try
             {
+                bool usingSelectedCandidates = SelectedCandidates.Count > 0;
+                var candidatesToWrite = GetCandidatesToWrite();
+                if (candidatesToWrite.Count == 0)
+                {
+                    StatusText = "No results to add — run a search first.";
+                    return;
+                }
+
                 StatusText = "Adding results to the map...";
                 string name = $"OvertureGeocode_{DateTime.Now:yyyyMMdd_HHmmss}";
-                await GeocodeResultWriter.WriteToFeatureClassAsync(Results.ToList(), name);
-                StatusText = $"Added {Results.Count} result(s) to the map as '{name}'.";
+                await GeocodeResultWriter.WriteToFeatureClassAsync(candidatesToWrite, name);
+                StatusText = usingSelectedCandidates
+                    ? $"Added {candidatesToWrite.Count} selected result(s) to the map as '{name}'."
+                    : $"Added {candidatesToWrite.Count} result(s) to the map as '{name}'.";
             }
             catch (Exception ex)
             {
@@ -193,6 +250,7 @@ namespace DuckDBGeoparquet.Views
             finally
             {
                 _isAddingToMap = false;
+                RaiseFileWorkflowCommandStatesChanged();
             }
         }
 
@@ -215,6 +273,7 @@ namespace DuckDBGeoparquet.Views
             }
 
             _isGeocodingFile = true;
+            RaiseFileWorkflowCommandStatesChanged();
             try
             {
                 string[] lines = await Task.Run(() => File.ReadAllLines(dialog.FileName));
@@ -299,6 +358,7 @@ namespace DuckDBGeoparquet.Views
             finally
             {
                 _isGeocodingFile = false;
+                RaiseFileWorkflowCommandStatesChanged();
             }
         }
 
@@ -308,10 +368,18 @@ namespace DuckDBGeoparquet.Views
             var cells = new List<string>();
             var sb = new StringBuilder();
             bool inQuotes = false;
-            foreach (char ch in line)
+            for (int i = 0; i < line.Length; i++)
             {
+                char ch = line[i];
                 if (ch == '"')
                 {
+                    if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                    {
+                        sb.Append('"');
+                        i++;
+                        continue;
+                    }
+
                     inQuotes = !inQuotes;
                 }
                 else if (ch == ',' && !inQuotes)
@@ -337,16 +405,27 @@ namespace DuckDBGeoparquet.Views
             }
 
             _isSearching = true;
-            (SearchAddressCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            RaiseFileWorkflowCommandStatesChanged();
             StatusText = UseLocatorSearch
-                ? "Searching hybrid candidates (locator mode enabled with local fallback)..."
-                : "Searching hybrid local candidates...";
+                ? "Searching loaded datasets (locator mode enabled with local fallback)..."
+                : "Searching loaded Overture address/place datasets...";
 
             try
             {
-                Envelope extent = await GetCurrentMapExtentWgs84Async();
-                var candidates = await _geocoderService.SearchAsync(SearchQuery, extent, 30);
+                var candidates = await _geocoderService.SearchAsync(SearchQuery, null, 30);
 
+                ClearCandidateOverlays();
+                ClearSelectionOverlays();
+                SelectedCandidates.Clear();
+                _suppressSelectionZoom = true;
+                try
+                {
+                    SelectedCandidate = null;
+                }
+                finally
+                {
+                    _suppressSelectionZoom = false;
+                }
                 Results.Clear();
                 foreach (var candidate in candidates)
                 {
@@ -354,16 +433,17 @@ namespace DuckDBGeoparquet.Views
                 }
 
                 NotifyPropertyChanged(nameof(IsResultListEmpty));
+                RaiseResultCommandStatesChanged();
 
                 if (Results.Count == 0)
                 {
-                    StatusText = "No address/place matches found in loaded ROI data.";
+                    StatusText = "No address/place matches found in the loaded Overture datasets.";
                     SelectedCandidate = null;
                 }
                 else
                 {
-                    SelectedCandidate = Results[0];
-                    StatusText = $"Found {Results.Count} candidate(s).";
+                    await ShowCandidateOverlaysAsync(Results.ToList());
+                    StatusText = $"Found {Results.Count} candidate(s) in the loaded Overture datasets.";
                 }
             }
             catch (Exception ex)
@@ -373,7 +453,7 @@ namespace DuckDBGeoparquet.Views
             finally
             {
                 _isSearching = false;
-                (SearchAddressCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                RaiseFileWorkflowCommandStatesChanged();
             }
         }
 
@@ -433,7 +513,8 @@ namespace DuckDBGeoparquet.Views
 
         private async Task ZoomToSelectedAsync()
         {
-            if (SelectedCandidate == null)
+            var selected = GetSelectedCandidatesForAction();
+            if (selected.Count == 0)
             {
                 return;
             }
@@ -445,26 +526,52 @@ namespace DuckDBGeoparquet.Views
                 return;
             }
 
-            double lon = SelectedCandidate.Longitude;
-            double lat = SelectedCandidate.Latitude;
-            string label = SelectedCandidate.DisplayLabel;
             try
             {
                 // Geometry/symbol construction and overlay/zoom must run on the
                 // MCT (QueuedTask), not the UI thread that raised the selection.
-                var overlay = await QueuedTask.Run(() =>
+                var overlays = await QueuedTask.Run(() =>
                 {
                     var wgs84 = SpatialReferenceBuilder.CreateSpatialReference(4326);
-                    var location = MapPointBuilderEx.CreateMapPoint(lon, lat, wgs84);
                     var marker = SymbolFactory.Instance.ConstructPointSymbol(ColorFactory.Instance.RedRGB, 11.0, SimpleMarkerStyle.Circle);
-                    var handle = mapView.AddOverlay(location, marker.MakeSymbolReference());
-                    mapView.ZoomTo(location);
-                    return handle;
+                    var handles = new List<IDisposable>();
+                    var points = new List<MapPoint>();
+
+                    foreach (var candidate in selected)
+                    {
+                        var location = MapPointBuilderEx.CreateMapPoint(candidate.Longitude, candidate.Latitude, wgs84);
+                        points.Add(location);
+                        handles.Add(mapView.AddOverlay(location, marker.MakeSymbolReference()));
+                    }
+
+                    if (points.Count == 1)
+                    {
+                        mapView.ZoomTo(points[0]);
+                    }
+                    else
+                    {
+                        double xmin = points.Min(p => p.X);
+                        double ymin = points.Min(p => p.Y);
+                        double xmax = points.Max(p => p.X);
+                        double ymax = points.Max(p => p.Y);
+                        if (xmin == xmax && ymin == ymax)
+                        {
+                            mapView.ZoomTo(points[0]);
+                        }
+                        else
+                        {
+                            mapView.ZoomTo(EnvelopeBuilderEx.CreateEnvelope(xmin, ymin, xmax, ymax, wgs84));
+                        }
+                    }
+
+                    return handles;
                 });
 
-                _selectionOverlay?.Dispose();
-                _selectionOverlay = overlay;
-                StatusText = $"Zoomed to {label}";
+                ClearSelectionOverlays();
+                _selectionOverlays.AddRange(overlays);
+                StatusText = selected.Count == 1
+                    ? $"Zoomed to {selected[0].DisplayLabel}"
+                    : $"Zoomed to {selected.Count} selected candidates.";
             }
             catch (Exception ex)
             {
@@ -472,45 +579,95 @@ namespace DuckDBGeoparquet.Views
             }
         }
 
+        private async Task ShowCandidateOverlaysAsync(IReadOnlyList<GeocodeCandidate> candidates)
+        {
+            ClearCandidateOverlays();
+
+            var mapView = MapView.Active;
+            if (mapView == null)
+            {
+                return;
+            }
+
+            var visibleCandidates = candidates
+                .Where(HasUsableLocation)
+                .Take(100)
+                .ToList();
+            if (visibleCandidates.Count == 0)
+            {
+                return;
+            }
+
+            var overlays = await QueuedTask.Run(() =>
+            {
+                var handles = new List<IDisposable>();
+                var wgs84 = SpatialReferenceBuilder.CreateSpatialReference(4326);
+                var marker = SymbolFactory.Instance.ConstructPointSymbol(
+                    new CIMRGBColor { R = 0, G = 122, B = 255, Alpha = 80 },
+                    8.0,
+                    SimpleMarkerStyle.Circle);
+
+                foreach (var candidate in visibleCandidates)
+                {
+                    var location = MapPointBuilderEx.CreateMapPoint(candidate.Longitude, candidate.Latitude, wgs84);
+                    handles.Add(mapView.AddOverlay(location, marker.MakeSymbolReference()));
+                }
+
+                return handles;
+            });
+
+            _candidateOverlays.AddRange(overlays);
+        }
+
+        private static bool HasUsableLocation(GeocodeCandidate candidate)
+        {
+            return candidate != null &&
+                   !double.IsNaN(candidate.Longitude) &&
+                   !double.IsNaN(candidate.Latitude) &&
+                   !double.IsInfinity(candidate.Longitude) &&
+                   !double.IsInfinity(candidate.Latitude) &&
+                   candidate.Longitude >= -180 &&
+                   candidate.Longitude <= 180 &&
+                   candidate.Latitude >= -90 &&
+                   candidate.Latitude <= 90;
+        }
+
+        private void ClearCandidateOverlays()
+        {
+            foreach (var overlay in _candidateOverlays)
+            {
+                try { overlay.Dispose(); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Candidate overlay cleanup skipped: {ex.Message}"); }
+            }
+            _candidateOverlays.Clear();
+        }
+
+        private void ClearSelectionOverlays()
+        {
+            foreach (var overlay in _selectionOverlays)
+            {
+                try { overlay.Dispose(); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Selection overlay cleanup skipped: {ex.Message}"); }
+            }
+            _selectionOverlays.Clear();
+        }
+
         private void ClearResults()
         {
             Results.Clear();
+            SelectedCandidates.Clear();
             SelectedCandidate = null;
-            _selectionOverlay?.Dispose();
-            _selectionOverlay = null;
+            ClearCandidateOverlays();
+            ClearSelectionOverlays();
             NotifyPropertyChanged(nameof(IsResultListEmpty));
+            RaiseResultCommandStatesChanged();
             StatusText = "Cleared search results.";
-        }
-
-        private static async Task<Envelope> GetCurrentMapExtentWgs84Async()
-        {
-            Envelope extent = null;
-            await QueuedTask.Run(() =>
-            {
-                var mapView = MapView.Active;
-                if (mapView?.Extent == null)
-                {
-                    return;
-                }
-
-                var mapExtent = mapView.Extent;
-                if (mapExtent.SpatialReference == null || mapExtent.SpatialReference.Wkid != 4326)
-                {
-                    var wgs84 = SpatialReferenceBuilder.CreateSpatialReference(4326);
-                    extent = GeometryEngine.Instance.Project(mapExtent, wgs84) as Envelope;
-                }
-                else
-                {
-                    extent = mapExtent;
-                }
-            });
-
-            return extent;
         }
 
         ~OvertureGeocoderDockpaneViewModel()
         {
-            _selectionOverlay?.Dispose();
+            ClearCandidateOverlays();
+            ClearSelectionOverlays();
             _geocoderService?.Dispose();
         }
     }
