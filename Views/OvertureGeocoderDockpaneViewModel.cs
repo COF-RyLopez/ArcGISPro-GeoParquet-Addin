@@ -286,6 +286,7 @@ namespace DuckDBGeoparquet.Views
                 const int MaxRows = 500;
                 var parseResult = ParseGeocodeFileQueries(lines, MaxRows);
                 var queries = parseResult.Queries;
+                System.Diagnostics.Debug.WriteLine($"Geocode file: parsed {queries.Count} query row(s) from '{dialog.FileName}'.");
 
                 if (queries.Count == 0)
                 {
@@ -299,11 +300,16 @@ namespace DuckDBGeoparquet.Views
                 foreach (var q in queries)
                 {
                     GeocodeCandidate best = null;
+                    System.Diagnostics.Debug.WriteLine(
+                        $"Geocode file row {done + 1}: source='{q.SourceQuery}', variants=[{string.Join(" | ", q.SearchQueries)}]");
                     foreach (var searchQuery in q.SearchQueries)
                     {
+                        System.Diagnostics.Debug.WriteLine($"Geocode file row {done + 1}: trying '{searchQuery}'.");
                         best = await _geocoderService.GeocodeBestAsync(searchQuery);
                         if (HasUsableLocation(best))
                         {
+                            System.Diagnostics.Debug.WriteLine(
+                                $"Geocode file row {done + 1}: matched '{best.DisplayLabel}' via '{searchQuery}'.");
                             break;
                         }
                     }
@@ -312,6 +318,10 @@ namespace DuckDBGeoparquet.Views
                     {
                         matched.Add(best);
                         matchedQueries.Add(q.SourceQuery);
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Geocode file row {done + 1}: no match.");
                     }
                     done++;
                     if (done % 20 == 0)
