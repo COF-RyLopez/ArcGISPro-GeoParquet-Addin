@@ -51,7 +51,7 @@
             </Border>
         </StackPanel>
         <!-- Main content area with TabControl -->
-        <TabControl Grid.Row="1" Margin="0,8,0,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}" Style="{DynamicResource Esri_TabControl}">
+        <TabControl Grid.Row="1" Margin="0,8,0,0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}" Background="Transparent" BorderThickness="0">
             <TabControl.Resources>
         <Style TargetType="TabItem">
             <Setter Property="Visibility" Value="Collapsed"/>
@@ -402,7 +402,7 @@
             
             
             <!-- Cache Management Tab (Pro 3.6+) -->
-            <TabItem Header="Cache Management" Visibility="{Binding IsCacheManagementTabVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <TabItem Header="Cache Management">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="16,12,16,12" Orientation="Vertical">
                         <TextBlock Text="Parquet Cache Management" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,12"/>
