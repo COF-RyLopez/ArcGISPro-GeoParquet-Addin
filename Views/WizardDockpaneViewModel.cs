@@ -1179,7 +1179,7 @@ namespace DuckDBGeoparquet.Views
                 string summaryExtent = extent != null
                     ? $"{extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}"
                     : "none";
-                AddToLog($"Load summary: layers={_dataProcessor.LastAddedLayerCount}, map purpose={summaryStyle}, elapsed={loadElapsed:hh\:mm\:ss}, extent={summaryExtent}");
+                AddToLog($"Load summary: layers={_dataProcessor.LastAddedLayerCount}, map purpose={summaryStyle}, elapsed={loadElapsed:hh\\:mm\\:ss}, extent={summaryExtent}");
 
                 StatusText = $"Successfully loaded all selected themes from release {LatestRelease}";
                 AddToLog("All selected themes loaded successfully");
