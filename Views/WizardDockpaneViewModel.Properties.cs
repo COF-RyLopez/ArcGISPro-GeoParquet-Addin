@@ -95,7 +95,61 @@ namespace DuckDBGeoparquet.Views
         public int SelectedTabIndex
         {
             get => _selectedTabIndex;
-            set => SetProperty(ref _selectedTabIndex, value);
+            set
+            {
+                if (SetProperty(ref _selectedTabIndex, value))
+                {
+                    UpdateNavigation();
+                }
+            }
+        }
+
+        private string _nextButtonText = "Next >";
+        public string NextButtonText
+        {
+            get => _nextButtonText;
+            set => SetProperty(ref _nextButtonText, value);
+        }
+
+        private bool _isNextButtonVisible = true;
+        public bool IsNextButtonVisible
+        {
+            get => _isNextButtonVisible;
+            set => SetProperty(ref _isNextButtonVisible, value);
+        }
+
+        private bool _isBackButtonVisible = false;
+        public bool IsBackButtonVisible
+        {
+            get => _isBackButtonVisible;
+            set => SetProperty(ref _isBackButtonVisible, value);
+        }
+
+        private void UpdateNavigation()
+        {
+            switch ((WizardTab)SelectedTabIndex)
+            {
+                case WizardTab.SelectData:
+                    IsBackButtonVisible = false;
+                    IsNextButtonVisible = true;
+                    NextButtonText = "Next >";
+                    break;
+                case WizardTab.Preview:
+                    IsBackButtonVisible = true;
+                    IsNextButtonVisible = true;
+                    NextButtonText = "Download Data";
+                    break;
+                case WizardTab.Status:
+                    IsBackButtonVisible = false;
+                    IsNextButtonVisible = true;
+                    NextButtonText = "Finish";
+                    break;
+                case WizardTab.CacheManagement:
+                    IsBackButtonVisible = true;
+                    IsNextButtonVisible = true;
+                    NextButtonText = "Finish";
+                    break;
+            }
         }
 
         public bool IsCacheManagementTabVisible => ArcGISProVersionHelper.IsPro36OrLater;

@@ -249,6 +249,21 @@ namespace DuckDBGeoparquet.Views
             ClearCacheCommand = new RelayCommand(() => ClearCache(), () => ArcGISProVersionHelper.IsPro36OrLater);
             ShowThemeInfoCommand = new RelayCommand(() => ShowThemeInfo(), () => SelectedItemForPreview != null);
             SetCustomExtentCommand = new RelayCommand(() => SetCustomExtent(), () => UseCustomExtent);            BrowseDataLocationCommand = new RelayCommand(() => BrowseDataLocation());            ApplyManualReleaseCommand = new RelayCommand(() => ApplyManualRelease(), () => !string.IsNullOrWhiteSpace(ManualReleaseText));
+            NextCommand = new RelayCommand(async () => {
+                if (SelectedTabIndex == (int)WizardTab.SelectData) {
+                    SelectedTabIndex = (int)WizardTab.Preview;
+                } else if (SelectedTabIndex == (int)WizardTab.Preview) {
+                    SelectedTabIndex = (int)WizardTab.Status;
+                    await LoadOvertureDataAsync();
+                } else if (SelectedTabIndex == (int)WizardTab.Status || SelectedTabIndex == (int)WizardTab.CacheManagement) {
+                    this.Hide();
+                }
+            });
+            BackCommand = new RelayCommand(() => {
+                if (SelectedTabIndex == (int)WizardTab.Preview) {
+                    SelectedTabIndex = (int)WizardTab.SelectData;
+                }
+            });
             CancelCommand = new RelayCommand(() =>
             {
                 if (_cts != null && !_cts.IsCancellationRequested) { _cts.Cancel(); AddToLog("Operation cancelled by user."); }

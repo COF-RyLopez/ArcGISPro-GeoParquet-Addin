@@ -58,6 +58,8 @@ namespace DuckDBGeoparquet.Views
         public ICommand ApplyManualReleaseCommand { get; private set; }
         public ICommand CancelCommand { get; private set; }
         public ICommand SelectAllCommand { get; private set; }
+        public ICommand NextCommand { get; private set; }
+        public ICommand BackCommand { get; private set; }
         #endregion
     }
 }
