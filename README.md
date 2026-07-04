@@ -14,7 +14,7 @@ Watch the add-in in action loading Overture Maps data with incredible performanc
 
 ## Features
 
-- **Native GeoParquet Support**: Fully leverages ArcGIS Pro 3.5's native GeoParquet capabilities for optimal performance
+- **Native GeoParquet Support**: Fully leverages ArcGIS Pro's native GeoParquet capabilities for optimal performance
 - **High-Performance Processing**: Optimized data pipeline with 5-15% performance improvements and smart empty dataset handling
 - **Complex Data Preservation**: Maintains original data structure including nested types
 - **Cloud-Native Integration**: Direct access to data in S3, Azure, and other cloud storage
@@ -27,8 +27,8 @@ Watch the add-in in action loading Overture Maps data with incredible performanc
 
 ## Requirements
 
-- **ArcGIS Pro**: Version 3.5 or later (3.6+ recommended for enhanced features)
-- **.NET SDK**: Version 8.0 or later
+- **ArcGIS Pro**: Version 3.7 or later
+- **.NET SDK**: Version 10.0 or later
 - **Storage**: Minimum 4GB free disk space for temporary data
 - **Memory**: Minimum 8GB RAM (16GB recommended for large datasets)
 - **For Developers**:
@@ -194,7 +194,6 @@ Release notes are automatically generated from git commits, ensuring you always 
 - **ArcGIS Pro 3.6 Support**: Enhanced features for Pro 3.6 including cache management and compression options
 - **Compression Selection**: Choose between ZSTD (recommended), SNAPPY, or GZIP compression formats
 - **Cache Management**: View and manage Parquet cache for Pro 3.6+ users
-- **Backward Compatibility**: Maintains full support for ArcGIS Pro 3.5
 - **Automated Releases**: Fully automated CI/CD pipeline for seamless version management
 - **ArcGIS Online Publishing**: Automatic publishing to ArcGIS Marketplace with each release
 - **Performance Optimizations**: 5-15% faster processing through optimized file operations
