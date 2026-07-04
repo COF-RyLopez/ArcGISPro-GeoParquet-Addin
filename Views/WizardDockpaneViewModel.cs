@@ -46,35 +46,9 @@ namespace DuckDBGeoparquet.Views
             PropertyNameCaseInsensitive = true
         };
 
-        // Centralized logic for Default MFC Base Path
-        private static string DeterminedDefaultMfcBasePath
-        {
-            get
-            {
-                try
-                {
-                    var project = Project.Current;
-                    if (project != null && !string.IsNullOrEmpty(project.HomeFolderPath))
-                    {
-                        // Use the project's Home Folder Path
-                        return Path.Combine(project.HomeFolderPath, AddinConstants.DataSubfolder);
-                    }
-                    // Fallback if HomeFolderPath is not available but project path is (less ideal)
-                    else if (project != null && !string.IsNullOrEmpty(project.Path))
-                    {
-                        string projectDir = Path.GetDirectoryName(project.Path);
-                        if (!string.IsNullOrEmpty(projectDir))
-                            return Path.Combine(projectDir, AddinConstants.DataSubfolder);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Error getting project home/path for DefaultMfcBasePath: {ex.Message}");
-                }
-                // Fallback to MyDocuments if project path cannot be determined
-                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), AddinConstants.DataSubfolder);
-            }
-        }
+        // Default MFC base path: <project>\OvertureProAddinData (MyDocuments fallback).
+        // Shared with the geocoder and the MFC dockpane via ProjectDataLocator.
+        private static string DeterminedDefaultMfcBasePath => ProjectDataLocator.GetAddinDataBase();
 
         // Store original Overture S3 theme structure
         private readonly Dictionary<string, string> _overtureS3ThemeTypes = new()
