@@ -82,7 +82,7 @@ drives the extent.
 - `Services/PreviewBridge.cs` message handling is covered by tests
   (camelCase contract, wkid default, malformed-message tolerance).
 
-**Stage 2 (in progress):** split `DataProcessor.cs` behind a thin façade.
+**Stage 2 (done):** split `DataProcessor.cs` behind a thin façade.
 - `DuckDBManager` (connection lifecycle + extension loading) — DONE.
   `DataProcessor` proxies `_connection`/`_isInitialized` so call sites are
   unchanged; behavior and error messages are moved verbatim.
@@ -97,10 +97,11 @@ drives the extent.
   bbox struct repack when present). `DataProcessor.IngestFileAsync` now
   calls it; the SQL is moved verbatim. Covered by `S3IngesterTests`. The
   stateful S3 read (schema discovery, execution) stays in `DataProcessor`.
-- Remaining: `ParquetExporter`, `LayerManager`. These share
-  mutable per-load state (`_pendingLayers`, `_currentExtent`, session
-  suffix), so extract them together or thread the state through a small
-  load-context object.
+- `ParquetExporter` + `LayerManager` (GeoParquet export + map layer
+  creation/ordering/draw-order) — DONE. Extracted together because they
+  share mutable per-load state (`_pendingLayers`, `_currentExtent`, session
+  suffix); `DataProcessor` constructs both and delegates through thin
+  wrappers, so call sites are unchanged.
 - Stage 3: extract `DataLoadOrchestrator` and `MfcOrchestrator` from
   `WizardDockpaneViewModel.cs` (load pipeline, bulk replacement, P/Invoke
   deletion, extent resolution; MFC creation).
