@@ -1,6 +1,7 @@
 using ArcGIS.Desktop.Framework;
 using ArcGIS.Desktop.Framework.Contracts;
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Text;
@@ -15,11 +16,15 @@ namespace DuckDBGeoparquet.Views
     {
         private const string _dockPaneID = "DuckDBGeoparquet_Views_MfcDockpane";
         private const string DefaultMfcFileName = "OvertureData.mfc";
+        private const string AddExistingMfcCommandId = "esri_bdc_addExistingBDConnectionButton";
 
         protected MfcDockpaneViewModel() {
             BrowseCustomDataFolderCommand = new RelayCommand(() => BrowseCustomDataFolder());
             BrowseMfcLocationCommand = new RelayCommand(() => BrowseMfcLocation());
             CreateMfcCommand = new RelayCommand(async () => await CreateMfcAsync(), () => CanCreateMfc());
+            OpenMfcFolderCommand = new RelayCommand(() => OpenMfcFolder(), () => CanUseCreatedMfc());
+            CopyMfcPathCommand = new RelayCommand(() => CopyMfcPath(), () => CanUseCreatedMfc());
+            AddMfcToProjectCommand = new RelayCommand(async () => await AddMfcToProjectAsync(), () => CanUseCreatedMfc());
 
             // Default output under the add-in's data base, matching the wizard
             // (<project>\OvertureProAddinData\Connections, MyDocuments fallback).
@@ -84,7 +89,10 @@ namespace DuckDBGeoparquet.Views
             get => _mfcOutputPath;
             set
             {
-                SetProperty(ref _mfcOutputPath, value);
+                if (SetProperty(ref _mfcOutputPath, value))
+                {
+                    LastCreatedMfcFilePath = null;
+                }
                 ((RelayCommand)CreateMfcCommand).RaiseCanExecuteChanged();
             }
         }
@@ -110,9 +118,28 @@ namespace DuckDBGeoparquet.Views
             set => SetProperty(ref _mfcLogText, value);
         }
 
+        private string _lastCreatedMfcFilePath;
+        public string LastCreatedMfcFilePath
+        {
+            get => _lastCreatedMfcFilePath;
+            set
+            {
+                if (SetProperty(ref _lastCreatedMfcFilePath, value))
+                {
+                    NotifyPropertyChanged(nameof(HasCreatedMfc));
+                    RaiseCreatedMfcCommandsChanged();
+                }
+            }
+        }
+
+        public bool HasCreatedMfc => CanUseCreatedMfc();
+
         public ICommand BrowseCustomDataFolderCommand { get; }
         public ICommand BrowseMfcLocationCommand { get; }
         public ICommand CreateMfcCommand { get; }
+        public ICommand OpenMfcFolderCommand { get; }
+        public ICommand CopyMfcPathCommand { get; }
+        public ICommand AddMfcToProjectCommand { get; }
 
         private bool CanCreateMfc()
         {
@@ -120,6 +147,12 @@ namespace DuckDBGeoparquet.Views
             if (UseCustomDataFolder && string.IsNullOrWhiteSpace(CustomDataFolderPath)) return false;
             if (string.IsNullOrWhiteSpace(MfcOutputPath)) return false;
             return true;
+        }
+
+        private bool CanUseCreatedMfc()
+        {
+            return !string.IsNullOrWhiteSpace(LastCreatedMfcFilePath)
+                   && File.Exists(LastCreatedMfcFilePath);
         }
 
         private void BrowseCustomDataFolder()
@@ -181,6 +214,7 @@ namespace DuckDBGeoparquet.Views
                 ((RelayCommand)CreateMfcCommand).RaiseCanExecuteChanged();
                 StatusText = "Creating Multifile Feature Connection (MFC)...";
                 MfcLogText = string.Empty;
+                LastCreatedMfcFilePath = null;
 
                 string sourceDataPath;
                 if (UsePreviouslyLoadedData)
@@ -227,6 +261,7 @@ namespace DuckDBGeoparquet.Views
                 }
                 else
                 {
+                    LastCreatedMfcFilePath = outputMfcFilePath;
                     StatusText = $"MFC created successfully: {outputMfcFilePath}";
                     ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
                         $"Multifile Feature Connection created successfully:\n{outputMfcFilePath}",
@@ -244,6 +279,85 @@ namespace DuckDBGeoparquet.Views
                 IsCreatingMfc = false;
                 ((RelayCommand)CreateMfcCommand).RaiseCanExecuteChanged();
             }
+        }
+
+        private void OpenMfcFolder()
+        {
+            try
+            {
+                string folderPath = Path.GetDirectoryName(LastCreatedMfcFilePath);
+                if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+                {
+                    StatusText = "MFC output folder was not found.";
+                    return;
+                }
+
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = folderPath,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                StatusText = $"Could not open MFC folder: {ex.Message}";
+                System.Diagnostics.Debug.WriteLine(ex);
+            }
+        }
+
+        private void CopyMfcPath()
+        {
+            try
+            {
+                if (!CanUseCreatedMfc())
+                {
+                    StatusText = "No created MFC path is available to copy.";
+                    return;
+                }
+
+                System.Windows.Clipboard.SetText(LastCreatedMfcFilePath);
+                StatusText = "MFC path copied to clipboard.";
+            }
+            catch (Exception ex)
+            {
+                StatusText = $"Could not copy MFC path: {ex.Message}";
+                System.Diagnostics.Debug.WriteLine(ex);
+            }
+        }
+
+        private async Task AddMfcToProjectAsync()
+        {
+            try
+            {
+                if (!CanUseCreatedMfc())
+                {
+                    StatusText = "Create an MFC before adding it to the project.";
+                    return;
+                }
+
+                System.Windows.Clipboard.SetText(LastCreatedMfcFilePath);
+                var addMfcCommand = FrameworkApplication.ExecuteCommand(AddExistingMfcCommandId);
+                if (addMfcCommand == null)
+                {
+                    StatusText = "ArcGIS Pro Add Multifile Feature Connection command is unavailable.";
+                    return;
+                }
+
+                await addMfcCommand();
+                StatusText = "ArcGIS Pro Add MFC dialog opened. The MFC path was copied to the clipboard.";
+            }
+            catch (Exception ex)
+            {
+                StatusText = $"Could not open ArcGIS Pro Add MFC command: {ex.Message}";
+                System.Diagnostics.Debug.WriteLine(ex);
+            }
+        }
+
+        private void RaiseCreatedMfcCommandsChanged()
+        {
+            (OpenMfcFolderCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (CopyMfcPathCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (AddMfcToProjectCommand as RelayCommand)?.RaiseCanExecuteChanged();
         }
 
         private static string ResolveMfcFilePath(string outputPath)

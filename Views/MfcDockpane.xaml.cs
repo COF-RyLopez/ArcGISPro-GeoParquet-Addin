@@ -8,5 +8,13 @@ namespace DuckDBGeoparquet.Views
         {
             InitializeComponent();
         }
+
+        private void MfcLogTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (sender is TextBox textBox)
+            {
+                textBox.ScrollToEnd();
+            }
+        }
     }
 }
