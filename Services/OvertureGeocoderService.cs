@@ -212,29 +212,10 @@ namespace DuckDBGeoparquet.Services
 
         private static string ResolveDataRootPath()
         {
-            try
-            {
-                var project = Project.Current;
-                if (project != null && !string.IsNullOrWhiteSpace(project.HomeFolderPath))
-                {
-                    return Path.Combine(project.HomeFolderPath, DataSubfolder, "Data");
-                }
-
-                if (project != null && !string.IsNullOrWhiteSpace(project.Path))
-                {
-                    string projectDir = Path.GetDirectoryName(project.Path);
-                    if (!string.IsNullOrWhiteSpace(projectDir))
-                    {
-                        return Path.Combine(projectDir, DataSubfolder, "Data");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"ResolveDataRootPath failed: {ex.Message}");
-            }
-
-            return null;
+            // Shared project-root lookup; the geocoder treats "no project" as null
+            // (skip geocoding) rather than falling back to MyDocuments.
+            string root = ProjectDataLocator.GetProjectRoot();
+            return root == null ? null : Path.Combine(root, DataSubfolder, "Data");
         }
 
         public void Dispose()

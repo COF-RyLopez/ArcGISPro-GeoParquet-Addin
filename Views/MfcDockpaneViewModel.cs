@@ -21,9 +21,9 @@ namespace DuckDBGeoparquet.Views
             BrowseMfcLocationCommand = new RelayCommand(() => BrowseMfcLocation());
             CreateMfcCommand = new RelayCommand(async () => await CreateMfcAsync(), () => CanCreateMfc());
 
-            // Initialize default output
-            var defaultBasePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ArcGIS", "Projects", "OvertureProAddinData");
-            MfcOutputPath = Path.Combine(defaultBasePath, "Connections");
+            // Default output under the add-in's data base, matching the wizard
+            // (<project>\OvertureProAddinData\Connections, MyDocuments fallback).
+            MfcOutputPath = Path.Combine(ProjectDataLocator.GetAddinDataBase(), "Connections");
         }
 
         protected override Task InitializeAsync()
@@ -159,15 +159,12 @@ namespace DuckDBGeoparquet.Views
                 ((RelayCommand)CreateMfcCommand).RaiseCanExecuteChanged();
                 StatusText = "Creating Multifile Feature Connection (MFC)...";
 
-                string sourceDataPath = string.Empty;
+                string sourceDataPath;
                 if (UsePreviouslyLoadedData)
                 {
-                    var defaultBasePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ArcGIS", "Projects", "OvertureProAddinData");
-                    sourceDataPath = Path.Combine(defaultBasePath, "Data", "latest");
-                    if (!Directory.Exists(sourceDataPath))
-                    {
-                        sourceDataPath = Path.Combine(defaultBasePath, "Data");
-                    }
+                    // Newest release folder under <project>\OvertureProAddinData\Data —
+                    // the folder that directly holds the per-type subfolders CreateBdc needs.
+                    sourceDataPath = ProjectDataLocator.GetNewestLoadedReleaseFolder();
                 }
                 else
                 {
