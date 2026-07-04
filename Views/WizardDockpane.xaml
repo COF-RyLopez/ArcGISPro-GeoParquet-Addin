@@ -495,10 +495,10 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <Button Grid.Column="0" Content="Back" Command="{Binding BackCommand}" Style="{DynamicResource Esri_Button}" Width="80" Visibility="{Binding IsBackButtonVisible, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                <Button Grid.Column="0" Content="Back" Command="{Binding BackCommand}" Style="{DynamicResource Esri_Button}" Width="100" Visibility="{Binding IsBackButtonVisible, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                 <StackPanel Grid.Column="2" Orientation="Horizontal">
-                    <Button Content="Cancel" Command="{Binding CancelCommand}" Style="{DynamicResource Esri_Button}" Margin="0,0,8,0" Width="80"/>
-                    <Button Content="{Binding NextButtonText}" Command="{Binding NextCommand}" Style="{DynamicResource Esri_Button}" Width="120" Visibility="{Binding IsNextButtonVisible, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                    <Button Content="Cancel" Command="{Binding CancelCommand}" Style="{DynamicResource Esri_Button}" Margin="0,0,8,0" Width="100"/>
+                    <Button Content="{Binding NextButtonText}" Command="{Binding NextCommand}" Style="{DynamicResource Esri_Button}" Width="100" Visibility="{Binding IsNextButtonVisible, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                 </StackPanel>
             </Grid>
         </Border>

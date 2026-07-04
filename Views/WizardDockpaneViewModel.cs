@@ -251,12 +251,17 @@ namespace DuckDBGeoparquet.Views
             SetCustomExtentCommand = new RelayCommand(() => SetCustomExtent(), () => UseCustomExtent);            BrowseDataLocationCommand = new RelayCommand(() => BrowseDataLocation());            ApplyManualReleaseCommand = new RelayCommand(() => ApplyManualRelease(), () => !string.IsNullOrWhiteSpace(ManualReleaseText));
             NextCommand = new RelayCommand(async () => {
                 if (SelectedTabIndex == (int)WizardTab.SelectData) {
+                    if (GetSelectedLeafItems().Count == 0) {
+                        ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show("Please select at least one data theme to download before continuing.", "No Themes Selected", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+                        return;
+                    }
                     SelectedTabIndex = (int)WizardTab.Preview;
                 } else if (SelectedTabIndex == (int)WizardTab.Preview) {
                     SelectedTabIndex = (int)WizardTab.Status;
                     await LoadOvertureDataAsync();
                 } else if (SelectedTabIndex == (int)WizardTab.Status || SelectedTabIndex == (int)WizardTab.CacheManagement) {
-                    this.Hide();
+                    ResetState();
+                    SelectedTabIndex = (int)WizardTab.SelectData;
                 }
             });
             BackCommand = new RelayCommand(() => {
@@ -268,7 +273,7 @@ namespace DuckDBGeoparquet.Views
             {
                 if (_cts != null && !_cts.IsCancellationRequested) { _cts.Cancel(); AddToLog("Operation cancelled by user."); }
                 ResetState(); AddToLog("Add-in state has been reset.");
-                try { this.Hide(); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Error closing dockpane: {ex.Message}"); }
+                SelectedTabIndex = (int)WizardTab.SelectData;
             });
             SelectAllCommand = new RelayCommand(
                 () => IsSelectAllChecked = !IsSelectAllChecked,
