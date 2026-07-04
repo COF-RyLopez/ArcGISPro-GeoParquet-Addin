@@ -37,11 +37,6 @@ namespace DuckDBGeoparquet.Views
         private const string RELEASE_URL = "https://labs.overturemaps.org/data/releases.json";
         private const string S3_BASE_PATH = "s3://overturemaps-us-west-2/release";
 
-        private const uint FILE_DELETE_ACCESS = 0x00010000;
-        private const int ERROR_SHARING_VIOLATION = 32;
-        private const int ERROR_LOCK_VIOLATION = 33;
-        private const int ERROR_ACCESS_DENIED = 5;
-
         // Add CancellationTokenSource for cancelling operations
         private CancellationTokenSource _cts;
         private bool _skipExistingData;
@@ -50,19 +45,6 @@ namespace DuckDBGeoparquet.Views
         {
             PropertyNameCaseInsensitive = true
         };
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern SafeFileHandle CreateFileW(
-            string lpFileName,
-            uint dwDesiredAccess,
-            FileShare dwShareMode,
-            IntPtr lpSecurityAttributes,
-            FileMode dwCreationDisposition,
-            FileAttributes dwFlagsAndAttributes,
-            IntPtr hTemplateFile);
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern bool DeleteFileW(string lpFileName);
 
         // Centralized logic for Default MFC Base Path
         private static string DeterminedDefaultMfcBasePath
@@ -560,7 +542,7 @@ namespace DuckDBGeoparquet.Views
 
                             foreach (var file in Directory.EnumerateFiles(folderPath, "*.parquet", SearchOption.AllDirectories))
                             {
-                                var deleteResult = TryDeleteParquetFileQuiet(file);
+                                var deleteResult = ParquetFileDeleter.TryDelete(file);
                                 switch (deleteResult)
                                 {
                                     case FileDeleteResult.Deleted:
@@ -633,52 +615,6 @@ namespace DuckDBGeoparquet.Views
                 StatusText = "Cleanup completed with warnings. Continuing with data load...";
                 System.Diagnostics.Debug.WriteLine($"Error in PerformBulkDataReplacementAsync: {ex.Message}");
             }
-        }
-
-        private enum FileDeleteResult
-        {
-            Deleted,
-            Locked,
-            Failed
-        }
-
-        private static FileDeleteResult TryDeleteParquetFileQuiet(string filePath)
-        {
-            if (!File.Exists(filePath))
-            {
-                return FileDeleteResult.Deleted;
-            }
-
-            using (var handle = CreateFileW(
-                filePath,
-                FILE_DELETE_ACCESS,
-                FileShare.None,
-                IntPtr.Zero,
-                FileMode.Open,
-                FileAttributes.Normal,
-                IntPtr.Zero))
-            {
-                if (handle.IsInvalid)
-                {
-                    int openError = Marshal.GetLastWin32Error();
-                    return IsLockWin32Error(openError) ? FileDeleteResult.Locked : FileDeleteResult.Failed;
-                }
-            }
-
-            if (DeleteFileW(filePath))
-            {
-                return FileDeleteResult.Deleted;
-            }
-
-            int deleteError = Marshal.GetLastWin32Error();
-            return IsLockWin32Error(deleteError) ? FileDeleteResult.Locked : FileDeleteResult.Failed;
-        }
-
-        private static bool IsLockWin32Error(int errorCode)
-        {
-            return errorCode == ERROR_SHARING_VIOLATION
-                   || errorCode == ERROR_LOCK_VIOLATION
-                   || errorCode == ERROR_ACCESS_DENIED;
         }
 
         /// <summary>
