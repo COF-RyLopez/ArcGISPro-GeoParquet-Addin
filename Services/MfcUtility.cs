@@ -278,7 +278,6 @@ namespace DuckDBGeoparquet.Services
                 }
 
                 string extensionsPath = Path.Combine(addinExecutingPath, "Extensions");
-                string normalizedExtensionsPath = extensionsPath.Replace('\\', '/');
 
                 using (var duckDBConnection = new DuckDBConnection("DataSource=:memory:"))
                 {
@@ -286,17 +285,27 @@ namespace DuckDBGeoparquet.Services
                     using (var setupCmd = duckDBConnection.CreateCommand())
                     {
                         bool spatialLoaded = false;
-                        // 1. Prioritize Bundled Extension
+                        // 1. Prioritize bundled extension. Load the explicit
+                        // file path because extension_directory expects DuckDB's
+                        // v<version>/<platform> cache layout, while our add-in
+                        // intentionally packages flat files in Extensions/.
+                        string spatialBundled = Path.Combine(extensionsPath, "spatial.duckdb_extension");
+                        string normalizedSpatialBundled = spatialBundled.Replace('\\', '/');
                         try
                         {
-                            setupCmd.CommandText = $"SET extension_directory='{normalizedExtensionsPath}'; LOAD spatial;";
+                            if (!File.Exists(spatialBundled))
+                            {
+                                throw new FileNotFoundException("Bundled DuckDB spatial extension was not found.", spatialBundled);
+                            }
+
+                            setupCmd.CommandText = $"LOAD '{EscapeSqlString(normalizedSpatialBundled)}';";
                             await setupCmd.ExecuteNonQueryAsync();
-                            logAction("DuckDB spatial extension loaded successfully from local add-in directory.");
+                            logAction($"DuckDB spatial extension loaded successfully from bundled file: {spatialBundled}");
                             spatialLoaded = true;
                         }
                         catch (Exception extEx)
                         {
-                            logAction($"Info: Could not load DuckDB spatial extension from local directory '{normalizedExtensionsPath}'. Error: {extEx.Message}. Will try other methods.");
+                            logAction($"Info: Could not load bundled DuckDB spatial extension from '{spatialBundled}'. Error: {extEx.Message}. Will try other methods.");
                         }
 
                         // 2. Attempt simple LOAD spatial (if Pro 3.5 makes it available globally to .NET DuckDB)
@@ -327,7 +336,7 @@ namespace DuckDBGeoparquet.Services
                             }
                             catch (Exception forceEx)
                             {
-                                logAction($"CRITICAL ERROR: All attempts to load DuckDB spatial extension failed (bundled, simple load, force install/load). Error during FORCE INSTALL/LOAD: {forceEx.Message}. MFC generation will likely fail or produce incorrect geometry types. Please ensure 'spatial.duckdb_extension' is in '{normalizedExtensionsPath}' or that network access allows DuckDB to download it.");
+                                logAction($"CRITICAL ERROR: All attempts to load DuckDB spatial extension failed (bundled, simple load, force install/load). Error during FORCE INSTALL/LOAD: {forceEx.Message}. MFC generation will likely fail or produce incorrect geometry types. Please ensure 'spatial.duckdb_extension' is in '{extensionsPath}' or that network access allows DuckDB to download it.");
                                 spatialLoaded = false; // Explicitly false
                             }
                         }
@@ -444,6 +453,11 @@ namespace DuckDBGeoparquet.Services
                 }
             }
             return columns;
+        }
+
+        private static string EscapeSqlString(string value)
+        {
+            return value?.Replace("'", "''");
         }
 
         private static List<MfcField> BuildFieldList(
