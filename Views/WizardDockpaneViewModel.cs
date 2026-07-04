@@ -759,56 +759,58 @@ namespace DuckDBGeoparquet.Views
             _savedViewExtentForRestore = null;
             await QueuedTask.Run(() =>
             {
-                SpatialReference wgs84 = SpatialReferenceBuilder.CreateSpatialReference(4326);
+                SpatialReference wgs84 = SpatialReferenceBuilder.CreateSpatialReference(ExtentResolution.Wgs84Wkid);
 
-                if (UseCurrentMapExtent && MapView.Active != null)
+                switch (ExtentResolution.ChooseSource(UseCurrentMapExtent, MapView.Active != null, UseCustomExtent, CustomExtent != null))
                 {
-                    Envelope mapExtent = MapView.Active.Extent;
-                    if (mapExtent != null)
+                    case ExtentSource.Map:
                     {
-                        // Save view extent so we can restore it after adding layers (prevents zoom-out)
-                        _savedViewExtentForRestore = EnvelopeBuilderEx.CreateEnvelope(mapExtent.XMin, mapExtent.YMin, mapExtent.XMax, mapExtent.YMax, mapExtent.SpatialReference);
-                        if (mapExtent.SpatialReference == null || mapExtent.SpatialReference.Wkid != 4326)
+                        Envelope mapExtent = MapView.Active.Extent;
+                        if (mapExtent != null)
                         {
-                            AddToLog($"Map extent SR is {mapExtent.SpatialReference?.Wkid.ToString() ?? "null"}, projecting to WGS84 (4326).");
-                            try
+                            // Save view extent so we can restore it after adding layers (prevents zoom-out)
+                            _savedViewExtentForRestore = EnvelopeBuilderEx.CreateEnvelope(mapExtent.XMin, mapExtent.YMin, mapExtent.XMax, mapExtent.YMax, mapExtent.SpatialReference);
+                            if (ExtentResolution.NeedsProjectionToWgs84(mapExtent.SpatialReference?.Wkid))
                             {
-                                extent = GeometryEngine.Instance.Project(mapExtent, wgs84) as Envelope;
-                                if (extent == null)
+                                AddToLog($"Map extent SR is {mapExtent.SpatialReference?.Wkid.ToString() ?? "null"}, projecting to WGS84 (4326).");
+                                try
                                 {
-                                    AddToLog("Warning: Map extent projection to WGS84 resulted in null. Original extent might be invalid or projection failed.");
+                                    extent = GeometryEngine.Instance.Project(mapExtent, wgs84) as Envelope;
+                                    if (extent == null)
+                                    {
+                                        AddToLog("Warning: Map extent projection to WGS84 resulted in null. Original extent might be invalid or projection failed.");
+                                        extent = mapExtent;
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    AddToLog($"Error projecting map extent: {ex.Message}. Using original extent values, which might be incorrect for filtering.");
+                                    System.Diagnostics.Debug.WriteLine($"Error projecting map extent: {ex.Message}");
                                     extent = mapExtent;
                                 }
                             }
-                            catch (Exception ex)
+                            else
                             {
-                                AddToLog($"Error projecting map extent: {ex.Message}. Using original extent values, which might be incorrect for filtering.");
-                                System.Diagnostics.Debug.WriteLine($"Error projecting map extent: {ex.Message}");
+                                AddToLog("Map extent is already in WGS84.");
                                 extent = mapExtent;
                             }
+                            AddToLog($"Using WGS84 extent from map: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
+                            System.Diagnostics.Debug.WriteLine($"[GetLoadExtentAsync] WGS84 extent from map (MapView.Active.Extent): {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
                         }
                         else
                         {
-                            AddToLog("Map extent is already in WGS84.");
-                            extent = mapExtent;
+                            AddToLog("Map extent is null.");
                         }
-                        AddToLog($"Using WGS84 extent from map: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
-                        System.Diagnostics.Debug.WriteLine($"[GetLoadExtentAsync] WGS84 extent from map (MapView.Active.Extent): {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
+                        break;
                     }
-                    else
-                    {
-                        AddToLog("Map extent is null.");
-                    }
-                }
-                else if (UseCustomExtent && CustomExtent != null)
-                {
-                    extent = CustomExtent;
-                    AddToLog($"Using custom WGS84 extent: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
-                    System.Diagnostics.Debug.WriteLine($"Using custom WGS84 extent: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
-                }
-                else
-                {
-                    AddToLog("No extent specified or available for filtering.");
+                    case ExtentSource.Custom:
+                        extent = CustomExtent;
+                        AddToLog($"Using custom WGS84 extent: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
+                        System.Diagnostics.Debug.WriteLine($"Using custom WGS84 extent: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
+                        break;
+                    default:
+                        AddToLog("No extent specified or available for filtering.");
+                        break;
                 }
             });
             return extent;
