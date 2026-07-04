@@ -16,6 +16,7 @@
 		<Compile Include="..\Services\GeocodeTextNormalizer.cs" Link="Linked\GeocodeTextNormalizer.cs" />
 		<Compile Include="..\Services\GeoParquetSql.cs" Link="Linked\GeoParquetSql.cs" />
 		<Compile Include="..\Services\S3Ingester.cs" Link="Linked\S3Ingester.cs" />
+		<Compile Include="..\Services\ParquetFileDeleter.cs" Link="Linked\ParquetFileDeleter.cs" />
 		<Compile Include="..\Services\PreviewBridge.cs" Link="Linked\PreviewBridge.cs" />
 	</ItemGroup>
 	<ItemGroup>
