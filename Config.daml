@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <ArcGIS defaultAssembly="DuckDBGeoparquet.dll" defaultNamespace="DuckDBGeoparquet" xmlns="http://schemas.esri.com/DADF/Registry" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 	<AddInInfo id="{9e44d8fc-6e1a-4513-9992-85c2de3e2d61}" version="0.7.0" desktopVersion="3.7">
 		<Name>DuckDBGeoparquet</Name>
@@ -24,7 +24,6 @@
 					<button refID="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" size="large" />
 					<button refID="DuckDBGeoparquet_Views_OvertureGeocoderDockpane_ShowButton" size="large" />
 					<button refID="DuckDBGeoparquet_Views_MfcDockpane_ShowButton" size="large" />
-
 				</group>
 			</groups>
 			<controls>
@@ -39,7 +38,7 @@
                         Search loaded Overture address and place data
 						<disabledText>Unable to open Overture Geocoder at this time</disabledText></tooltip>
 				</button>
-								<button id="DuckDBGeoparquet_Views_MfcDockpane_ShowButton" caption="Create MFC" className="DuckDBGeoparquet.Views.MfcDockpane_ShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="C" extendedCaption="Create Multifile Feature Connection">
+				<button id="DuckDBGeoparquet_Views_MfcDockpane_ShowButton" caption="Create MFC" className="DuckDBGeoparquet.Views.MfcDockpane_ShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="C" extendedCaption="Create Multifile Feature Connection">
 					<tooltip heading="Create MFC">
                         Create an MFC from downloaded GeoParquet data
 						<disabledText>Unable to open MFC tool at this time</disabledText></tooltip>
@@ -58,7 +57,7 @@
 				<dockPane id="DuckDBGeoparquet_Views_OvertureGeocoderDockpane" caption="Overture Geocoder" className="DuckDBGeoparquet.Views.OvertureGeocoderDockpaneViewModel" dock="right" dockWith="esri_core_contentsDockPane">
 					<content className="DuckDBGeoparquet.Views.OvertureGeocoderDockpaneView" />
 				</dockPane>
-							<dockPane id="DuckDBGeoparquet_Views_MfcDockpane" caption="Create Overture MFC" className="DuckDBGeoparquet.Views.MfcDockpaneViewModel" dock="right" dockWith="esri_core_contentsDockPane">
+				<dockPane id="DuckDBGeoparquet_Views_MfcDockpane" caption="Create Overture MFC" className="DuckDBGeoparquet.Views.MfcDockpaneViewModel" dock="right" dockWith="esri_core_contentsDockPane">
 					<content className="DuckDBGeoparquet.Views.MfcDockpaneView" />
 				</dockPane>
 			</dockPanes>
