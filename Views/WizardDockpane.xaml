@@ -139,7 +139,7 @@
                                 Margin="0,0,0,12">
                             <StackPanel>
                                 <TextBlock TextWrapping="Wrap" Margin="0,4,0,4">
-                                    Files will be saved as GeoParquet format. After loading data, you can optionally create a Multifile Feature Connection (MFC) from the "Create MFC" tab.
+                                    Files will be saved as GeoParquet format. After loading data, you can optionally create a Multifile Feature Connection (MFC) from the Create MFC tool.
                                 </TextBlock>
                                 <Grid Margin="0,4,0,4">
                                     <Grid.ColumnDefinitions>

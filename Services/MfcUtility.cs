@@ -410,6 +410,12 @@ namespace DuckDBGeoparquet.Services
                     }
                 }
 
+                if (!mfcRoot.Datasets.Any())
+                {
+                    logAction("No datasets with readable Parquet schema were found. Cannot generate MFC.");
+                    return false;
+                }
+
                 await WriteMfcFile(outputMfcFilePath, mfcRoot, logAction);
                 return true;
             }
@@ -711,6 +717,12 @@ namespace DuckDBGeoparquet.Services
 
         private static async Task WriteMfcFile(string mfcFilePath, MfcRoot mfcRoot, Action<string> logAction)
         {
+            string outputDirectory = Path.GetDirectoryName(mfcFilePath);
+            if (!string.IsNullOrWhiteSpace(outputDirectory) && !Directory.Exists(outputDirectory))
+            {
+                Directory.CreateDirectory(outputDirectory);
+            }
+
             var options = new JsonSerializerOptions
             {
                 WriteIndented = true,

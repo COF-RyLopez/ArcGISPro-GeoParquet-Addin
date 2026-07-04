@@ -1,20 +1,20 @@
 using ArcGIS.Desktop.Framework;
 using ArcGIS.Desktop.Framework.Contracts;
-using ArcGIS.Desktop.Framework.Threading.Tasks;
 using System;
 using System.IO;
+using System.Reflection;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using System.Windows.Forms;
 using DuckDBGeoparquet.Services;
-using ArcGIS.Desktop.Core;
-using ArcGIS.Desktop.Core.Geoprocessing;
 
 namespace DuckDBGeoparquet.Views
 {
     internal class MfcDockpaneViewModel : DockPane
     {
         private const string _dockPaneID = "DuckDBGeoparquet_Views_MfcDockpane";
+        private const string DefaultMfcFileName = "OvertureData.mfc";
 
         protected MfcDockpaneViewModel() {
             BrowseCustomDataFolderCommand = new RelayCommand(() => BrowseCustomDataFolder());
@@ -103,6 +103,13 @@ namespace DuckDBGeoparquet.Views
             set => SetProperty(ref _statusText, value);
         }
 
+        private string _mfcLogText = string.Empty;
+        public string MfcLogText
+        {
+            get => _mfcLogText;
+            set => SetProperty(ref _mfcLogText, value);
+        }
+
         public ICommand BrowseCustomDataFolderCommand { get; }
         public ICommand BrowseMfcLocationCommand { get; }
         public ICommand CreateMfcCommand { get; }
@@ -153,17 +160,33 @@ namespace DuckDBGeoparquet.Views
 
         private async Task CreateMfcAsync()
         {
+            var logBuilder = new StringBuilder();
+
+            void LogMessage(string message)
+            {
+                if (string.IsNullOrWhiteSpace(message))
+                    return;
+
+                System.Diagnostics.Debug.WriteLine(message);
+                if (logBuilder.Length > 0)
+                    logBuilder.AppendLine();
+
+                logBuilder.Append(message);
+                MfcLogText = logBuilder.ToString();
+            }
+
             try
             {
                 IsCreatingMfc = true;
                 ((RelayCommand)CreateMfcCommand).RaiseCanExecuteChanged();
                 StatusText = "Creating Multifile Feature Connection (MFC)...";
+                MfcLogText = string.Empty;
 
                 string sourceDataPath;
                 if (UsePreviouslyLoadedData)
                 {
                     // Newest release folder under <project>\OvertureProAddinData\Data —
-                    // the folder that directly holds the per-type subfolders CreateBdc needs.
+                    // the folder that directly holds the per-type subfolders the MFC needs.
                     sourceDataPath = ProjectDataLocator.GetNewestLoadedReleaseFolder();
                 }
                 else
@@ -176,28 +199,44 @@ namespace DuckDBGeoparquet.Views
                     throw new DirectoryNotFoundException($"Source data directory not found: {sourceDataPath}");
                 }
 
-                if (!Directory.Exists(MfcOutputPath))
+                string outputMfcFilePath = ResolveMfcFilePath(MfcOutputPath);
+                string outputDirectory = Path.GetDirectoryName(outputMfcFilePath);
+                if (string.IsNullOrWhiteSpace(outputDirectory))
                 {
-                    Directory.CreateDirectory(MfcOutputPath);
+                    throw new DirectoryNotFoundException($"MFC output directory could not be resolved from: {MfcOutputPath}");
                 }
 
-                // Call CreateBdc gp tool
-                var parameters = Geoprocessing.MakeValueArray(sourceDataPath, MfcOutputPath, "OvertureData");
-                var result = await Geoprocessing.ExecuteToolAsync("management.CreateBdc", parameters);
-                
-                if (result.IsFailed)
+                if (!Directory.Exists(outputDirectory))
                 {
-                    StatusText = $"MFC Creation Failed: {string.Join(", ", result.Messages)}";
+                    Directory.CreateDirectory(outputDirectory);
+                }
+
+                string addinExecutingPath = GetAddinExecutingPath();
+                LogMessage($"Source data folder: {sourceDataPath}");
+                LogMessage($"Output MFC file: {outputMfcFilePath}");
+
+                bool created = await MfcUtility.GenerateMfcFileAsync(
+                    sourceDataPath,
+                    outputMfcFilePath,
+                    addinExecutingPath,
+                    LogMessage);
+
+                if (!created)
+                {
+                    StatusText = "MFC creation failed. Review the log details below.";
                 }
                 else
                 {
-                    StatusText = "MFC created successfully in the output folder.";
-                    ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show("Multifile Feature Connection created successfully.", "Success");
+                    StatusText = $"MFC created successfully: {outputMfcFilePath}";
+                    ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                        $"Multifile Feature Connection created successfully:\n{outputMfcFilePath}",
+                        "Success");
                 }
             }
             catch (Exception ex)
             {
                 StatusText = $"Error creating MFC: {ex.Message}";
+                LogMessage(ex.ToString());
                 System.Diagnostics.Debug.WriteLine(ex);
             }
             finally
@@ -205,6 +244,29 @@ namespace DuckDBGeoparquet.Views
                 IsCreatingMfc = false;
                 ((RelayCommand)CreateMfcCommand).RaiseCanExecuteChanged();
             }
+        }
+
+        private static string ResolveMfcFilePath(string outputPath)
+        {
+            string trimmedPath = outputPath?.Trim();
+            if (string.IsNullOrWhiteSpace(trimmedPath))
+                return trimmedPath;
+
+            return string.Equals(Path.GetExtension(trimmedPath), ".mfc", StringComparison.OrdinalIgnoreCase)
+                ? trimmedPath
+                : Path.Combine(trimmedPath, DefaultMfcFileName);
+        }
+
+        private static string GetAddinExecutingPath()
+        {
+            string assemblyLocation = Assembly.GetExecutingAssembly().Location;
+            string assemblyDirectory = string.IsNullOrWhiteSpace(assemblyLocation)
+                ? null
+                : Path.GetDirectoryName(assemblyLocation);
+
+            return string.IsNullOrWhiteSpace(assemblyDirectory)
+                ? AppDomain.CurrentDomain.BaseDirectory
+                : assemblyDirectory;
         }
     }
 

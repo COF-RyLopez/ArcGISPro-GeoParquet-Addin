@@ -14,8 +14,8 @@ namespace DuckDBGeoparquet.Services
         /// Returns the most recently modified immediate subfolder of
         /// <paramref name="dataDirectory"/> — i.e. the newest loaded Overture
         /// release folder, which is the one holding the per-type subfolders
-        /// that CreateBdc consumes. Returns null when the directory is missing
-        /// or has no subfolders.
+        /// that MFC generation consumes. Returns null when the directory is
+        /// missing or has no subfolders.
         /// </summary>
         public static string ResolveNewestReleaseFolder(string dataDirectory)
         {

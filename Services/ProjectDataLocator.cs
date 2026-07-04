@@ -62,8 +62,8 @@ namespace DuckDBGeoparquet.Services
 
         /// <summary>
         /// The most recently loaded release folder under <see cref="GetDataDirectory"/>,
-        /// or null if nothing has been loaded. This is the folder CreateBdc needs
-        /// (it directly contains the per-type subfolders).
+        /// or null if nothing has been loaded. This is the folder the MFC
+        /// generator needs (it directly contains the per-type subfolders).
         /// </summary>
         public static string GetNewestLoadedReleaseFolder() =>
             OvertureDataPaths.ResolveNewestReleaseFolder(GetDataDirectory());
