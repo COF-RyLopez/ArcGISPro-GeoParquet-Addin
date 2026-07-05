@@ -1,0 +1,225 @@
+<UserControl x:Class="DuckDBGeoparquet.Views.GersifyDockpaneView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:extensions="clr-namespace:ArcGIS.Desktop.Extensions;assembly=ArcGIS.Desktop.Extensions"
+             xmlns:local="clr-namespace:DuckDBGeoparquet.Views"
+             mc:Ignorable="d"
+             d:DesignHeight="680"
+             d:DesignWidth="430"
+             d:DataContext="{d:DesignInstance local:GersifyDockpaneViewModel}">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <extensions:DesignOnlyResourceDictionary Source="pack://application:,,,/ArcGIS.Desktop.Framework;component\Themes\Default.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid Margin="16,12,16,12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="120"/>
+        </Grid.RowDefinitions>
+
+        <TabControl Grid.Row="0">
+            <TabItem Header="GERSify Places">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="0,8,0,8">
+                        <TextBlock Text="Input Layer" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <ComboBox Grid.Column="0"
+                                      ItemsSource="{Binding InputLayers}"
+                                      SelectedItem="{Binding SelectedInputLayer}"
+                                      DisplayMemberPath="Name"
+                                      Margin="0,0,8,0"/>
+                            <Button Grid.Column="1"
+                                    Content="Refresh"
+                                    Command="{Binding RefreshLayersCommand}"
+                                    Width="82"
+                                    Style="{DynamicResource Esri_Button}"/>
+                        </Grid>
+
+                        <TextBlock Text="Field Mapping" FontWeight="SemiBold" Margin="0,4,0,4"/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Unique ID" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                            <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding InputFields}" SelectedItem="{Binding SelectedIdField}" Margin="0,0,0,6"/>
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Name" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                            <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding InputFields}" SelectedItem="{Binding SelectedNameField}" Margin="0,0,0,6"/>
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Address" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                            <ComboBox Grid.Row="2" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedAddressField}" Margin="0,0,0,6"/>
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="City" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                            <ComboBox Grid.Row="3" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedCityField}" Margin="0,0,0,6"/>
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="State" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                            <ComboBox Grid.Row="4" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStateField}" Margin="0,0,0,6"/>
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Postcode" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <ComboBox Grid.Row="5" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedPostcodeField}"/>
+                        </Grid>
+
+                        <TextBlock Text="Overture Data" FontWeight="SemiBold" Margin="0,6,0,4"/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" Text="{Binding ReleaseFolderPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
+                            <Button Grid.Column="1" Content="Browse..." Command="{Binding BrowseReleaseFolderCommand}" Width="82" Style="{DynamicResource Esri_Button}"/>
+                        </Grid>
+
+                        <TextBlock Text="Output" FontWeight="SemiBold" Margin="0,6,0,4"/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" Text="{Binding OutputFolder, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
+                            <Button Grid.Column="1" Content="Browse..." Command="{Binding BrowseOutputFolderCommand}" Width="82" Style="{DynamicResource Esri_Button}"/>
+                        </Grid>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Dataset Name" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBox Grid.Column="1" Text="{Binding DatasetName, UpdateSourceTrigger=PropertyChanged}"/>
+                        </Grid>
+
+                        <TextBlock Text="Thresholds" FontWeight="SemiBold" Margin="0,6,0,4"/>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Distance m" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding MaxDistanceMeters, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"/>
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Name" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NameSimilarityThreshold, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"/>
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Address" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding AddressSimilarityThreshold, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"/>
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Score" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding AcceptScoreThreshold, UpdateSourceTrigger=PropertyChanged}"/>
+                        </Grid>
+
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="Run GERSify"
+                                    Command="{Binding RunGersifyCommand}"
+                                    Width="110"
+                                    Style="{DynamicResource Esri_Button}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Trace Sources">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="0,8,0,8">
+                        <TextBlock Text="Input Layer" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <ComboBox Grid.Column="0"
+                                      ItemsSource="{Binding TraceLayers}"
+                                      SelectedItem="{Binding SelectedTraceLayer}"
+                                      DisplayMemberPath="Name"
+                                      Margin="0,0,8,0"/>
+                            <Button Grid.Column="1"
+                                    Content="Refresh"
+                                    Command="{Binding RefreshLayersCommand}"
+                                    Width="82"
+                                    Style="{DynamicResource Esri_Button}"/>
+                        </Grid>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="GERS ID Field" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <ComboBox Grid.Column="1" ItemsSource="{Binding TraceFields}" SelectedItem="{Binding SelectedTraceGersIdField}"/>
+                        </Grid>
+
+                        <TextBlock Text="Bridge Files" FontWeight="SemiBold" Margin="0,4,0,4"/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Root" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding BridgeRoot, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"/>
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Release" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding BridgeRelease, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"/>
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Theme" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding BridgeTheme, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"/>
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Type" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding BridgeType, UpdateSourceTrigger=PropertyChanged}"/>
+                        </Grid>
+
+                        <TextBlock Text="Output" FontWeight="SemiBold" Margin="0,6,0,4"/>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" Text="{Binding OutputFolder, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
+                            <Button Grid.Column="1" Content="Browse..." Command="{Binding BrowseOutputFolderCommand}" Width="82" Style="{DynamicResource Esri_Button}"/>
+                        </Grid>
+
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="Trace Sources"
+                                    Command="{Binding RunTraceSourcesCommand}"
+                                    Width="110"
+                                    Style="{DynamicResource Esri_Button}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <TextBlock Grid.Row="1"
+                   Text="{Binding StatusText}"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                   Margin="0,8,0,6"/>
+
+        <TextBox Grid.Row="2"
+                 Text="{Binding LogText, Mode=OneWay}"
+                 IsReadOnly="True"
+                 TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto"
+                 FontFamily="Consolas"
+                 Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                 Foreground="{DynamicResource Esri_TextControlBrush}"
+                 TextChanged="LogTextBox_TextChanged"/>
+    </Grid>
+</UserControl>

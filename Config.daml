@@ -23,6 +23,7 @@
 					<labelControl refID="DuckDBGeoparquet_OvertureMapDescription" />
 					<button refID="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" size="large" />
 					<button refID="DuckDBGeoparquet_Views_OvertureGeocoderDockpane_ShowButton" size="large" />
+					<button refID="DuckDBGeoparquet_Views_GersifyDockpane_ShowButton" size="large" />
 					<button refID="DuckDBGeoparquet_Views_MfcDockpane_ShowButton" size="large" />
 				</group>
 			</groups>
@@ -37,6 +38,11 @@
 					<tooltip heading="Overture Geocoder">
                         Search loaded Overture address and place data
 						<disabledText>Unable to open Overture Geocoder at this time</disabledText></tooltip>
+				</button>
+				<button id="DuckDBGeoparquet_Views_GersifyDockpane_ShowButton" caption="GERSify Data" className="DuckDBGeoparquet.Views.GersifyShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="F" extendedCaption="Match User Data to Overture GERS IDs">
+					<tooltip heading="GERSify Data">
+                        Match point layers to Overture Places and trace source records through bridge files
+						<disabledText>Unable to open GERSify Data at this time</disabledText></tooltip>
 				</button>
 				<button id="DuckDBGeoparquet_Views_MfcDockpane_ShowButton" caption="Create MFC" className="DuckDBGeoparquet.Views.MfcDockpane_ShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="C" extendedCaption="Create Multifile Feature Connection">
 					<tooltip heading="Create MFC">
@@ -56,6 +62,9 @@
 				</dockPane>
 				<dockPane id="DuckDBGeoparquet_Views_OvertureGeocoderDockpane" caption="Overture Geocoder" className="DuckDBGeoparquet.Views.OvertureGeocoderDockpaneViewModel" dock="right" dockWith="esri_core_contentsDockPane">
 					<content className="DuckDBGeoparquet.Views.OvertureGeocoderDockpaneView" />
+				</dockPane>
+				<dockPane id="DuckDBGeoparquet_Views_GersifyDockpane" caption="GERSify Data" className="DuckDBGeoparquet.Views.GersifyDockpaneViewModel" dock="right" dockWith="esri_core_contentsDockPane">
+					<content className="DuckDBGeoparquet.Views.GersifyDockpaneView" />
 				</dockPane>
 				<dockPane id="DuckDBGeoparquet_Views_MfcDockpane" caption="Create Overture MFC" className="DuckDBGeoparquet.Views.MfcDockpaneViewModel" dock="right" dockWith="esri_core_contentsDockPane">
 					<content className="DuckDBGeoparquet.Views.MfcDockpaneView" />
