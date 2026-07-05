@@ -5,6 +5,8 @@ namespace DuckDBGeoparquet.Models
     public class GersifyResult
     {
         public int InputCount { get; set; }
+        public int InputNameCount { get; set; }
+        public int InputAddressCount { get; set; }
         public int CandidateCount { get; set; }
         public int AcceptedCount { get; set; }
         public string OutputCsvPath { get; set; }

@@ -49,6 +49,9 @@ namespace DuckDBGeoparquet.Services
             string nameThreshold = Format(options.NameSimilarityThreshold);
             string addressThreshold = Format(options.AddressSimilarityThreshold);
             string scoreThreshold = Format(options.AcceptScoreThreshold);
+            string proximityOnlyDistance = Format(Math.Min(
+                options.MaxDistanceMeters,
+                Math.Min(20, Math.Max(5, options.MaxDistanceMeters * 0.2))));
             string bboxFilter = BuildOvertureBboxFilter(options.InputExtent, availableColumns);
             string placeNameExpr = BuildFirstExistingExpression(
                 availableColumns,
@@ -56,13 +59,29 @@ namespace DuckDBGeoparquet.Services
                 ("name", "CAST(name AS VARCHAR)"),
                 ("name_primary", "CAST(name_primary AS VARCHAR)"),
                 ("brand", "CAST(brand AS VARCHAR)"));
-            string placeAddressExpr = BuildFirstExistingExpression(
+            string placeStreetAddressExpr = BuildFirstExistingExpression(
                 availableColumns,
                 ("addresses", "CAST(addresses[1].freeform AS VARCHAR)"),
                 ("address_freeform", "CAST(address_freeform AS VARCHAR)"),
                 ("address", "CAST(address AS VARCHAR)"),
                 ("street", "CAST(street AS VARCHAR)"),
                 ("full_address", "CAST(full_address AS VARCHAR)"));
+            string placeLocalityExpr = BuildFirstExistingExpression(
+                availableColumns,
+                ("addresses", "CAST(addresses[1].locality AS VARCHAR)"),
+                ("locality", "CAST(locality AS VARCHAR)"),
+                ("city", "CAST(city AS VARCHAR)"));
+            string placeRegionExpr = BuildFirstExistingExpression(
+                availableColumns,
+                ("addresses", "CAST(addresses[1].region AS VARCHAR)"),
+                ("region", "CAST(region AS VARCHAR)"),
+                ("state", "CAST(state AS VARCHAR)"));
+            string placePostcodeExpr = BuildFirstExistingExpression(
+                availableColumns,
+                ("addresses", "left(CAST(addresses[1].postcode AS VARCHAR), 5)"),
+                ("postcode", "left(CAST(postcode AS VARCHAR), 5)"),
+                ("postal_code", "left(CAST(postal_code AS VARCHAR), 5)"),
+                ("zip", "left(CAST(zip AS VARCHAR), 5)"));
 
             return $@"
                 CREATE OR REPLACE TABLE {CandidateTable} AS
@@ -77,6 +96,7 @@ namespace DuckDBGeoparquet.Services
                         longitude,
                         latitude,
                         NormalizeText(coalesce(name, '')) AS user_name_norm,
+                        NormalizeText(coalesce(address, '')) AS user_street_norm,
                         NormalizeText(trim(concat_ws(' ', coalesce(address, ''), coalesce(city, ''), coalesce(state, ''), coalesce(postcode, '')))) AS user_address_norm
                     FROM {UserInputTable}
                 ),
@@ -84,11 +104,12 @@ namespace DuckDBGeoparquet.Services
                     SELECT
                         CAST(id AS VARCHAR) AS overture_id,
                         coalesce({placeNameExpr}, '') AS overture_name,
-                        coalesce({placeAddressExpr}, '') AS overture_address,
+                        coalesce({placeStreetAddressExpr}, '') AS overture_address,
                         CAST(ST_X(geometry) AS DOUBLE) AS overture_longitude,
                         CAST(ST_Y(geometry) AS DOUBLE) AS overture_latitude,
                         NormalizeText(coalesce({placeNameExpr}, '')) AS overture_name_norm,
-                        NormalizeText(coalesce({placeAddressExpr}, '')) AS overture_address_norm
+                        NormalizeText(coalesce({placeStreetAddressExpr}, '')) AS overture_street_norm,
+                        NormalizeText(trim(concat_ws(' ', coalesce({placeStreetAddressExpr}, ''), coalesce({placeLocalityExpr}, ''), coalesce({placeRegionExpr}, ''), coalesce({placePostcodeExpr}, '')))) AS overture_address_norm
                     FROM read_parquet('{escapedPath}', hive_partitioning=1)
                     WHERE geometry IS NOT NULL
                     {bboxFilter}
@@ -102,6 +123,7 @@ namespace DuckDBGeoparquet.Services
                         o.overture_longitude,
                         o.overture_latitude,
                         o.overture_name_norm,
+                        o.overture_street_norm,
                         o.overture_address_norm,
                         sqrt(
                             pow((o.overture_longitude - u.longitude) * 111320.0 * cos(radians((o.overture_latitude + u.latitude) / 2.0)), 2) +
@@ -112,7 +134,8 @@ namespace DuckDBGeoparquet.Services
                       ON abs(o.overture_latitude - u.latitude) <= ({maxDistance} / 110540.0)
                      AND abs(o.overture_longitude - u.longitude) <= ({maxDistance} / greatest(111320.0 * abs(cos(radians(u.latitude))), 1.0))
                     WHERE (u.user_name_norm <> '' AND o.overture_name_norm <> '')
-                       OR (u.user_address_norm <> '' AND o.overture_address_norm <> '')
+                       OR (u.user_street_norm <> '' AND o.overture_street_norm <> '')
+                       OR (u.user_name_norm = '' AND u.user_street_norm <> '' AND o.overture_name_norm <> '')
                 ),
                 scored AS (
                     SELECT
@@ -136,8 +159,11 @@ namespace DuckDBGeoparquet.Services
                             ELSE jaro_winkler_similarity(user_name_norm, overture_name_norm)
                         END AS name_similarity,
                         CASE
-                            WHEN user_address_norm = '' OR overture_address_norm = '' THEN NULL
-                            ELSE jaro_winkler_similarity(user_address_norm, overture_address_norm)
+                            WHEN user_street_norm = '' OR overture_street_norm = '' THEN NULL
+                            ELSE greatest(
+                                jaro_winkler_similarity(user_street_norm, overture_street_norm),
+                                jaro_winkler_similarity(user_address_norm, overture_address_norm)
+                            )
                         END AS address_similarity,
                         greatest(0.0, 1.0 - (distance_m / {maxDistance})) AS distance_similarity
                     FROM candidate_distances
@@ -146,6 +172,12 @@ namespace DuckDBGeoparquet.Services
                 ranked AS (
                     SELECT
                         *,
+                        CASE
+                            WHEN name_similarity IS NOT NULL AND address_similarity IS NOT NULL THEN 'name_address'
+                            WHEN name_similarity IS NOT NULL THEN 'name'
+                            WHEN address_similarity IS NOT NULL THEN 'address'
+                            ELSE 'nearby_only'
+                        END AS match_strategy,
                         CASE
                             WHEN name_similarity IS NULL AND address_similarity IS NULL THEN distance_similarity * 100.0
                             WHEN name_similarity IS NULL THEN (address_similarity * 80.0) + (distance_similarity * 20.0)
@@ -170,10 +202,19 @@ namespace DuckDBGeoparquet.Services
                     *,
                     (
                     candidate_rank = 1
-                    AND (name_similarity IS NULL OR name_similarity >= {nameThreshold})
-                    AND (address_similarity IS NULL OR address_similarity >= {addressThreshold})
-                    AND (name_similarity IS NOT NULL OR address_similarity IS NOT NULL)
                     AND gers_match_score >= {scoreThreshold}
+                    AND (
+                        (
+                            (name_similarity IS NULL OR name_similarity >= {nameThreshold})
+                            AND (address_similarity IS NULL OR address_similarity >= {addressThreshold})
+                            AND (name_similarity IS NOT NULL OR address_similarity IS NOT NULL)
+                        )
+                        OR (
+                            name_similarity IS NULL
+                            AND address_similarity IS NULL
+                            AND distance_m <= {proximityOnlyDistance}
+                        )
+                    )
                     ) AS accepted
                 FROM ranked
                 WHERE candidate_rank <= {candidateLimit};
@@ -196,6 +237,7 @@ namespace DuckDBGeoparquet.Services
                     u.latitude,
                     a.gers_id,
                     a.gers_match_score,
+                    a.match_strategy AS gers_match_strategy,
                     a.distance_m AS gers_match_distance_m,
                     a.name_similarity AS gers_name_similarity,
                     a.address_similarity AS gers_address_similarity,

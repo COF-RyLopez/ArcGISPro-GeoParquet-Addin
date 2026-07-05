@@ -58,6 +58,7 @@ namespace DuckDBGeoparquet.Services
             {
                 throw new InvalidOperationException("No valid point features were exported from the selected layer.");
             }
+            var inputSignalCounts = await ReadInputSignalCountsAsync(cancellationToken);
 
             progress?.Report($"Matching {inputCount:N0} point feature(s) to Overture Places...");
             var placeColumns = await ReadParquetColumnsAsync(placesGlob, cancellationToken);
@@ -79,6 +80,8 @@ namespace DuckDBGeoparquet.Services
             return new GersifyResult
             {
                 InputCount = inputCount,
+                InputNameCount = inputSignalCounts.NameCount,
+                InputAddressCount = inputSignalCounts.AddressCount,
                 CandidateCount = candidateCount,
                 AcceptedCount = acceptedCount,
                 OutputCsvPath = outputCsvPath,
@@ -86,6 +89,24 @@ namespace DuckDBGeoparquet.Services
                 BridgeCsvPath = bridgeCsvPath,
                 AcceptedMatches = acceptedMatches
             };
+        }
+
+        private async Task<(int NameCount, int AddressCount)> ReadInputSignalCountsAsync(CancellationToken cancellationToken)
+        {
+            using var command = _duckDb.Connection.CreateCommand();
+            command.CommandText = $@"
+                SELECT
+                    sum(CASE WHEN trim(coalesce(name, '')) <> '' THEN 1 ELSE 0 END) AS name_count,
+                    sum(CASE WHEN trim(coalesce(address, '')) <> '' THEN 1 ELSE 0 END) AS address_count
+                FROM {GersSql.UserInputTable};";
+
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return (0, 0);
+
+            return (
+                reader.IsDBNull(0) ? 0 : Convert.ToInt32(reader.GetValue(0), CultureInfo.InvariantCulture),
+                reader.IsDBNull(1) ? 0 : Convert.ToInt32(reader.GetValue(1), CultureInfo.InvariantCulture));
         }
 
         private async Task<IReadOnlyCollection<string>> ReadParquetColumnsAsync(string parquetGlob, CancellationToken cancellationToken)

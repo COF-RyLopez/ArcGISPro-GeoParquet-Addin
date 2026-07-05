@@ -188,11 +188,11 @@
                             <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NameSimilarityThreshold, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
                                      ToolTipService.ToolTip="Raise this for conservative matching; lower it when names vary across systems."/>
                             <TextBlock Grid.Row="2" Grid.Column="0" Text="Address" VerticalAlignment="Center" Margin="0,0,8,6"
-                                       ToolTipService.ToolTip="Minimum address similarity when both your data and Overture have address text. Blank Overture addresses do not block a match."/>
+                                       ToolTipService.ToolTip="Minimum address similarity when both your data and Overture have address text. The tool compares street-only text and full city/state/ZIP context, using the stronger score."/>
                             <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding AddressSimilarityThreshold, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
                                      ToolTipService.ToolTip="Raise this when address fields are clean; lower it when addresses are partial or inconsistently formatted."/>
                             <TextBlock Grid.Row="3" Grid.Column="0" Text="Score" VerticalAlignment="Center" Margin="0,0,8,0"
-                                       ToolTipService.ToolTip="Minimum combined score for automatic acceptance. The score blends name, optional address, and distance."/>
+                                       ToolTipService.ToolTip="Minimum combined score for automatic acceptance. Address-only inputs can also accept very close nearby places when Overture lacks comparable address text."/>
                             <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding AcceptScoreThreshold, UpdateSourceTrigger=PropertyChanged}"
                                      ToolTipService.ToolTip="Accepted matches get written to gers_id fields and bridge CSV output. Other candidates remain in the review CSV."/>
                         </Grid>
