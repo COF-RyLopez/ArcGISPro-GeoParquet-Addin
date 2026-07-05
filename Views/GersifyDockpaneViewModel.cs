@@ -31,6 +31,13 @@ namespace DuckDBGeoparquet.Views
         private string _selectedIdField;
         private string _selectedNameField;
         private string _selectedAddressField;
+        private string _selectedStreetNumberField;
+        private string _selectedStreetFractionField;
+        private string _selectedStreetPrefixField;
+        private string _selectedStreetNameField;
+        private string _selectedStreetTypeField;
+        private string _selectedStreetSuffixField;
+        private string _selectedUnitField;
         private string _selectedCityField;
         private string _selectedStateField;
         private string _selectedPostcodeField;
@@ -136,25 +143,111 @@ namespace DuckDBGeoparquet.Views
         public string SelectedAddressField
         {
             get => _selectedAddressField;
-            set => SetProperty(ref _selectedAddressField, value);
+            set
+            {
+                if (SetProperty(ref _selectedAddressField, value))
+                    RaiseCommandStatesChanged();
+            }
+        }
+
+        public string SelectedStreetNumberField
+        {
+            get => _selectedStreetNumberField;
+            set
+            {
+                if (SetProperty(ref _selectedStreetNumberField, value))
+                    RaiseCommandStatesChanged();
+            }
+        }
+
+        public string SelectedStreetFractionField
+        {
+            get => _selectedStreetFractionField;
+            set
+            {
+                if (SetProperty(ref _selectedStreetFractionField, value))
+                    RaiseCommandStatesChanged();
+            }
+        }
+
+        public string SelectedStreetPrefixField
+        {
+            get => _selectedStreetPrefixField;
+            set
+            {
+                if (SetProperty(ref _selectedStreetPrefixField, value))
+                    RaiseCommandStatesChanged();
+            }
+        }
+
+        public string SelectedStreetNameField
+        {
+            get => _selectedStreetNameField;
+            set
+            {
+                if (SetProperty(ref _selectedStreetNameField, value))
+                    RaiseCommandStatesChanged();
+            }
+        }
+
+        public string SelectedStreetTypeField
+        {
+            get => _selectedStreetTypeField;
+            set
+            {
+                if (SetProperty(ref _selectedStreetTypeField, value))
+                    RaiseCommandStatesChanged();
+            }
+        }
+
+        public string SelectedStreetSuffixField
+        {
+            get => _selectedStreetSuffixField;
+            set
+            {
+                if (SetProperty(ref _selectedStreetSuffixField, value))
+                    RaiseCommandStatesChanged();
+            }
+        }
+
+        public string SelectedUnitField
+        {
+            get => _selectedUnitField;
+            set
+            {
+                if (SetProperty(ref _selectedUnitField, value))
+                    RaiseCommandStatesChanged();
+            }
         }
 
         public string SelectedCityField
         {
             get => _selectedCityField;
-            set => SetProperty(ref _selectedCityField, value);
+            set
+            {
+                if (SetProperty(ref _selectedCityField, value))
+                    RaiseCommandStatesChanged();
+            }
         }
 
         public string SelectedStateField
         {
             get => _selectedStateField;
-            set => SetProperty(ref _selectedStateField, value);
+            set
+            {
+                if (SetProperty(ref _selectedStateField, value))
+                    RaiseCommandStatesChanged();
+            }
         }
 
         public string SelectedPostcodeField
         {
             get => _selectedPostcodeField;
-            set => SetProperty(ref _selectedPostcodeField, value);
+            set
+            {
+                if (SetProperty(ref _selectedPostcodeField, value))
+                    RaiseCommandStatesChanged();
+            }
         }
 
         public string SelectedTraceGersIdField
@@ -320,9 +413,16 @@ namespace DuckDBGeoparquet.Views
             SelectedIdField = SelectField(fields, "id", "record_id", "objectid", "fid", "globalid") ?? fields.FirstOrDefault();
             SelectedNameField = SelectField(fields, "name", "business_name", "poi_name", "label", "title");
             SelectedAddressField = SelectField(fields, "address", "full_address", "street_address", "addr", "situs");
-            SelectedCityField = SelectField(fields, "city", "locality", "town");
-            SelectedStateField = SelectField(fields, "state", "region", "province");
-            SelectedPostcodeField = SelectField(fields, "postcode", "postal_code", "zip", "zip5");
+            SelectedStreetNumberField = SelectField(fields, "address_number", "house_number", "housenumber", "addrnum", "saddno", "number");
+            SelectedStreetFractionField = SelectField(fields, "address_fraction", "fraction", "saddfrac");
+            SelectedStreetPrefixField = SelectField(fields, "address_prefix", "street_prefix", "predir", "saddpref", "prefix");
+            SelectedStreetNameField = SelectField(fields, "address_street", "street_name", "street", "road", "saddstr", "streetname");
+            SelectedStreetTypeField = SelectField(fields, "address_type", "street_type", "sttype", "saddsttyp");
+            SelectedStreetSuffixField = SelectField(fields, "address_suffix", "street_suffix", "postdir", "saddstsuf", "suffix");
+            SelectedUnitField = SelectField(fields, "address_unit", "unit", "apt", "apartment", "suite", "sunit");
+            SelectedCityField = SelectField(fields, "address_zipcity", "city", "locality", "town", "scity");
+            SelectedStateField = SelectField(fields, "address_state", "state", "region", "province", "state2");
+            SelectedPostcodeField = SelectField(fields, "address_zip5", "postcode", "postal_code", "zip", "zip5", "address_zip4");
         }
 
         private async Task RefreshTraceFieldsAsync(LayerSelectionItem layerItem)
@@ -376,6 +476,13 @@ namespace DuckDBGeoparquet.Views
                     SelectedIdField,
                     SelectedNameField,
                     SelectedAddressField,
+                    SelectedStreetNumberField,
+                    SelectedStreetFractionField,
+                    SelectedStreetPrefixField,
+                    SelectedStreetNameField,
+                    SelectedStreetTypeField,
+                    SelectedStreetSuffixField,
+                    SelectedUnitField,
                     SelectedCityField,
                     SelectedStateField,
                     SelectedPostcodeField);
@@ -396,6 +503,13 @@ namespace DuckDBGeoparquet.Views
                     UniqueIdField = SelectedIdField,
                     NameField = SelectedNameField,
                     AddressField = SelectedAddressField,
+                    StreetNumberField = SelectedStreetNumberField,
+                    StreetFractionField = SelectedStreetFractionField,
+                    StreetPrefixField = SelectedStreetPrefixField,
+                    StreetNameField = SelectedStreetNameField,
+                    StreetTypeField = SelectedStreetTypeField,
+                    StreetSuffixField = SelectedStreetSuffixField,
+                    UnitField = SelectedUnitField,
                     CityField = SelectedCityField,
                     StateField = SelectedStateField,
                     PostcodeField = SelectedPostcodeField,
@@ -482,6 +596,13 @@ namespace DuckDBGeoparquet.Views
             string idField,
             string nameField,
             string addressField,
+            string streetNumberField,
+            string streetFractionField,
+            string streetPrefixField,
+            string streetNameField,
+            string streetTypeField,
+            string streetSuffixField,
+            string unitField,
             string cityField,
             string stateField,
             string postcodeField)
@@ -532,7 +653,7 @@ namespace DuckDBGeoparquet.Views
                     sb.AppendLine(string.Join(",",
                         Csv(recordId),
                         Csv(GetRowValue(row, nameField)),
-                        Csv(GetRowValue(row, addressField)),
+                        Csv(BuildAddressValue(row, addressField, streetNumberField, streetFractionField, streetPrefixField, streetNameField, streetTypeField, streetSuffixField, unitField)),
                         Csv(GetRowValue(row, cityField)),
                         Csv(GetRowValue(row, stateField)),
                         Csv(GetRowValue(row, postcodeField)),
@@ -681,8 +802,15 @@ namespace DuckDBGeoparquet.Views
             return !IsRunning &&
                    SelectedInputLayer?.Layer != null &&
                    !string.IsNullOrWhiteSpace(SelectedIdField) &&
-                   !string.IsNullOrWhiteSpace(SelectedNameField) &&
+                   HasAnyGersifyMatchField() &&
                    !string.IsNullOrWhiteSpace(OutputFolder);
+        }
+
+        private bool HasAnyGersifyMatchField()
+        {
+            return !string.IsNullOrWhiteSpace(SelectedNameField) ||
+                   !string.IsNullOrWhiteSpace(SelectedAddressField) ||
+                   !string.IsNullOrWhiteSpace(SelectedStreetNameField);
         }
 
         private bool CanRunTraceSources()
@@ -805,6 +933,44 @@ namespace DuckDBGeoparquet.Views
             {
                 return string.Empty;
             }
+        }
+
+        private static string BuildAddressValue(
+            Row row,
+            string addressField,
+            string streetNumberField,
+            string streetFractionField,
+            string streetPrefixField,
+            string streetNameField,
+            string streetTypeField,
+            string streetSuffixField,
+            string unitField)
+        {
+            string fullAddress = CleanPart(GetRowValue(row, addressField));
+            if (!string.IsNullOrWhiteSpace(fullAddress))
+                return fullAddress;
+
+            return string.Join(" ", new[]
+                {
+                    CleanPart(GetRowValue(row, streetNumberField)),
+                    CleanPart(GetRowValue(row, streetFractionField)),
+                    CleanPart(GetRowValue(row, streetPrefixField)),
+                    CleanPart(GetRowValue(row, streetNameField)),
+                    CleanPart(GetRowValue(row, streetTypeField)),
+                    CleanPart(GetRowValue(row, streetSuffixField)),
+                    CleanPart(GetRowValue(row, unitField))
+                }
+                .Where(part => !string.IsNullOrWhiteSpace(part)));
+        }
+
+        private static string CleanPart(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            return string.Join(" ",
+                value.Trim().Trim('"')
+                    .Split((char[])null, StringSplitOptions.RemoveEmptyEntries));
         }
 
         private static string Csv(string value)

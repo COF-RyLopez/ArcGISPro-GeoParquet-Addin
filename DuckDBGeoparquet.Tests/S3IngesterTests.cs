@@ -87,6 +87,16 @@ namespace DuckDBGeoparquet.Tests
         }
 
         [Fact]
+        public void BuildLoadQuery_ForPlaces_FlattensAddressFreeformWhenAddressesArePresent()
+        {
+            var columns = new List<string> { "id", "names", "addresses", "geometry", "bbox", "sources" };
+            string query = S3Ingester.BuildLoadQuery("s3://bucket/place/*", "place", columns, extent: null);
+
+            Assert.Contains("CAST(addresses[1].freeform AS VARCHAR) AS address_freeform", query);
+            Assert.DoesNotContain("SELECT id, names, addresses", query);
+        }
+
+        [Fact]
         public void BuildLoadQuery_WithExtentAndBbox_ClipsAndRepacksBbox()
         {
             var extent = new ExtentBounds(1, 2, 3, 4);

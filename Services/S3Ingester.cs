@@ -72,7 +72,7 @@ namespace DuckDBGeoparquet.Services
             }
 
             // Determine which columns to project (if any) while always retaining geometry
-            var projectedColumnList = projectedColumns ?? "*";
+            var projectedColumnList = AppendPlaceDerivedColumns(projectedColumns ?? "*", actualS3Type, columnNames);
             bool hasBboxColumn = columnNames != null && columnNames.Any(c => c.Equals(BboxColumn, StringComparison.OrdinalIgnoreCase));
             var projectedColumnsWithoutGeometry = projectedColumns != null
                 ? string.Join(", ", projectedColumns.Split(',').Select(c => c.Trim()).Where(c => !c.Equals("geometry", StringComparison.OrdinalIgnoreCase)))
@@ -86,6 +86,8 @@ namespace DuckDBGeoparquet.Services
                 projectedColumnsWithoutGeometry = "* EXCLUDE(geometry)";
             if (string.IsNullOrWhiteSpace(projectedColumnsWithoutGeometryOrBbox))
                 projectedColumnsWithoutGeometryOrBbox = hasBboxColumn ? "* EXCLUDE(geometry, bbox)" : "* EXCLUDE(geometry)";
+            projectedColumnsWithoutGeometry = AppendPlaceDerivedColumns(projectedColumnsWithoutGeometry, actualS3Type, columnNames);
+            projectedColumnsWithoutGeometryOrBbox = AppendPlaceDerivedColumns(projectedColumnsWithoutGeometryOrBbox, actualS3Type, columnNames);
 
             if (extent != null && !string.IsNullOrEmpty(extentPolygon))
             {
@@ -139,6 +141,19 @@ namespace DuckDBGeoparquet.Services
                         SELECT {projectedColumnList}
                         FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
                         {spatialFilter}";
+        }
+
+        private static string AppendPlaceDerivedColumns(string projection, string actualS3Type, IReadOnlyList<string> columnNames)
+        {
+            if (!string.Equals(actualS3Type, "place", StringComparison.OrdinalIgnoreCase) ||
+                columnNames == null ||
+                !columnNames.Any(c => c.Equals("addresses", StringComparison.OrdinalIgnoreCase)) ||
+                columnNames.Any(c => c.Equals("address_freeform", StringComparison.OrdinalIgnoreCase)))
+            {
+                return projection;
+            }
+
+            return $"{projection}, CAST(addresses[1].freeform AS VARCHAR) AS address_freeform";
         }
     }
 }

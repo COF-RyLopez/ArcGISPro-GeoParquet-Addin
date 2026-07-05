@@ -9,6 +9,13 @@ namespace DuckDBGeoparquet.Models
         public string UniqueIdField { get; set; }
         public string NameField { get; set; }
         public string AddressField { get; set; }
+        public string StreetNumberField { get; set; }
+        public string StreetFractionField { get; set; }
+        public string StreetPrefixField { get; set; }
+        public string StreetNameField { get; set; }
+        public string StreetTypeField { get; set; }
+        public string StreetSuffixField { get; set; }
+        public string UnitField { get; set; }
         public string CityField { get; set; }
         public string StateField { get; set; }
         public string PostcodeField { get; set; }

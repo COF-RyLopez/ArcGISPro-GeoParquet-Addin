@@ -59,6 +59,7 @@ namespace DuckDBGeoparquet.Services
             string placeAddressExpr = BuildFirstExistingExpression(
                 availableColumns,
                 ("addresses", "CAST(addresses[1].freeform AS VARCHAR)"),
+                ("address_freeform", "CAST(address_freeform AS VARCHAR)"),
                 ("address", "CAST(address AS VARCHAR)"),
                 ("street", "CAST(street AS VARCHAR)"),
                 ("full_address", "CAST(full_address AS VARCHAR)"));
@@ -110,8 +111,8 @@ namespace DuckDBGeoparquet.Services
                     JOIN overture_places o
                       ON abs(o.overture_latitude - u.latitude) <= ({maxDistance} / 110540.0)
                      AND abs(o.overture_longitude - u.longitude) <= ({maxDistance} / greatest(111320.0 * abs(cos(radians(u.latitude))), 1.0))
-                    WHERE u.user_name_norm <> ''
-                      AND o.overture_name_norm <> ''
+                    WHERE (u.user_name_norm <> '' AND o.overture_name_norm <> '')
+                       OR (u.user_address_norm <> '' AND o.overture_address_norm <> '')
                 ),
                 scored AS (
                     SELECT
@@ -130,7 +131,10 @@ namespace DuckDBGeoparquet.Services
                         overture_longitude,
                         overture_latitude,
                         distance_m,
-                        jaro_winkler_similarity(user_name_norm, overture_name_norm) AS name_similarity,
+                        CASE
+                            WHEN user_name_norm = '' OR overture_name_norm = '' THEN NULL
+                            ELSE jaro_winkler_similarity(user_name_norm, overture_name_norm)
+                        END AS name_similarity,
                         CASE
                             WHEN user_address_norm = '' OR overture_address_norm = '' THEN NULL
                             ELSE jaro_winkler_similarity(user_address_norm, overture_address_norm)
@@ -142,15 +146,21 @@ namespace DuckDBGeoparquet.Services
                 ranked AS (
                     SELECT
                         *,
-                        (
-                            (name_similarity * 65.0) +
-                            (coalesce(address_similarity, 0.75) * 20.0) +
-                            (distance_similarity * 15.0)
-                        ) AS gers_match_score,
+                        CASE
+                            WHEN name_similarity IS NULL AND address_similarity IS NULL THEN distance_similarity * 100.0
+                            WHEN name_similarity IS NULL THEN (address_similarity * 80.0) + (distance_similarity * 20.0)
+                            WHEN address_similarity IS NULL THEN (name_similarity * 80.0) + (distance_similarity * 20.0)
+                            ELSE (name_similarity * 60.0) + (address_similarity * 25.0) + (distance_similarity * 15.0)
+                        END AS gers_match_score,
                         row_number() OVER (
                             PARTITION BY record_id
                             ORDER BY
-                                ((name_similarity * 65.0) + (coalesce(address_similarity, 0.75) * 20.0) + (distance_similarity * 15.0)) DESC,
+                                CASE
+                                    WHEN name_similarity IS NULL AND address_similarity IS NULL THEN distance_similarity * 100.0
+                                    WHEN name_similarity IS NULL THEN (address_similarity * 80.0) + (distance_similarity * 20.0)
+                                    WHEN address_similarity IS NULL THEN (name_similarity * 80.0) + (distance_similarity * 20.0)
+                                    ELSE (name_similarity * 60.0) + (address_similarity * 25.0) + (distance_similarity * 15.0)
+                                END DESC,
                                 distance_m ASC,
                                 overture_name ASC
                         ) AS candidate_rank
@@ -160,8 +170,9 @@ namespace DuckDBGeoparquet.Services
                     *,
                     (
                     candidate_rank = 1
-                    AND name_similarity >= {nameThreshold}
+                    AND (name_similarity IS NULL OR name_similarity >= {nameThreshold})
                     AND (address_similarity IS NULL OR address_similarity >= {addressThreshold})
+                    AND (name_similarity IS NOT NULL OR address_similarity IS NOT NULL)
                     AND gers_match_score >= {scoreThreshold}
                     ) AS accepted
                 FROM ranked

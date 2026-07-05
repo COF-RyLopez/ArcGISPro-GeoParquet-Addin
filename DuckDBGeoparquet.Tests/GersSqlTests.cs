@@ -32,6 +32,29 @@ namespace DuckDBGeoparquet.Tests
         }
 
         [Fact]
+        public void BuildPlacesCandidateTablesCommand_AllowsAddressOnlyCandidateLane()
+        {
+            var options = new GersifyOptions
+            {
+                MaxDistanceMeters = 75,
+                NameSimilarityThreshold = 0.86,
+                AddressSimilarityThreshold = 0.72,
+                AcceptScoreThreshold = 72
+            };
+
+            string sql = GersSql.BuildPlacesCandidateTablesCommand(
+                "/data/release/place/*.parquet",
+                options,
+                ["id", "name", "address_freeform", "geometry"]);
+
+            Assert.Contains("CAST(address_freeform AS VARCHAR)", sql);
+            Assert.Contains("OR (u.user_address_norm <> '' AND o.overture_address_norm <> '')", sql);
+            Assert.Contains("WHEN user_name_norm = '' OR overture_name_norm = '' THEN NULL", sql);
+            Assert.Contains("WHEN name_similarity IS NULL THEN (address_similarity * 80.0) + (distance_similarity * 20.0)", sql);
+            Assert.Contains("AND (name_similarity IS NOT NULL OR address_similarity IS NOT NULL)", sql);
+        }
+
+        [Fact]
         public void BuildPlacesCandidateTablesCommand_SkipsBboxFilterWhenBboxColumnMissing()
         {
             var options = new GersifyOptions

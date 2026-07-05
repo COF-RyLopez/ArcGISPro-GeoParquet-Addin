@@ -51,7 +51,7 @@
                         </Grid>
 
                         <TextBlock Text="Field Mapping" FontWeight="SemiBold" Margin="0,4,0,4"
-                                   ToolTipService.ToolTip="Map your layer fields to the values used for matching. Unique ID and Name are required; address fields improve confidence when present."/>
+                                   ToolTipService.ToolTip="Map your layer fields to the values used for matching. Unique ID is required. Use either a place name, address fields, or both."/>
                         <Grid Margin="0,0,0,8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="120"/>
@@ -64,30 +64,69 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Unique ID" VerticalAlignment="Center" Margin="0,0,8,6"
                                        ToolTipService.ToolTip="Your stable record key. The bridge CSV uses this as record_id and maps it to the matched GERS ID."/>
                             <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding InputFields}" SelectedItem="{Binding SelectedIdField}" Margin="0,0,0,6"
                                       ToolTipService.ToolTip="Pick a field that uniquely identifies each input feature, such as ID, OBJECTID, GlobalID, or your business key."/>
                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Name" VerticalAlignment="Center" Margin="0,0,8,6"
-                                       ToolTipService.ToolTip="The place or business name used for string similarity against Overture Places."/>
-                            <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding InputFields}" SelectedItem="{Binding SelectedNameField}" Margin="0,0,0,6"
-                                      ToolTipService.ToolTip="Required. Choose the field containing the best human-readable place name."/>
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Address" VerticalAlignment="Center" Margin="0,0,8,6"
-                                       ToolTipService.ToolTip="Optional street address context. When present, it can raise or lower the final match confidence."/>
+                                       ToolTipService.ToolTip="Optional place or business name used for string similarity against Overture Places."/>
+                            <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedNameField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Choose this when your input has place or business names. Leave blank for address-point datasets."/>
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Full Address" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Optional complete street address. If blank, the tool builds one from the parsed address fields below."/>
                             <ComboBox Grid.Row="2" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedAddressField}" Margin="0,0,0,6"
-                                      ToolTipService.ToolTip="Optional. Leave blank if your layer does not have an address field."/>
-                            <TextBlock Grid.Row="3" Grid.Column="0" Text="City" VerticalAlignment="Center" Margin="0,0,8,6"
+                                      ToolTipService.ToolTip="Use this if your table already has a complete address field. Leave blank when address components are split across fields."/>
+
+                            <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Text="Parsed Address Fields" FontWeight="SemiBold" Margin="0,4,0,4"
+                                       ToolTipService.ToolTip="Use these when your address data is parsed into pieces such as ADDRESS_NUMBER, street name, type, unit, ZIP city, and ZIP5."/>
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Number" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Street number, such as ADDRESS_NUMBER."/>
+                            <ComboBox Grid.Row="4" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStreetNumberField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Optional. Used with the other parsed fields to build a matchable address string."/>
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Fraction" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Fractional address number, such as ADDRESS_FRACTION for 1/2 addresses."/>
+                            <ComboBox Grid.Row="5" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStreetFractionField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Optional. Leave blank unless your data stores fractional address numbers."/>
+                            <TextBlock Grid.Row="6" Grid.Column="0" Text="Prefix" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Street directional prefix, such as N, S, E, or W."/>
+                            <ComboBox Grid.Row="6" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStreetPrefixField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Optional street prefix/directional field."/>
+                            <TextBlock Grid.Row="7" Grid.Column="0" Text="Street" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Street name field."/>
+                            <ComboBox Grid.Row="7" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStreetNameField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Pick the street name field if your address is parsed. This pairs with Number and Type."/>
+                            <TextBlock Grid.Row="8" Grid.Column="0" Text="Type" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Street type, such as ST, AVE, RD, or BLVD."/>
+                            <ComboBox Grid.Row="8" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStreetTypeField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Optional street type field."/>
+                            <TextBlock Grid.Row="9" Grid.Column="0" Text="Suffix" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Street suffix or post-directional, such as NE or SW."/>
+                            <ComboBox Grid.Row="9" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStreetSuffixField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Optional street suffix/post-directional field."/>
+                            <TextBlock Grid.Row="10" Grid.Column="0" Text="Unit" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Unit, suite, apartment, or address unit field."/>
+                            <ComboBox Grid.Row="10" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedUnitField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Optional unit field. It is included in the address text when present."/>
+                            <TextBlock Grid.Row="11" Grid.Column="0" Text="City" VerticalAlignment="Center" Margin="0,0,8,6"
                                        ToolTipService.ToolTip="Optional locality context included in the address similarity text."/>
-                            <ComboBox Grid.Row="3" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedCityField}" Margin="0,0,0,6"
+                            <ComboBox Grid.Row="11" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedCityField}" Margin="0,0,0,6"
                                       ToolTipService.ToolTip="Optional. Used only to improve address/context matching."/>
-                            <TextBlock Grid.Row="4" Grid.Column="0" Text="State" VerticalAlignment="Center" Margin="0,0,8,6"
+                            <TextBlock Grid.Row="12" Grid.Column="0" Text="State" VerticalAlignment="Center" Margin="0,0,8,6"
                                        ToolTipService.ToolTip="Optional region context included in the address similarity text."/>
-                            <ComboBox Grid.Row="4" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStateField}" Margin="0,0,0,6"
+                            <ComboBox Grid.Row="12" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStateField}" Margin="0,0,0,6"
                                       ToolTipService.ToolTip="Optional. Used only to improve address/context matching."/>
-                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Postcode" VerticalAlignment="Center" Margin="0,0,8,0"
+                            <TextBlock Grid.Row="13" Grid.Column="0" Text="Postcode" VerticalAlignment="Center" Margin="0,0,8,0"
                                        ToolTipService.ToolTip="Optional postal code context included in the address similarity text."/>
-                            <ComboBox Grid.Row="5" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedPostcodeField}"
+                            <ComboBox Grid.Row="13" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedPostcodeField}"
                                       ToolTipService.ToolTip="Optional. Used only to improve address/context matching."/>
                         </Grid>
 
