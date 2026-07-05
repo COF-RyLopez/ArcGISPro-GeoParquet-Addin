@@ -524,7 +524,7 @@ namespace DuckDBGeoparquet.Views
                 }, progress);
 
                 StatusText = "Adding GERSify outputs to the map...";
-                string layerName = $"GERSified_{MfcUtility.SanitizeFileName(SelectedInputLayer.Name)}";
+                string layerName = $"GERSified_{SelectedInputLayer.Name}";
                 result.OutputFeatureClassPath = await WriteGersifiedFeatureClassAsync(result.OutputCsvPath, OutputFolder, layerName);
                 await TryAddStandaloneTableAsync(result.CandidateCsvPath);
                 await TryAddStandaloneTableAsync(result.BridgeCsvPath);
@@ -746,9 +746,7 @@ namespace DuckDBGeoparquet.Views
                 }
             }
 
-            string featureClassName = MfcUtility.SanitizeFileName(layerName);
-            if (featureClassName.Length > 50)
-                featureClassName = featureClassName[..50];
+            string featureClassName = ArcGisNameSanitizer.ToFileGeodatabaseFeatureClassName(layerName);
 
             string outputFeatureClassPath = Path.Combine(gdbPath, featureClassName);
             var result = await Geoprocessing.ExecuteToolAsync(
