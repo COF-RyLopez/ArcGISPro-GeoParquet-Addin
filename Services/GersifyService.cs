@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -105,8 +106,8 @@ namespace DuckDBGeoparquet.Services
                 return (0, 0);
 
             return (
-                reader.IsDBNull(0) ? 0 : Convert.ToInt32(reader.GetValue(0), CultureInfo.InvariantCulture),
-                reader.IsDBNull(1) ? 0 : Convert.ToInt32(reader.GetValue(1), CultureInfo.InvariantCulture));
+                ReadInt32(reader.GetValue(0)),
+                ReadInt32(reader.GetValue(1)));
         }
 
         private async Task<IReadOnlyCollection<string>> ReadParquetColumnsAsync(string parquetGlob, CancellationToken cancellationToken)
@@ -171,7 +172,7 @@ namespace DuckDBGeoparquet.Services
                     NameSimilarity = ReadDouble(reader, 9),
                     AddressSimilarity = reader.IsDBNull(10) ? null : ReadDouble(reader, 10),
                     MatchScore = ReadDouble(reader, 11),
-                    CandidateRank = reader.IsDBNull(12) ? 0 : Convert.ToInt32(reader.GetValue(12), CultureInfo.InvariantCulture),
+                    CandidateRank = reader.IsDBNull(12) ? 0 : ReadInt32(reader.GetValue(12)),
                     Accepted = !reader.IsDBNull(13) && Convert.ToBoolean(reader.GetValue(13), CultureInfo.InvariantCulture)
                 });
             }
@@ -223,7 +224,7 @@ namespace DuckDBGeoparquet.Services
             using var command = _duckDb.Connection.CreateCommand();
             command.CommandText = $"SELECT COUNT(*) FROM {tableName}";
             object value = await command.ExecuteScalarAsync(cancellationToken);
-            return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+            return ReadInt32(value);
         }
 
         private static string ReadString(System.Data.Common.DbDataReader reader, int index) =>
@@ -231,6 +232,25 @@ namespace DuckDBGeoparquet.Services
 
         private static double ReadDouble(System.Data.Common.DbDataReader reader, int index) =>
             reader.IsDBNull(index) ? 0 : Convert.ToDouble(reader.GetValue(index), CultureInfo.InvariantCulture);
+
+        private static int ReadInt32(object value)
+        {
+            if (value == null || value == DBNull.Value)
+                return 0;
+
+            return value switch
+            {
+                int intValue => intValue,
+                long longValue => ClampToInt32(longValue),
+                BigInteger bigIntegerValue => bigIntegerValue > int.MaxValue
+                    ? int.MaxValue
+                    : bigIntegerValue < int.MinValue ? int.MinValue : (int)bigIntegerValue,
+                _ => Convert.ToInt32(value, CultureInfo.InvariantCulture)
+            };
+        }
+
+        private static int ClampToInt32(long value) =>
+            value > int.MaxValue ? int.MaxValue : value < int.MinValue ? int.MinValue : (int)value;
 
         public void Dispose()
         {

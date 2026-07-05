@@ -23,7 +23,7 @@ namespace DuckDBGeoparquet.Views
 {
     internal class GersifyDockpaneViewModel : DockPane
     {
-        private const string DockPaneId = "DuckDBGeoparquet_Views_GersifyDockpane";
+        private const string DockPaneId = "DuckDBGeoparquet_Views_GersifyDockpane_V2";
         private readonly StringBuilder _logBuilder = new();
         private bool _isBusy;
         private LayerSelectionItem _selectedInputLayer;

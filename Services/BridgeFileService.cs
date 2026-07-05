@@ -2,6 +2,7 @@ using DuckDBGeoparquet.Models;
 using System;
 using System.Globalization;
 using System.IO;
+using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -63,8 +64,27 @@ namespace DuckDBGeoparquet.Services
             using var command = _duckDb.Connection.CreateCommand();
             command.CommandText = $"SELECT COUNT(*) FROM {tableName}";
             object value = await command.ExecuteScalarAsync(cancellationToken);
-            return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+            return ReadInt32(value);
         }
+
+        private static int ReadInt32(object value)
+        {
+            if (value == null || value == DBNull.Value)
+                return 0;
+
+            return value switch
+            {
+                int intValue => intValue,
+                long longValue => ClampToInt32(longValue),
+                BigInteger bigIntegerValue => bigIntegerValue > int.MaxValue
+                    ? int.MaxValue
+                    : bigIntegerValue < int.MinValue ? int.MinValue : (int)bigIntegerValue,
+                _ => Convert.ToInt32(value, CultureInfo.InvariantCulture)
+            };
+        }
+
+        private static int ClampToInt32(long value) =>
+            value > int.MaxValue ? int.MaxValue : value < int.MinValue ? int.MinValue : (int)value;
 
         public void Dispose()
         {
