@@ -20,7 +20,18 @@ namespace DuckDBGeoparquet.Services
             _duckDb = new DuckDBManager();
         }
 
-        public async Task<GersifyResult> GersifyPlacesAsync(
+        public Task<GersifyResult> GersifyPlacesAsync(
+            GersifyOptions options,
+            IProgress<string> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (options != null)
+                options.TargetType = GersifyTargetType.Places;
+
+            return GersifyAsync(options, progress, cancellationToken);
+        }
+
+        public async Task<GersifyResult> GersifyAsync(
             GersifyOptions options,
             IProgress<string> progress = null,
             CancellationToken cancellationToken = default)
@@ -36,11 +47,11 @@ namespace DuckDBGeoparquet.Services
 
             Directory.CreateDirectory(options.OutputFolder);
 
-            string placesGlob = ResolvePlacesParquetGlob(options.OvertureReleaseFolder);
-            if (string.IsNullOrWhiteSpace(placesGlob))
+            string targetGlob = ResolveTargetParquetGlob(options.OvertureReleaseFolder, options.TargetType);
+            if (string.IsNullOrWhiteSpace(targetGlob))
             {
                 throw new FileNotFoundException(
-                    "Could not find downloaded Overture Places GeoParquet files. Load Places first or choose a release folder containing a 'place' subfolder.");
+                    $"Could not find downloaded {options.TargetLabel} GeoParquet files. Load {options.TargetLabel} first or choose a release folder containing a '{options.TargetDatasetType}' subfolder.");
             }
 
             string suffix = GersifyOptions.BuildTimestampSuffix();
@@ -61,11 +72,13 @@ namespace DuckDBGeoparquet.Services
             }
             var inputSignalCounts = await ReadInputSignalCountsAsync(cancellationToken);
 
-            progress?.Report("Checking selected Overture Places files...");
-            var placeColumns = await ReadParquetColumnsAsync(placesGlob, cancellationToken);
-            if (inputSignalCounts.NameCount == 0 &&
+            progress?.Report($"Checking selected {options.TargetLabel} files...");
+            string readOptions = GetReadParquetOptions(options.TargetType);
+            var targetColumns = await ReadParquetColumnsAsync(targetGlob, readOptions, cancellationToken);
+            if (options.TargetType == GersifyTargetType.Places &&
+                inputSignalCounts.NameCount == 0 &&
                 inputSignalCounts.AddressCount > 0 &&
-                !GersSql.HasPlaceAddressColumns(placeColumns))
+                !GersSql.HasPlaceAddressColumns(targetColumns))
             {
                 throw new InvalidOperationException(
                     "The selected Overture Places files do not contain place address fields that GERSify can compare. " +
@@ -73,8 +86,18 @@ namespace DuckDBGeoparquet.Services
                     "Close any map layers or tables using the old Places Parquet files, re-download Places with this add-in version, then choose that release folder again.");
             }
 
-            progress?.Report($"Matching {inputCount:N0} point feature(s) to Overture Places...");
-            await ExecuteNonQueryAsync(GersSql.BuildPlacesCandidateTablesCommand(placesGlob, options, placeColumns), cancellationToken);
+            if (options.TargetType == GersifyTargetType.Addresses && !GersSql.HasAddressDatasetColumns(targetColumns))
+            {
+                throw new InvalidOperationException(
+                    "The selected Overture Addresses files do not contain the address number and street fields that GERSify needs for strict address validation. " +
+                    "Load the Overture Addresses theme with this add-in version, then choose that release folder again.");
+            }
+
+            progress?.Report($"Matching {inputCount:N0} point feature(s) to {options.TargetLabel}...");
+            string candidateSql = options.TargetType == GersifyTargetType.Addresses
+                ? GersSql.BuildAddressesCandidateTablesCommand(targetGlob, options, targetColumns)
+                : GersSql.BuildPlacesCandidateTablesCommand(targetGlob, options, targetColumns);
+            await ExecuteNonQueryAsync(candidateSql, cancellationToken);
 
             progress?.Report("Writing GERSify outputs...");
             await ExecuteNonQueryAsync(
@@ -82,16 +105,22 @@ namespace DuckDBGeoparquet.Services
                     outputCsvPath,
                     candidatesCsvPath,
                     bridgeCsvPath,
-                    string.IsNullOrWhiteSpace(options.DatasetName) ? "user_data" : options.DatasetName),
+                    string.IsNullOrWhiteSpace(options.DatasetName) ? "user_data" : options.DatasetName,
+                    options.TargetTheme,
+                    options.TargetDatasetType),
                 cancellationToken);
 
             int candidateCount = await ExecuteCountAsync(GersSql.CandidateTable, cancellationToken);
             var candidateSignalCounts = await ReadCandidateSignalCountsAsync(cancellationToken);
             int acceptedCount = await ExecuteCountAsync(GersSql.AcceptedTable, cancellationToken);
+            var strategyCounts = await ReadAcceptedStrategyCountsAsync(cancellationToken);
             var acceptedMatches = await ReadAcceptedMatchesAsync(cancellationToken);
 
             return new GersifyResult
             {
+                TargetLabel = options.TargetLabel,
+                TargetTheme = options.TargetTheme,
+                TargetDatasetType = options.TargetDatasetType,
                 InputCount = inputCount,
                 InputNameCount = inputSignalCounts.NameCount,
                 InputAddressCount = inputSignalCounts.AddressCount,
@@ -102,6 +131,7 @@ namespace DuckDBGeoparquet.Services
                 OutputCsvPath = outputCsvPath,
                 CandidateCsvPath = candidatesCsvPath,
                 BridgeCsvPath = bridgeCsvPath,
+                AcceptedStrategyCounts = strategyCounts,
                 AcceptedMatches = acceptedMatches
             };
         }
@@ -142,16 +172,44 @@ namespace DuckDBGeoparquet.Services
                 ReadInt32(reader.GetValue(1)));
         }
 
-        private async Task<IReadOnlyCollection<string>> ReadParquetColumnsAsync(string parquetGlob, CancellationToken cancellationToken)
+        private async Task<Dictionary<string, int>> ReadAcceptedStrategyCountsAsync(CancellationToken cancellationToken)
+        {
+            var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            using var command = _duckDb.Connection.CreateCommand();
+            command.CommandText = $@"
+                SELECT
+                    coalesce(match_strategy, 'unknown') AS match_strategy,
+                    count(*) AS match_count
+                FROM {GersSql.AcceptedTable}
+                GROUP BY match_strategy
+                ORDER BY match_strategy;";
+
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                string strategy = ReadString(reader, 0);
+                if (!string.IsNullOrWhiteSpace(strategy))
+                {
+                    counts[strategy] = ReadInt32(reader.GetValue(1));
+                }
+            }
+
+            return counts;
+        }
+
+        private async Task<IReadOnlyCollection<string>> ReadParquetColumnsAsync(
+            string parquetGlob,
+            string readParquetOptions,
+            CancellationToken cancellationToken)
         {
             string escapedPath = GeoParquetSql.EscapeSqlLiteral(parquetGlob.Replace('\\', '/'));
             await ExecuteNonQueryAsync($@"
-                CREATE OR REPLACE TABLE gers_place_schema_probe AS
-                SELECT * FROM read_parquet('{escapedPath}', {GersSql.PlacesReadParquetOptions}) LIMIT 0;", cancellationToken);
+                CREATE OR REPLACE TABLE gers_target_schema_probe AS
+                SELECT * FROM read_parquet('{escapedPath}', {readParquetOptions}) LIMIT 0;", cancellationToken);
 
             var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             using var command = _duckDb.Connection.CreateCommand();
-            command.CommandText = "DESCRIBE gers_place_schema_probe";
+            command.CommandText = "DESCRIBE gers_target_schema_probe";
             using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
@@ -212,6 +270,16 @@ namespace DuckDBGeoparquet.Services
             return matches;
         }
 
+        private static string GetReadParquetOptions(GersifyTargetType targetType) =>
+            targetType == GersifyTargetType.Addresses
+                ? GersSql.AddressesReadParquetOptions
+                : GersSql.PlacesReadParquetOptions;
+
+        private static string ResolveTargetParquetGlob(string releaseFolder, GersifyTargetType targetType) =>
+            targetType == GersifyTargetType.Addresses
+                ? ResolveAddressesParquetGlob(releaseFolder)
+                : ResolvePlacesParquetGlob(releaseFolder);
+
         private static string ResolvePlacesParquetGlob(string releaseFolder)
         {
             if (string.IsNullOrWhiteSpace(releaseFolder) || !Directory.Exists(releaseFolder))
@@ -242,6 +310,38 @@ namespace DuckDBGeoparquet.Services
             return nestedPlaceDirectory == null
                 ? null
                 : Path.Combine(nestedPlaceDirectory.FullName, "*.parquet").Replace('\\', '/');
+        }
+
+        private static string ResolveAddressesParquetGlob(string releaseFolder)
+        {
+            if (string.IsNullOrWhiteSpace(releaseFolder) || !Directory.Exists(releaseFolder))
+                return null;
+
+            string[] candidateDirectories =
+            [
+                Path.Combine(releaseFolder, "address"),
+                Path.Combine(releaseFolder, "addresses", "address"),
+                Path.Combine(releaseFolder, "theme=addresses", "type=address")
+            ];
+
+            foreach (string directory in candidateDirectories)
+            {
+                if (Directory.Exists(directory) &&
+                    Directory.EnumerateFiles(directory, "*.parquet", SearchOption.TopDirectoryOnly).Any())
+                {
+                    return Path.Combine(directory, "*.parquet").Replace('\\', '/');
+                }
+            }
+
+            var nestedAddressDirectory = new DirectoryInfo(releaseFolder)
+                .EnumerateDirectories("*", SearchOption.AllDirectories)
+                .FirstOrDefault(directory =>
+                    string.Equals(directory.Name, "address", StringComparison.OrdinalIgnoreCase) &&
+                    directory.EnumerateFiles("*.parquet", SearchOption.TopDirectoryOnly).Any());
+
+            return nestedAddressDirectory == null
+                ? null
+                : Path.Combine(nestedAddressDirectory.FullName, "*.parquet").Replace('\\', '/');
         }
 
         private async Task ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken)

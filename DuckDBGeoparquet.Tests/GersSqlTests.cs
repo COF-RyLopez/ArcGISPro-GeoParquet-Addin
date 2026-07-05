@@ -62,6 +62,50 @@ namespace DuckDBGeoparquet.Tests
         }
 
         [Fact]
+        public void BuildPlacesCandidateTablesCommand_CanDisableNearbyOnlyAcceptance()
+        {
+            var options = new GersifyOptions
+            {
+                MaxDistanceMeters = 75,
+                AllowNearbyOnlyMatches = false
+            };
+
+            string sql = GersSql.BuildPlacesCandidateTablesCommand(
+                "/data/release/place/*.parquet",
+                options,
+                ["id", "name", "address_freeform", "geometry"]);
+
+            Assert.DoesNotContain("AND distance_m <= 15", sql);
+            Assert.Contains("AND (name_similarity IS NOT NULL OR address_similarity IS NOT NULL)", sql);
+        }
+
+        [Fact]
+        public void BuildAddressesCandidateTablesCommand_UsesStrictAddressSignals()
+        {
+            var options = new GersifyOptions
+            {
+                TargetType = GersifyTargetType.Addresses,
+                MaxDistanceMeters = 75,
+                AddressSimilarityThreshold = 0.72,
+                AcceptScoreThreshold = 72
+            };
+
+            string sql = GersSql.BuildAddressesCandidateTablesCommand(
+                "/data/release/address/*.parquet",
+                options,
+                ["id", "number", "street", "unit", "postal_city", "region", "postcode", "country", "geometry", "bbox"]);
+
+            Assert.Contains("read_parquet('/data/release/address/*.parquet', hive_partitioning=1, union_by_name=1)", sql);
+            Assert.Contains("CAST(number AS VARCHAR)", sql);
+            Assert.Contains("CAST(street AS VARCHAR)", sql);
+            Assert.Contains("AS house_number_match", sql);
+            Assert.Contains("AS postcode_compatible", sql);
+            Assert.Contains("WHEN house_number_match AND postcode_compatible AND address_similarity >= 0.96 THEN 'exact_address'", sql);
+            Assert.Contains("AND house_number_match", sql);
+            Assert.Contains("a.overture_address", sql);
+        }
+
+        [Fact]
         public void BuildPlacesCandidateTablesCommand_UsesOvertureAddressContextWhenAvailable()
         {
             var options = new GersifyOptions();
@@ -104,6 +148,15 @@ namespace DuckDBGeoparquet.Tests
         }
 
         [Fact]
+        public void HasAddressDatasetColumns_RequiresNumberAndStreet()
+        {
+            Assert.True(GersSql.HasAddressDatasetColumns(["id", "number", "street", "geometry"]));
+            Assert.True(GersSql.HasAddressDatasetColumns(["id", "house_number", "road", "geometry"]));
+            Assert.False(GersSql.HasAddressDatasetColumns(["id", "number", "postcode", "geometry"]));
+            Assert.False(GersSql.HasAddressDatasetColumns(["id", "street", "postcode", "geometry"]));
+        }
+
+        [Fact]
         public void BuildPlacesCandidateTablesCommand_SkipsBboxFilterWhenBboxColumnMissing()
         {
             var options = new GersifyOptions
@@ -118,6 +171,22 @@ namespace DuckDBGeoparquet.Tests
 
             Assert.Contains("CAST(name AS VARCHAR)", sql);
             Assert.DoesNotContain("bbox.xmin", sql);
+        }
+
+        [Fact]
+        public void BuildCopyGersifyOutputsCommand_WritesSelectedTargetToBridgeCsv()
+        {
+            string sql = GersSql.BuildCopyGersifyOutputsCommand(
+                "/tmp/output.csv",
+                "/tmp/candidates.csv",
+                "/tmp/bridge.csv",
+                "fresno_addresses",
+                "addresses",
+                "address");
+
+            Assert.Contains("'fresno_addresses' AS dataset", sql);
+            Assert.Contains("'addresses' AS theme", sql);
+            Assert.Contains("'address' AS type", sql);
         }
 
         [Fact]

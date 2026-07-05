@@ -2,8 +2,15 @@ using System;
 
 namespace DuckDBGeoparquet.Models
 {
+    public enum GersifyTargetType
+    {
+        Places,
+        Addresses
+    }
+
     public class GersifyOptions
     {
+        public GersifyTargetType TargetType { get; set; } = GersifyTargetType.Places;
         public string InputCsvPath { get; set; }
         public string InputLayerName { get; set; }
         public string UniqueIdField { get; set; }
@@ -28,6 +35,11 @@ namespace DuckDBGeoparquet.Models
         public double AddressSimilarityThreshold { get; set; } = 0.72;
         public double AcceptScoreThreshold { get; set; } = 72;
         public int ReviewCandidatesPerRecord { get; set; } = 5;
+        public bool AllowNearbyOnlyMatches { get; set; } = true;
+
+        public string TargetTheme => TargetType == GersifyTargetType.Addresses ? "addresses" : "places";
+        public string TargetDatasetType => TargetType == GersifyTargetType.Addresses ? "address" : "place";
+        public string TargetLabel => TargetType == GersifyTargetType.Addresses ? "Overture Addresses" : "Overture Places";
 
         public static string DefaultReleaseVersion => "2026-06-17.0";
 

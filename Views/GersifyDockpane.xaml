@@ -25,8 +25,8 @@
         </Grid.RowDefinitions>
 
         <TabControl Grid.Row="0">
-            <TabItem Header="GERSify Places"
-                     ToolTipService.ToolTip="Match your point layer to downloaded Overture Places. The tool adds matched GERS IDs to a new output layer and writes review/bridge CSVs.">
+            <TabItem Header="GERSify Data"
+                     ToolTipService.ToolTip="Match your point layer to downloaded Overture Addresses or Places. The tool adds matched GERS IDs to a new output layer and writes review/bridge CSVs.">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="0,8,0,8">
                         <TextBlock Text="Input Layer" FontWeight="SemiBold" Margin="0,0,0,4"
@@ -49,6 +49,14 @@
                                     Style="{DynamicResource Esri_Button}"
                                     ToolTipService.ToolTip="Reload the list of feature layers from the active map."/>
                         </Grid>
+
+                        <TextBlock Text="Match Target" FontWeight="SemiBold" Margin="0,4,0,4"
+                                   ToolTipService.ToolTip="Choose Addresses for strict 1:1 address validation, or Places for POI/place enrichment."/>
+                        <ComboBox ItemsSource="{Binding GersifyTargets}"
+                                  SelectedItem="{Binding SelectedGersifyTarget}"
+                                  DisplayMemberPath="Name"
+                                  Margin="0,0,0,8"
+                                  ToolTipService.ToolTip="Addresses compares your address points to Overture Addresses. Places compares names and addresses to Overture Places."/>
 
                         <TextBlock Text="Field Mapping" FontWeight="SemiBold" Margin="0,4,0,4"
                                    ToolTipService.ToolTip="Map your layer fields to the values used for matching. Unique ID is required. Use either a place name, address fields, or both."/>
@@ -131,7 +139,7 @@
                         </Grid>
 
                         <TextBlock Text="Overture Data" FontWeight="SemiBold" Margin="0,6,0,4"
-                                   ToolTipService.ToolTip="Folder containing downloaded Overture data for one release. For this MVP, it must include Places data."/>
+                                   ToolTipService.ToolTip="Folder containing downloaded Overture data for one release. It must include the selected match target."/>
                         <Grid Margin="0,0,0,8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -140,7 +148,7 @@
                             <TextBox Grid.Column="0" Text="{Binding ReleaseFolderPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"
                                      ToolTipService.ToolTip="Defaults to the newest loaded Overture release under the project. Choose another release folder if needed."/>
                             <Button Grid.Column="1" Content="Browse..." Command="{Binding BrowseReleaseFolderCommand}" Width="82" Style="{DynamicResource Esri_Button}"
-                                    ToolTipService.ToolTip="Choose the Overture release folder that contains the Places GeoParquet files."/>
+                                    ToolTipService.ToolTip="Choose the Overture release folder that contains the selected target GeoParquet files."/>
                         </Grid>
 
                         <TextBlock Text="Output" FontWeight="SemiBold" Margin="0,6,0,4"
@@ -178,9 +186,10 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Distance m" VerticalAlignment="Center" Margin="0,0,8,6"
-                                       ToolTipService.ToolTip="Maximum distance from your point to an Overture Place candidate. Start with 75 meters for address-quality points."/>
+                                       ToolTipService.ToolTip="Maximum distance from your point to an Overture candidate. Start with 75 meters for address-quality points."/>
                             <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding MaxDistanceMeters, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
                                      ToolTipService.ToolTip="Candidates farther than this distance are ignored before name/address scoring."/>
                             <TextBlock Grid.Row="1" Grid.Column="0" Text="Name" VerticalAlignment="Center" Margin="0,0,8,6"
@@ -192,9 +201,13 @@
                             <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding AddressSimilarityThreshold, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
                                      ToolTipService.ToolTip="Raise this when address fields are clean; lower it when addresses are partial or inconsistently formatted."/>
                             <TextBlock Grid.Row="3" Grid.Column="0" Text="Score" VerticalAlignment="Center" Margin="0,0,8,0"
-                                       ToolTipService.ToolTip="Minimum combined score for automatic acceptance. Address-only inputs can also accept very close nearby places when Overture lacks comparable address text."/>
-                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding AcceptScoreThreshold, UpdateSourceTrigger=PropertyChanged}"
+                                       ToolTipService.ToolTip="Minimum combined score for automatic acceptance."/>
+                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding AcceptScoreThreshold, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
                                      ToolTipService.ToolTip="Accepted matches get written to gers_id fields and bridge CSV output. Other candidates remain in the review CSV."/>
+                            <CheckBox Grid.Row="4" Grid.Column="1"
+                                      Content="Allow nearby-only fallback"
+                                      IsChecked="{Binding AllowNearbyOnlyMatches}"
+                                      ToolTipService.ToolTip="Places only. Allows very close candidates when neither name nor address similarity can be scored. Leave off for strict address validation."/>
                         </Grid>
 
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
@@ -265,11 +278,11 @@
                             <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding BridgeRelease, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
                                      ToolTipService.ToolTip="Use the same release as the Overture data you matched against when possible."/>
                             <TextBlock Grid.Row="2" Grid.Column="0" Text="Theme" VerticalAlignment="Center" Margin="0,0,8,6"
-                                       ToolTipService.ToolTip="Bridge theme to query. For Places GERSification, use places."/>
+                                       ToolTipService.ToolTip="Bridge theme to query. Use addresses for address validation outputs or places for Places enrichment outputs."/>
                             <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding BridgeTheme, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
                                      ToolTipService.ToolTip="Examples include places, buildings, transportation, and divisions when bridge coverage exists."/>
                             <TextBlock Grid.Row="3" Grid.Column="0" Text="Type" VerticalAlignment="Center" Margin="0,0,8,0"
-                                       ToolTipService.ToolTip="Bridge type to query. For Places GERSification, use place."/>
+                                       ToolTipService.ToolTip="Bridge type to query. Use address for address validation outputs or place for Places enrichment outputs."/>
                             <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding BridgeType, UpdateSourceTrigger=PropertyChanged}"
                                      ToolTipService.ToolTip="Examples include place, building, segment, connector, division_area, and division_boundary when bridge coverage exists."/>
                         </Grid>

@@ -28,6 +28,7 @@ namespace DuckDBGeoparquet.Views
         private bool _isBusy;
         private LayerSelectionItem _selectedInputLayer;
         private LayerSelectionItem _selectedTraceLayer;
+        private GersifyTargetOption _selectedGersifyTarget;
         private string _selectedIdField;
         private string _selectedNameField;
         private string _selectedAddressField;
@@ -49,6 +50,7 @@ namespace DuckDBGeoparquet.Views
         private string _nameSimilarityThreshold = "0.86";
         private string _addressSimilarityThreshold = "0.72";
         private string _acceptScoreThreshold = "72";
+        private bool _allowNearbyOnlyMatches;
         private string _bridgeRoot = "https://overturemapswestus2.blob.core.windows.net/bridgefiles";
         private string _bridgeRelease = GersifyOptions.DefaultReleaseVersion;
         private string _bridgeTheme = "places";
@@ -60,9 +62,15 @@ namespace DuckDBGeoparquet.Views
         {
             InputLayers = [];
             TraceLayers = [];
+            GersifyTargets =
+            [
+                new GersifyTargetOption("Addresses", GersifyTargetType.Addresses, "Validate address points against Overture Addresses."),
+                new GersifyTargetOption("Places", GersifyTargetType.Places, "Enrich local places or facilities with Overture Places GERS IDs.")
+            ];
             InputFields = [];
             OptionalInputFields = [];
             TraceFields = [];
+            SelectedGersifyTarget = GersifyTargets.FirstOrDefault();
 
             string addinDataBase = ProjectDataLocator.GetAddinDataBase();
             ReleaseFolderPath = ProjectDataLocator.GetNewestLoadedReleaseFolder();
@@ -90,9 +98,28 @@ namespace DuckDBGeoparquet.Views
 
         public ObservableCollection<LayerSelectionItem> InputLayers { get; }
         public ObservableCollection<LayerSelectionItem> TraceLayers { get; }
+        public ObservableCollection<GersifyTargetOption> GersifyTargets { get; }
         public ObservableCollection<string> InputFields { get; }
         public ObservableCollection<string> OptionalInputFields { get; }
         public ObservableCollection<string> TraceFields { get; }
+
+        public GersifyTargetOption SelectedGersifyTarget
+        {
+            get => _selectedGersifyTarget;
+            set
+            {
+                if (SetProperty(ref _selectedGersifyTarget, value))
+                {
+                    if (value != null)
+                    {
+                        BridgeTheme = value.TargetTheme;
+                        BridgeType = value.TargetDatasetType;
+                    }
+
+                    RaiseCommandStatesChanged();
+                }
+            }
+        }
 
         public LayerSelectionItem SelectedInputLayer
         {
@@ -310,6 +337,12 @@ namespace DuckDBGeoparquet.Views
             set => SetProperty(ref _acceptScoreThreshold, value);
         }
 
+        public bool AllowNearbyOnlyMatches
+        {
+            get => _allowNearbyOnlyMatches;
+            set => SetProperty(ref _allowNearbyOnlyMatches, value);
+        }
+
         public string BridgeRoot
         {
             get => _bridgeRoot;
@@ -496,8 +529,10 @@ namespace DuckDBGeoparquet.Views
                 });
 
                 using var service = new GersifyService();
-                var result = await service.GersifyPlacesAsync(new GersifyOptions
+                var targetType = SelectedGersifyTarget?.TargetType ?? GersifyTargetType.Addresses;
+                var result = await service.GersifyAsync(new GersifyOptions
                 {
+                    TargetType = targetType,
                     InputCsvPath = export.CsvPath,
                     InputLayerName = SelectedInputLayer.Name,
                     UniqueIdField = SelectedIdField,
@@ -520,22 +555,28 @@ namespace DuckDBGeoparquet.Views
                     MaxDistanceMeters = ParseDouble(MaxDistanceMeters, 75),
                     NameSimilarityThreshold = ParseDouble(NameSimilarityThreshold, 0.86),
                     AddressSimilarityThreshold = ParseDouble(AddressSimilarityThreshold, 0.72),
-                    AcceptScoreThreshold = ParseDouble(AcceptScoreThreshold, 72)
+                    AcceptScoreThreshold = ParseDouble(AcceptScoreThreshold, 72),
+                    AllowNearbyOnlyMatches = AllowNearbyOnlyMatches
                 }, progress);
 
                 StatusText = "Adding GERSify outputs to the map...";
-                string layerName = $"GERSified_{SelectedInputLayer.Name}";
+                string targetSuffix = string.IsNullOrWhiteSpace(result.TargetDatasetType) ? "data" : result.TargetDatasetType;
+                string layerName = $"GERSified_{SelectedInputLayer.Name}_{targetSuffix}";
                 result.OutputFeatureClassPath = await WriteGersifiedFeatureClassAsync(result.OutputCsvPath, OutputFolder, layerName);
                 await TryAddStandaloneTableAsync(result.CandidateCsvPath);
                 await TryAddStandaloneTableAsync(result.BridgeCsvPath);
 
                 StatusText = $"Matched {result.AcceptedCount:N0} of {result.InputCount:N0} feature(s); reviewed {result.CandidateCount:N0} candidate(s).";
+                AddToLog($"Target: {result.TargetLabel} ({result.TargetTheme}/{result.TargetDatasetType}).");
                 AddToLog($"Input text coverage: {result.InputNameCount:N0} with names; {result.InputAddressCount:N0} with addresses.");
                 AddToLog($"Overture candidate address coverage: {result.CandidateOvertureAddressCount:N0} with address text; {result.CandidateAddressSimilarityCount:N0} with address similarity scores.");
-                if (result.CandidateCount > 0 && result.CandidateAddressSimilarityCount == 0)
+                if (string.Equals(result.TargetDatasetType, "place", StringComparison.OrdinalIgnoreCase) &&
+                    result.CandidateCount > 0 &&
+                    result.CandidateAddressSimilarityCount == 0)
                 {
                     AddToLog("No address similarity scores were produced. The selected Overture Places files likely do not include address_freeform/address_* fields or nested addresses; close map layers using old Places files and re-download Places with this add-in version to enable address-based GERSify scoring.");
                 }
+                AddToLog($"Accepted by strategy: {FormatStrategyCounts(result.AcceptedStrategyCounts)}.");
                 AddToLog($"Candidates reviewed: {result.CandidateCount:N0}; accepted matches: {result.AcceptedCount:N0}.");
                 AddToLog($"Output feature class: {result.OutputFeatureClassPath}");
                 AddToLog($"Candidate review CSV: {result.CandidateCsvPath}");
@@ -809,6 +850,7 @@ namespace DuckDBGeoparquet.Views
         {
             return !IsRunning &&
                    SelectedInputLayer?.Layer != null &&
+                   SelectedGersifyTarget != null &&
                    !string.IsNullOrWhiteSpace(SelectedIdField) &&
                    HasAnyGersifyMatchField() &&
                    !string.IsNullOrWhiteSpace(OutputFolder);
@@ -897,6 +939,22 @@ namespace DuckDBGeoparquet.Views
         {
             _logBuilder.Clear();
             LogText = string.Empty;
+        }
+
+        private static string FormatStrategyCounts(IReadOnlyDictionary<string, int> counts)
+        {
+            if (counts == null || counts.Count == 0)
+                return "none";
+
+            string[] preferredOrder = ["exact_address", "address", "name_address", "name", "nearby_only"];
+            var ordered = preferredOrder
+                .Where(counts.ContainsKey)
+                .Select(strategy => new KeyValuePair<string, int>(strategy, counts[strategy]))
+                .Concat(counts
+                    .Where(item => !preferredOrder.Contains(item.Key, StringComparer.OrdinalIgnoreCase))
+                    .OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase));
+
+            return string.Join("; ", ordered.Select(item => $"{item.Key}: {item.Value:N0}"));
         }
 
         private static string SelectField(IEnumerable<string> fields, params string[] candidates)
@@ -1020,5 +1078,21 @@ namespace DuckDBGeoparquet.Views
 
         public string Name { get; }
         public FeatureLayer Layer { get; }
+    }
+
+    public sealed class GersifyTargetOption
+    {
+        public GersifyTargetOption(string name, GersifyTargetType targetType, string description)
+        {
+            Name = name;
+            TargetType = targetType;
+            Description = description;
+        }
+
+        public string Name { get; }
+        public GersifyTargetType TargetType { get; }
+        public string Description { get; }
+        public string TargetTheme => TargetType == GersifyTargetType.Addresses ? "addresses" : "places";
+        public string TargetDatasetType => TargetType == GersifyTargetType.Addresses ? "address" : "place";
     }
 }

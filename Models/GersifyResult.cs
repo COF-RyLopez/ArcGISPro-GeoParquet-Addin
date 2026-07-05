@@ -4,6 +4,9 @@ namespace DuckDBGeoparquet.Models
 {
     public class GersifyResult
     {
+        public string TargetLabel { get; set; }
+        public string TargetTheme { get; set; }
+        public string TargetDatasetType { get; set; }
         public int InputCount { get; set; }
         public int InputNameCount { get; set; }
         public int InputAddressCount { get; set; }
@@ -15,6 +18,7 @@ namespace DuckDBGeoparquet.Models
         public string CandidateCsvPath { get; set; }
         public string BridgeCsvPath { get; set; }
         public string OutputFeatureClassPath { get; set; }
+        public IReadOnlyDictionary<string, int> AcceptedStrategyCounts { get; set; } = new Dictionary<string, int>();
         public IReadOnlyList<GersMatchCandidate> AcceptedMatches { get; set; } = [];
     }
 
