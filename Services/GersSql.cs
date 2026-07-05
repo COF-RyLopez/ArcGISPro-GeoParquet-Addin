@@ -61,24 +61,27 @@ namespace DuckDBGeoparquet.Services
                 ("brand", "CAST(brand AS VARCHAR)"));
             string placeStreetAddressExpr = BuildFirstExistingExpression(
                 availableColumns,
-                ("addresses", "CAST(addresses[1].freeform AS VARCHAR)"),
                 ("address_freeform", "CAST(address_freeform AS VARCHAR)"),
+                ("addresses", "(SELECT string_agg(CAST(a.freeform AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.freeform IS NOT NULL AND trim(CAST(a.freeform AS VARCHAR)) <> '')"),
                 ("address", "CAST(address AS VARCHAR)"),
                 ("street", "CAST(street AS VARCHAR)"),
                 ("full_address", "CAST(full_address AS VARCHAR)"));
             string placeLocalityExpr = BuildFirstExistingExpression(
                 availableColumns,
-                ("addresses", "CAST(addresses[1].locality AS VARCHAR)"),
+                ("address_locality", "CAST(address_locality AS VARCHAR)"),
+                ("addresses", "(SELECT string_agg(DISTINCT CAST(a.locality AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.locality IS NOT NULL AND trim(CAST(a.locality AS VARCHAR)) <> '')"),
                 ("locality", "CAST(locality AS VARCHAR)"),
                 ("city", "CAST(city AS VARCHAR)"));
             string placeRegionExpr = BuildFirstExistingExpression(
                 availableColumns,
-                ("addresses", "CAST(addresses[1].region AS VARCHAR)"),
+                ("address_region", "CAST(address_region AS VARCHAR)"),
+                ("addresses", "(SELECT string_agg(DISTINCT CAST(a.region AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.region IS NOT NULL AND trim(CAST(a.region AS VARCHAR)) <> '')"),
                 ("region", "CAST(region AS VARCHAR)"),
                 ("state", "CAST(state AS VARCHAR)"));
             string placePostcodeExpr = BuildFirstExistingExpression(
                 availableColumns,
-                ("addresses", "left(CAST(addresses[1].postcode AS VARCHAR), 5)"),
+                ("address_postcode", "left(CAST(address_postcode AS VARCHAR), 5)"),
+                ("addresses", "(SELECT string_agg(DISTINCT left(CAST(a.postcode AS VARCHAR), 5), ' | ') FROM unnest(addresses) AS t(a) WHERE a.postcode IS NOT NULL AND trim(CAST(a.postcode AS VARCHAR)) <> '')"),
                 ("postcode", "left(CAST(postcode AS VARCHAR), 5)"),
                 ("postal_code", "left(CAST(postal_code AS VARCHAR), 5)"),
                 ("zip", "left(CAST(zip AS VARCHAR), 5)"));

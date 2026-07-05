@@ -87,13 +87,28 @@ namespace DuckDBGeoparquet.Tests
         }
 
         [Fact]
-        public void BuildLoadQuery_ForPlaces_FlattensAddressFreeformWhenAddressesArePresent()
+        public void BuildLoadQuery_ForPlaces_FlattensAddressFieldsWhenAddressesArePresent()
         {
             var columns = new List<string> { "id", "names", "addresses", "geometry", "bbox", "sources" };
             string query = S3Ingester.BuildLoadQuery("s3://bucket/place/*", "place", columns, extent: null);
 
-            Assert.Contains("CAST(addresses[1].freeform AS VARCHAR) AS address_freeform", query);
+            Assert.Contains("string_agg(CAST(a.freeform AS VARCHAR), ' | ')", query);
+            Assert.Contains("AS address_freeform", query);
+            Assert.Contains("AS address_locality", query);
+            Assert.Contains("AS address_region", query);
+            Assert.Contains("AS address_postcode", query);
+            Assert.Contains("AS address_country", query);
             Assert.DoesNotContain("SELECT id, names, addresses", query);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_ForPlaces_DoesNotDuplicateExistingFlattenedAddressFields()
+        {
+            var columns = new List<string> { "id", "names", "addresses", "address_freeform", "geometry", "bbox" };
+            string query = S3Ingester.BuildLoadQuery("s3://bucket/place/*", "place", columns, extent: null);
+
+            Assert.DoesNotContain("AS address_freeform", query);
+            Assert.Contains("AS address_locality", query);
         }
 
         [Fact]

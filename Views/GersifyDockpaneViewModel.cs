@@ -531,6 +531,11 @@ namespace DuckDBGeoparquet.Views
 
                 StatusText = $"Matched {result.AcceptedCount:N0} of {result.InputCount:N0} feature(s); reviewed {result.CandidateCount:N0} candidate(s).";
                 AddToLog($"Input text coverage: {result.InputNameCount:N0} with names; {result.InputAddressCount:N0} with addresses.");
+                AddToLog($"Overture candidate address coverage: {result.CandidateOvertureAddressCount:N0} with address text; {result.CandidateAddressSimilarityCount:N0} with address similarity scores.");
+                if (result.CandidateCount > 0 && result.CandidateAddressSimilarityCount == 0)
+                {
+                    AddToLog("No address similarity scores were produced. The selected Overture Places files likely do not include flattened place address fields; re-download Places with this add-in version to enable address-based GERSify scoring.");
+                }
                 AddToLog($"Candidates reviewed: {result.CandidateCount:N0}; accepted matches: {result.AcceptedCount:N0}.");
                 AddToLog($"Output feature class: {result.OutputFeatureClassPath}");
                 AddToLog($"Candidate review CSV: {result.CandidateCsvPath}");

@@ -147,13 +147,38 @@ namespace DuckDBGeoparquet.Services
         {
             if (!string.Equals(actualS3Type, "place", StringComparison.OrdinalIgnoreCase) ||
                 columnNames == null ||
-                !columnNames.Any(c => c.Equals("addresses", StringComparison.OrdinalIgnoreCase)) ||
-                columnNames.Any(c => c.Equals("address_freeform", StringComparison.OrdinalIgnoreCase)))
+                !columnNames.Any(c => c.Equals("addresses", StringComparison.OrdinalIgnoreCase)))
             {
                 return projection;
             }
 
-            return $"{projection}, CAST(addresses[1].freeform AS VARCHAR) AS address_freeform";
+            var derivedColumns = new List<string>();
+            AddDerivedAddressColumn(derivedColumns, columnNames, "address_freeform",
+                "(SELECT string_agg(CAST(a.freeform AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.freeform IS NOT NULL AND trim(CAST(a.freeform AS VARCHAR)) <> '')");
+            AddDerivedAddressColumn(derivedColumns, columnNames, "address_locality",
+                "(SELECT string_agg(DISTINCT CAST(a.locality AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.locality IS NOT NULL AND trim(CAST(a.locality AS VARCHAR)) <> '')");
+            AddDerivedAddressColumn(derivedColumns, columnNames, "address_region",
+                "(SELECT string_agg(DISTINCT CAST(a.region AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.region IS NOT NULL AND trim(CAST(a.region AS VARCHAR)) <> '')");
+            AddDerivedAddressColumn(derivedColumns, columnNames, "address_postcode",
+                "(SELECT string_agg(DISTINCT left(CAST(a.postcode AS VARCHAR), 5), ' | ') FROM unnest(addresses) AS t(a) WHERE a.postcode IS NOT NULL AND trim(CAST(a.postcode AS VARCHAR)) <> '')");
+            AddDerivedAddressColumn(derivedColumns, columnNames, "address_country",
+                "(SELECT string_agg(DISTINCT CAST(a.country AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.country IS NOT NULL AND trim(CAST(a.country AS VARCHAR)) <> '')");
+
+            return derivedColumns.Count == 0
+                ? projection
+                : $"{projection}, {string.Join(", ", derivedColumns)}";
+        }
+
+        private static void AddDerivedAddressColumn(
+            ICollection<string> derivedColumns,
+            IReadOnlyList<string> columnNames,
+            string columnName,
+            string expression)
+        {
+            if (columnNames.Any(c => c.Equals(columnName, StringComparison.OrdinalIgnoreCase)))
+                return;
+
+            derivedColumns.Add($"{expression} AS {columnName}");
         }
     }
 }

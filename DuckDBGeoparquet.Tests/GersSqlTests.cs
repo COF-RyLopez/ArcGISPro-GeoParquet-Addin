@@ -26,7 +26,7 @@ namespace DuckDBGeoparquet.Tests
             Assert.Contains("CAST(names.primary AS VARCHAR)", sql);
             Assert.Contains("coalesce('', '') AS overture_address", sql);
             Assert.Contains("bbox.xmin <= -119", sql);
-            Assert.DoesNotContain("addresses[1].freeform", sql);
+            Assert.DoesNotContain("unnest(addresses)", sql);
             Assert.Contains("jaro_winkler_similarity", sql);
             Assert.Contains("o.overture_name_norm,\n                        o.overture_street_norm,", sql);
         }
@@ -48,6 +48,7 @@ namespace DuckDBGeoparquet.Tests
                 ["id", "name", "address_freeform", "geometry"]);
 
             Assert.Contains("CAST(address_freeform AS VARCHAR)", sql);
+            Assert.DoesNotContain("unnest(addresses)", sql);
             Assert.Contains("OR (u.user_street_norm <> '' AND o.overture_street_norm <> '')", sql);
             Assert.Contains("OR (u.user_name_norm = '' AND u.user_street_norm <> '' AND o.overture_name_norm <> '')", sql);
             Assert.Contains("WHEN user_name_norm = '' OR overture_name_norm = '' THEN NULL", sql);
@@ -69,10 +70,27 @@ namespace DuckDBGeoparquet.Tests
                 options,
                 ["id", "names", "addresses", "geometry"]);
 
-            Assert.Contains("CAST(addresses[1].freeform AS VARCHAR)", sql);
-            Assert.Contains("CAST(addresses[1].locality AS VARCHAR)", sql);
-            Assert.Contains("CAST(addresses[1].region AS VARCHAR)", sql);
-            Assert.Contains("left(CAST(addresses[1].postcode AS VARCHAR), 5)", sql);
+            Assert.Contains("string_agg(CAST(a.freeform AS VARCHAR), ' | ')", sql);
+            Assert.Contains("string_agg(DISTINCT CAST(a.locality AS VARCHAR), ' | ')", sql);
+            Assert.Contains("string_agg(DISTINCT CAST(a.region AS VARCHAR), ' | ')", sql);
+            Assert.Contains("string_agg(DISTINCT left(CAST(a.postcode AS VARCHAR), 5), ' | ')", sql);
+        }
+
+        [Fact]
+        public void BuildPlacesCandidateTablesCommand_UsesFlattenedOvertureAddressContextWhenAvailable()
+        {
+            var options = new GersifyOptions();
+
+            string sql = GersSql.BuildPlacesCandidateTablesCommand(
+                "/data/release/place/*.parquet",
+                options,
+                ["id", "names", "address_freeform", "address_locality", "address_region", "address_postcode", "geometry"]);
+
+            Assert.Contains("CAST(address_freeform AS VARCHAR)", sql);
+            Assert.Contains("CAST(address_locality AS VARCHAR)", sql);
+            Assert.Contains("CAST(address_region AS VARCHAR)", sql);
+            Assert.Contains("left(CAST(address_postcode AS VARCHAR), 5)", sql);
+            Assert.DoesNotContain("unnest(addresses)", sql);
         }
 
         [Fact]

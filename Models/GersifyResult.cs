@@ -8,6 +8,8 @@ namespace DuckDBGeoparquet.Models
         public int InputNameCount { get; set; }
         public int InputAddressCount { get; set; }
         public int CandidateCount { get; set; }
+        public int CandidateOvertureAddressCount { get; set; }
+        public int CandidateAddressSimilarityCount { get; set; }
         public int AcceptedCount { get; set; }
         public string OutputCsvPath { get; set; }
         public string CandidateCsvPath { get; set; }

@@ -75,6 +75,7 @@ namespace DuckDBGeoparquet.Services
                 cancellationToken);
 
             int candidateCount = await ExecuteCountAsync(GersSql.CandidateTable, cancellationToken);
+            var candidateSignalCounts = await ReadCandidateSignalCountsAsync(cancellationToken);
             int acceptedCount = await ExecuteCountAsync(GersSql.AcceptedTable, cancellationToken);
             var acceptedMatches = await ReadAcceptedMatchesAsync(cancellationToken);
 
@@ -84,6 +85,8 @@ namespace DuckDBGeoparquet.Services
                 InputNameCount = inputSignalCounts.NameCount,
                 InputAddressCount = inputSignalCounts.AddressCount,
                 CandidateCount = candidateCount,
+                CandidateOvertureAddressCount = candidateSignalCounts.OvertureAddressCount,
+                CandidateAddressSimilarityCount = candidateSignalCounts.AddressSimilarityCount,
                 AcceptedCount = acceptedCount,
                 OutputCsvPath = outputCsvPath,
                 CandidateCsvPath = candidatesCsvPath,
@@ -100,6 +103,24 @@ namespace DuckDBGeoparquet.Services
                     sum(CASE WHEN trim(coalesce(name, '')) <> '' THEN 1 ELSE 0 END) AS name_count,
                     sum(CASE WHEN trim(coalesce(address, '')) <> '' THEN 1 ELSE 0 END) AS address_count
                 FROM {GersSql.UserInputTable};";
+
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return (0, 0);
+
+            return (
+                ReadInt32(reader.GetValue(0)),
+                ReadInt32(reader.GetValue(1)));
+        }
+
+        private async Task<(int OvertureAddressCount, int AddressSimilarityCount)> ReadCandidateSignalCountsAsync(CancellationToken cancellationToken)
+        {
+            using var command = _duckDb.Connection.CreateCommand();
+            command.CommandText = $@"
+                SELECT
+                    sum(CASE WHEN trim(coalesce(overture_address, '')) <> '' THEN 1 ELSE 0 END) AS overture_address_count,
+                    sum(CASE WHEN address_similarity IS NOT NULL THEN 1 ELSE 0 END) AS address_similarity_count
+                FROM {GersSql.CandidateTable};";
 
             using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
