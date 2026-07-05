@@ -70,7 +70,7 @@ namespace DuckDBGeoparquet.Tests
 
             Assert.Contains("CREATE OR REPLACE TABLE current_table", query);
             Assert.Contains("SELECT *", query);
-            Assert.Contains("read_parquet('s3://bucket/*.parquet', filename=true, hive_partitioning=1)", query);
+            Assert.Contains("read_parquet('s3://bucket/*.parquet', filename=true, hive_partitioning=1, union_by_name=1)", query);
             // No extent → no spatial filter and no clipping.
             Assert.DoesNotContain("WHERE", query);
             Assert.DoesNotContain("ST_Intersection", query);

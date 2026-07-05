@@ -61,8 +61,19 @@ namespace DuckDBGeoparquet.Services
             }
             var inputSignalCounts = await ReadInputSignalCountsAsync(cancellationToken);
 
-            progress?.Report($"Matching {inputCount:N0} point feature(s) to Overture Places...");
+            progress?.Report("Checking selected Overture Places files...");
             var placeColumns = await ReadParquetColumnsAsync(placesGlob, cancellationToken);
+            if (inputSignalCounts.NameCount == 0 &&
+                inputSignalCounts.AddressCount > 0 &&
+                !GersSql.HasPlaceAddressColumns(placeColumns))
+            {
+                throw new InvalidOperationException(
+                    "The selected Overture Places files do not contain place address fields that GERSify can compare. " +
+                    "Your input has address text but no names, so this run would only produce nearby_only matches. " +
+                    "Close any map layers or tables using the old Places Parquet files, re-download Places with this add-in version, then choose that release folder again.");
+            }
+
+            progress?.Report($"Matching {inputCount:N0} point feature(s) to Overture Places...");
             await ExecuteNonQueryAsync(GersSql.BuildPlacesCandidateTablesCommand(placesGlob, options, placeColumns), cancellationToken);
 
             progress?.Report("Writing GERSify outputs...");
@@ -136,7 +147,7 @@ namespace DuckDBGeoparquet.Services
             string escapedPath = GeoParquetSql.EscapeSqlLiteral(parquetGlob.Replace('\\', '/'));
             await ExecuteNonQueryAsync($@"
                 CREATE OR REPLACE TABLE gers_place_schema_probe AS
-                SELECT * FROM read_parquet('{escapedPath}', hive_partitioning=1) LIMIT 0;", cancellationToken);
+                SELECT * FROM read_parquet('{escapedPath}', {GersSql.PlacesReadParquetOptions}) LIMIT 0;", cancellationToken);
 
             var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             using var command = _duckDb.Connection.CreateCommand();

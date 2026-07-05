@@ -14,6 +14,16 @@ namespace DuckDBGeoparquet.Services
         public const string OutputTable = "gers_output";
         public const string TraceInputTable = "gers_trace_input";
         public const string TraceOutputTable = "gers_trace_sources";
+        public const string PlacesReadParquetOptions = "hive_partitioning=1, union_by_name=1";
+
+        private static readonly string[] PlaceAddressColumns =
+        [
+            "address_freeform",
+            "addresses",
+            "address",
+            "street",
+            "full_address"
+        ];
 
         public static string BuildCreateUserInputTableCommand(string csvPath)
         {
@@ -113,7 +123,7 @@ namespace DuckDBGeoparquet.Services
                         NormalizeText(coalesce({placeNameExpr}, '')) AS overture_name_norm,
                         NormalizeText(coalesce({placeStreetAddressExpr}, '')) AS overture_street_norm,
                         NormalizeText(trim(concat_ws(' ', coalesce({placeStreetAddressExpr}, ''), coalesce({placeLocalityExpr}, ''), coalesce({placeRegionExpr}, ''), coalesce({placePostcodeExpr}, '')))) AS overture_address_norm
-                    FROM read_parquet('{escapedPath}', hive_partitioning=1)
+                    FROM read_parquet('{escapedPath}', {PlacesReadParquetOptions})
                     WHERE geometry IS NOT NULL
                     {bboxFilter}
                 ),
@@ -249,6 +259,14 @@ namespace DuckDBGeoparquet.Services
                 FROM {UserInputTable} u
                 LEFT JOIN {AcceptedTable} a
                   ON u.record_id = a.record_id;";
+        }
+
+        public static bool HasPlaceAddressColumns(IReadOnlyCollection<string> availableColumns)
+        {
+            if (availableColumns == null || availableColumns.Count == 0)
+                return true;
+
+            return PlaceAddressColumns.Any(column => availableColumns.Contains(column, StringComparer.OrdinalIgnoreCase));
         }
 
         public static string BuildCopyGersifyOutputsCommand(string outputCsvPath, string candidateCsvPath, string bridgeCsvPath, string datasetName)

@@ -26,6 +26,7 @@ namespace DuckDBGeoparquet.Tests
             Assert.Contains("CAST(names.primary AS VARCHAR)", sql);
             Assert.Contains("coalesce('', '') AS overture_address", sql);
             Assert.Contains("bbox.xmin <= -119", sql);
+            Assert.Contains("read_parquet('/data/release/place/*.parquet', hive_partitioning=1, union_by_name=1)", sql);
             Assert.DoesNotContain("unnest(addresses)", sql);
             Assert.Contains("jaro_winkler_similarity", sql);
             Assert.Contains("o.overture_name_norm,\n                        o.overture_street_norm,", sql);
@@ -91,6 +92,15 @@ namespace DuckDBGeoparquet.Tests
             Assert.Contains("CAST(address_region AS VARCHAR)", sql);
             Assert.Contains("left(CAST(address_postcode AS VARCHAR), 5)", sql);
             Assert.DoesNotContain("unnest(addresses)", sql);
+        }
+
+        [Fact]
+        public void HasPlaceAddressColumns_DetectsNestedAndFlattenedAddressInputs()
+        {
+            Assert.True(GersSql.HasPlaceAddressColumns(["id", "names", "addresses", "geometry"]));
+            Assert.True(GersSql.HasPlaceAddressColumns(["id", "names", "address_freeform", "geometry"]));
+            Assert.True(GersSql.HasPlaceAddressColumns(["id", "names", "full_address", "geometry"]));
+            Assert.False(GersSql.HasPlaceAddressColumns(["id", "names", "geometry", "bbox"]));
         }
 
         [Fact]

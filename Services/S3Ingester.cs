@@ -20,6 +20,7 @@ namespace DuckDBGeoparquet.Services
     {
         private const string BboxColumn = "bbox";
         private const string GeometryColumn = "geometry";
+        public const string S3ReadParquetOptions = "filename=true, hive_partitioning=1, union_by_name=1";
 
         /// <summary>
         /// Build a projection list that drops known heavy optional columns for the given dataset type.
@@ -105,7 +106,7 @@ namespace DuckDBGeoparquet.Services
                                     THEN ST_Intersection(geometry, {extentPolygon})
                                     ELSE NULL
                                 END AS clipped_geometry
-                            FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
+                            FROM read_parquet('{s3Path}', {S3ReadParquetOptions})
                             {spatialFilter}
                         )
                         SELECT
@@ -132,14 +133,14 @@ namespace DuckDBGeoparquet.Services
                                 THEN ST_Intersection(geometry, {extentPolygon})
                                 ELSE NULL
                             END as geometry
-                        FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
+                        FROM read_parquet('{s3Path}', {S3ReadParquetOptions})
                         {spatialFilter}";
             }
 
             return $@"
                         CREATE OR REPLACE TABLE current_table AS
                         SELECT {projectedColumnList}
-                        FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
+                        FROM read_parquet('{s3Path}', {S3ReadParquetOptions})
                         {spatialFilter}";
         }
 

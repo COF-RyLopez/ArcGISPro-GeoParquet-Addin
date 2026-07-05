@@ -534,7 +534,7 @@ namespace DuckDBGeoparquet.Views
                 AddToLog($"Overture candidate address coverage: {result.CandidateOvertureAddressCount:N0} with address text; {result.CandidateAddressSimilarityCount:N0} with address similarity scores.");
                 if (result.CandidateCount > 0 && result.CandidateAddressSimilarityCount == 0)
                 {
-                    AddToLog("No address similarity scores were produced. The selected Overture Places files likely do not include flattened place address fields; re-download Places with this add-in version to enable address-based GERSify scoring.");
+                    AddToLog("No address similarity scores were produced. The selected Overture Places files likely do not include address_freeform/address_* fields or nested addresses; close map layers using old Places files and re-download Places with this add-in version to enable address-based GERSify scoring.");
                 }
                 AddToLog($"Candidates reviewed: {result.CandidateCount:N0}; accepted matches: {result.AcceptedCount:N0}.");
                 AddToLog($"Output feature class: {result.OutputFeatureClassPath}");
@@ -773,7 +773,7 @@ namespace DuckDBGeoparquet.Views
                 var map = MapView.Active?.Map;
                 if (map != null)
                 {
-                    LayerFactory.Instance.CreateLayer(new Uri(outputFeatureClassPath), map, layerName: featureClassName);
+                    LayerFactory.Instance.CreateLayer(ToFileUri(outputFeatureClassPath), map, layerName: featureClassName);
                 }
             });
 
@@ -792,7 +792,7 @@ namespace DuckDBGeoparquet.Views
                     var map = MapView.Active?.Map;
                     if (map != null)
                     {
-                        StandaloneTableFactory.Instance.CreateStandaloneTable(new Uri(tablePath), map);
+                        StandaloneTableFactory.Instance.CreateStandaloneTable(ToFileUri(tablePath), map);
                     }
                 }
                 catch (Exception ex)
@@ -801,6 +801,9 @@ namespace DuckDBGeoparquet.Views
                 }
             });
         }
+
+        private static Uri ToFileUri(string path) =>
+            new(Path.GetFullPath(path), UriKind.Absolute);
 
         private bool CanRunGersify()
         {
