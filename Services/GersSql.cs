@@ -100,6 +100,8 @@ namespace DuckDBGeoparquet.Services
                         o.overture_address,
                         o.overture_longitude,
                         o.overture_latitude,
+                        o.overture_name_norm,
+                        o.overture_address_norm,
                         sqrt(
                             pow((o.overture_longitude - u.longitude) * 111320.0 * cos(radians((o.overture_latitude + u.latitude) / 2.0)), 2) +
                             pow((o.overture_latitude - u.latitude) * 110540.0, 2)

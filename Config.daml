@@ -41,7 +41,7 @@
 				</button>
 				<button id="DuckDBGeoparquet_Views_GersifyDockpane_ShowButton" caption="GERSify Data" className="DuckDBGeoparquet.Views.GersifyShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="F" extendedCaption="Match User Data to Overture GERS IDs">
 					<tooltip heading="GERSify Data">
-                        Match point layers to Overture Places and trace source records through bridge files
+                        Add GERS IDs to your point data by matching it to downloaded Overture Places, or trace existing GERS IDs back to source records with bridge files
 						<disabledText>Unable to open GERSify Data at this time</disabledText></tooltip>
 				</button>
 				<button id="DuckDBGeoparquet_Views_MfcDockpane_ShowButton" caption="Create MFC" className="DuckDBGeoparquet.Views.MfcDockpane_ShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="C" extendedCaption="Create Multifile Feature Connection">

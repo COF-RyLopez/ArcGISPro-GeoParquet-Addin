@@ -28,6 +28,7 @@ namespace DuckDBGeoparquet.Tests
             Assert.Contains("bbox.xmin <= -119", sql);
             Assert.DoesNotContain("addresses[1].freeform", sql);
             Assert.Contains("jaro_winkler_similarity", sql);
+            Assert.Contains("o.overture_name_norm,\n                        o.overture_address_norm,", sql);
         }
 
         [Fact]
