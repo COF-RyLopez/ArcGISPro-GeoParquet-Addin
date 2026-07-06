@@ -448,10 +448,10 @@ namespace DuckDBGeoparquet.Views
             SelectedAddressField = SelectField(fields, "address", "full_address", "street_address", "addr", "situs");
             SelectedStreetNumberField = SelectField(fields, "address_number", "address_num", "addressno", "house_number", "housenumber", "addrnum", "saddno", "situs_number", "number");
             SelectedStreetFractionField = SelectField(fields, "address_fraction", "fraction", "saddfrac");
-            SelectedStreetPrefixField = SelectField(fields, "address_prefix", "address_street_prefix", "street_prefix", "street_predir", "predir", "pre_direction", "saddpref", "prefix");
+            SelectedStreetPrefixField = SelectField(fields, "address_prefix", "address_street_prefix", "address_direction", "street_direction", "street_dir", "street_pre_direction", "street_predirection", "street_pre_dir", "street_prefix", "street_predir", "predir", "pre_direction", "pre_dir", "saddpref", "prefix");
             SelectedStreetNameField = SelectField(fields, "address_street_name", "address_street", "address_road", "street_name", "street", "road", "saddstr", "streetname");
             SelectedStreetTypeField = SelectField(fields, "address_street_type", "address_type", "street_type", "sttype", "saddsttyp", "street_suffix_type");
-            SelectedStreetSuffixField = SelectField(fields, "address_suffix", "address_street_suffix", "street_suffix", "street_postdir", "postdir", "post_direction", "saddstsuf", "suffix");
+            SelectedStreetSuffixField = SelectField(fields, "address_suffix", "address_street_suffix", "address_post_direction", "street_suffix", "street_post_direction", "street_postdirection", "street_post_dir", "street_postdir", "postdir", "post_direction", "post_dir", "saddstsuf", "suffix");
             SelectedUnitField = SelectField(fields, "address_unit", "unit", "apt", "apartment", "suite", "sunit");
             SelectedCityField = SelectField(fields, "address_zipcity", "city", "locality", "town", "scity");
             SelectedStateField = SelectField(fields, "address_state", "state", "region", "province", "state2");
