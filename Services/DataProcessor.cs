@@ -122,7 +122,7 @@ namespace DuckDBGeoparquet.Services
                 
                 string schemaQuery = $@"
                     CREATE OR REPLACE TABLE temp AS 
-                    SELECT * FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1) LIMIT 0;
+                    SELECT * FROM read_parquet('{s3Path}', {S3Ingester.S3ReadParquetOptions}) LIMIT 0;
                 ";
                 command.CommandText = schemaQuery;
                 System.Diagnostics.Debug.WriteLine($"Executing schema query for {actualS3Type ?? "data"}...");
@@ -262,7 +262,7 @@ namespace DuckDBGeoparquet.Services
                 using var command = _connection.CreateCommand();
                 command.CommandText = $@"
                     CREATE OR REPLACE TABLE temp_schema AS 
-                    SELECT * FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1) LIMIT 0;
+                    SELECT * FROM read_parquet('{s3Path}', {S3Ingester.S3ReadParquetOptions}) LIMIT 0;
                 ";
                 await command.ExecuteNonQueryAsync(cancellationToken);
 
