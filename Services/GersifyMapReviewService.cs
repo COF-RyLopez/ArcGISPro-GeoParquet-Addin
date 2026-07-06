@@ -40,7 +40,7 @@ namespace DuckDBGeoparquet.Services
             string sourceIdField = null,
             string outputSourceKeyField = "source_record_key")
         {
-            if (string.IsNullOrWhiteSpace(outputFeatureClassPath) || !Directory.Exists(Path.GetDirectoryName(outputFeatureClassPath)))
+            if (string.IsNullOrWhiteSpace(outputFeatureClassPath) || !GersifyOutputPaths.FeatureClassExists(outputFeatureClassPath))
             {
                 return Failure("GERSified output layer was not found. Run GERSify again or add the output feature class to the map.");
             }
@@ -68,6 +68,7 @@ namespace DuckDBGeoparquet.Services
                 FeatureClassDefinition definition = featureClass.GetDefinition();
                 string gersIdField = ResolveField(definition, "gers_id", "GERS_ID");
                 string scoreField = ResolveField(definition, "gers_match_score", "GERS_MATCH_SCORE");
+                string linkReviewField = ResolveField(definition, GersifyLinkageSymbologyService.ReviewFieldName);
                 string sourceKeyField = ResolveField(definition, outputSourceKeyField, "source_record_key", "record_id");
 
                 if (string.IsNullOrWhiteSpace(gersIdField))
@@ -75,7 +76,9 @@ namespace DuckDBGeoparquet.Services
                     return Failure("The GERSified output layer is missing a gers_id field.");
                 }
 
-                if (mode == GersifyMapReviewMode.WeakLinks && string.IsNullOrWhiteSpace(scoreField))
+                if (mode == GersifyMapReviewMode.WeakLinks &&
+                    string.IsNullOrWhiteSpace(linkReviewField) &&
+                    string.IsNullOrWhiteSpace(scoreField))
                 {
                     return Failure("The GERSified output layer is missing gers_match_score.");
                 }
@@ -83,9 +86,13 @@ namespace DuckDBGeoparquet.Services
                 string whereClause = mode switch
                 {
                     GersifyMapReviewMode.Unmatched =>
-                        GersifyMapReviewSql.BuildUnmatchedWhereClause(gersIdField),
+                        GersifyMapReviewSql.BuildUnmatchedWhereClause(gersIdField, linkReviewField),
                     GersifyMapReviewMode.WeakLinks =>
-                        GersifyMapReviewSql.BuildWeakLinksWhereClause(gersIdField, scoreField, acceptScoreThreshold),
+                        GersifyMapReviewSql.BuildWeakLinksWhereClause(
+                            gersIdField,
+                            scoreField,
+                            acceptScoreThreshold,
+                            linkReviewField: linkReviewField),
                     _ => string.Empty
                 };
 

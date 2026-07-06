@@ -12,21 +12,29 @@ namespace DuckDBGeoparquet.Services
     {
         public const double WeakLinkScoreBuffer = 8.0;
 
-        public static string BuildUnmatchedWhereClause(string gersIdField)
+        public static string BuildUnmatchedWhereClause(string gersIdField, string linkReviewField = null)
         {
+            if (!string.IsNullOrWhiteSpace(linkReviewField))
+            {
+                return $"{RequireFieldName(linkReviewField)} = 'unmatched'";
+            }
+
             string field = RequireFieldName(gersIdField);
             return $"({field} IS NULL OR TRIM({field}) = '')";
         }
 
-        /// <summary>
-        /// Accepted links that passed the run threshold but sit in the lower confidence band.
-        /// </summary>
         public static string BuildWeakLinksWhereClause(
             string gersIdField,
             string scoreField,
             double acceptScoreThreshold,
-            double weakLinkScoreBuffer = WeakLinkScoreBuffer)
+            double weakLinkScoreBuffer = WeakLinkScoreBuffer,
+            string linkReviewField = null)
         {
+            if (!string.IsNullOrWhiteSpace(linkReviewField))
+            {
+                return $"{RequireFieldName(linkReviewField)} = 'weak'";
+            }
+
             string gersField = RequireFieldName(gersIdField);
             string matchScoreField = RequireFieldName(scoreField);
             double weakCeiling = acceptScoreThreshold + weakLinkScoreBuffer;

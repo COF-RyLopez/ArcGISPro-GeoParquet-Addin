@@ -56,6 +56,7 @@ namespace DuckDBGeoparquet.Views
         private bool _generateStableLinkIds;
         private bool _relateLinkageToSourceLayer = true;
         private bool _hasLastGersifyRun;
+        private GersifyLinkageSummary _lastRunLinkageSummary;
         private string _lastCandidateCsvPath;
         private string _lastBridgeCsvPath;
         private string _lastOutputFeatureClassPath;
@@ -70,7 +71,7 @@ namespace DuckDBGeoparquet.Views
         private string _statusText = "Link, don't replace: choose your authoritative layer, then map fields to add GERS IDs without changing source geometry.";
         private string _logText = string.Empty;
         private string _linkagePreviewText =
-            "Output layer adds: record_id, source_record_key, gers_id, gers_match_score, gers_match_strategy, and match diagnostics." + Environment.NewLine +
+            "Output layer adds: record_id, source_record_key, gers_id, gers_match_score, gers_match_strategy, gers_link_review, and match diagnostics." + Environment.NewLine +
             "Bridge CSV adds: record_id, source_record_key, linkage_policy, match_strategy, match_score, overture_release, source_layer, linkage_tool." + Environment.NewLine +
             "Use a business key (GlobalID, site_id) when possible. Enable Generate stable link IDs when only OBJECTID/FID exists.";
         private string _fieldMappingPreviewText = "Choose an input layer to preview the resolved field mapping.";
@@ -429,6 +430,12 @@ namespace DuckDBGeoparquet.Views
         {
             get => _hasLastGersifyRun;
             private set => SetProperty(ref _hasLastGersifyRun, value);
+        }
+
+        public GersifyLinkageSummary LastRunLinkageSummary
+        {
+            get => _lastRunLinkageSummary;
+            private set => SetProperty(ref _lastRunLinkageSummary, value);
         }
 
         public string LastRunSummaryText
@@ -878,6 +885,7 @@ namespace DuckDBGeoparquet.Views
                 string targetSuffix = string.IsNullOrWhiteSpace(result.TargetDatasetType) ? "data" : result.TargetDatasetType;
                 string layerName = $"GERSified_{SelectedInputLayer.Name}_{targetSuffix}";
                 result.OutputFeatureClassPath = await WriteGersifiedFeatureClassAsync(result.OutputCsvPath, OutputFolder, layerName);
+                AddToLog("GERSified output layer uses color-coded linkage symbology: green linked, amber weak, red unmatched.");
                 await TryAddStandaloneTableAsync(result.CandidateCsvPath);
                 await TryAddStandaloneTableAsync(result.BridgeCsvPath);
 
@@ -1161,7 +1169,8 @@ namespace DuckDBGeoparquet.Views
                 var map = MapView.Active?.Map;
                 if (map != null)
                 {
-                    LayerFactory.Instance.CreateLayer(ToFileUri(outputFeatureClassPath), map, layerName: featureClassName);
+                    var layer = LayerFactory.Instance.CreateLayer(ToFileUri(outputFeatureClassPath), map, layerName: featureClassName) as FeatureLayer;
+                    GersifyLinkageSymbologyService.TryApplyLinkageReviewSymbology(layer);
                 }
             });
 
@@ -1176,20 +1185,34 @@ namespace DuckDBGeoparquet.Views
             _lastSourceLayerName = SelectedInputLayer?.Name;
             _lastSourceIdField = SelectedIdField;
             _lastAcceptScoreThreshold = ParseDouble(AcceptScoreThreshold, 72);
-            HasLastGersifyRun = true;
             int unmatchedCount = Math.Max(0, result.InputCount - result.AcceptedCount);
-            LastRunSummaryText =
-                $"Accepted {result.AcceptedCount:N0} of {result.InputCount:N0} features against {result.TargetLabel}. " +
-                $"{unmatchedCount:N0} unmatched. {relateSummary} " +
-                $"Use map review to filter unmatched or weak links on the GERSified output layer.";
+            double weakCeiling = _lastAcceptScoreThreshold + GersifyMapReviewSql.WeakLinkScoreBuffer;
+            int weakCount = result.AcceptedMatches?.Count(match =>
+                match.MatchScore >= _lastAcceptScoreThreshold &&
+                match.MatchScore < weakCeiling) ?? 0;
+
+            LastRunLinkageSummary = new GersifyLinkageSummary
+            {
+                InputCount = result.InputCount,
+                LinkedCount = result.AcceptedCount,
+                UnmatchedCount = unmatchedCount,
+                WeakLinkCount = weakCount,
+                LinkedPercent = result.InputCount == 0 ? 0 : result.AcceptedCount * 100.0 / result.InputCount,
+                TargetLabel = result.TargetLabel,
+                SourceLayerName = SelectedInputLayer?.Name,
+                RelateSummary = relateSummary,
+                StrategySummary = FormatStrategyCounts(result.AcceptedStrategyCounts)
+            };
+
+            HasLastGersifyRun = true;
+            LastRunSummaryText = LastRunLinkageSummary.Subheadline;
             RaiseCommandStatesChanged();
         }
 
         private bool CanApplyMapReview() =>
             HasLastGersifyRun &&
             !IsRunning &&
-            !string.IsNullOrWhiteSpace(_lastOutputFeatureClassPath) &&
-            File.Exists(_lastOutputFeatureClassPath);
+            GersifyOutputPaths.FeatureClassExists(_lastOutputFeatureClassPath);
 
         private async Task ApplyMapReviewAsync(GersifyMapReviewMode mode)
         {

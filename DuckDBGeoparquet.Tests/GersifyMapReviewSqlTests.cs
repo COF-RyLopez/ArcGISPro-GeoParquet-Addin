@@ -34,9 +34,22 @@ namespace DuckDBGeoparquet.Tests
         }
 
         [Fact]
-        public void BuildSourceKeysWhereClause_ReturnsFalsePredicateForEmptyKeys()
+        public void BuildWeakLinksWhereClause_UsesReviewFieldWhenPresent()
         {
-            Assert.Equal("1=0", GersifyMapReviewSql.BuildSourceKeysWhereClause("site_id", []));
+            string where = GersifyMapReviewSql.BuildWeakLinksWhereClause(
+                "gers_id",
+                "gers_match_score",
+                72,
+                linkReviewField: "gers_link_review");
+
+            Assert.Equal("gers_link_review = 'weak'", where);
+        }
+
+        [Fact]
+        public void BuildUnmatchedWhereClause_UsesReviewFieldWhenPresent()
+        {
+            string where = GersifyMapReviewSql.BuildUnmatchedWhereClause("gers_id", "gers_link_review");
+            Assert.Equal("gers_link_review = 'unmatched'", where);
         }
     }
 }

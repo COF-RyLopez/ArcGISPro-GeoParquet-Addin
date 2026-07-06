@@ -79,6 +79,7 @@ namespace DuckDBGeoparquet.Services
             string nameThreshold = Format(options.NameSimilarityThreshold);
             string addressThreshold = Format(options.AddressSimilarityThreshold);
             string scoreThreshold = Format(options.AcceptScoreThreshold);
+            string weakLinkCeiling = Format(options.AcceptScoreThreshold + GersifyMapReviewSql.WeakLinkScoreBuffer);
             string proximityOnlyDistance = Format(Math.Min(
                 options.MaxDistanceMeters,
                 Math.Min(20, Math.Max(5, options.MaxDistanceMeters * 0.2))));
@@ -281,7 +282,8 @@ namespace DuckDBGeoparquet.Services
                     a.address_similarity AS gers_address_similarity,
                     a.overture_address,
                     a.overture_name,
-                    a.overture_id
+                    a.overture_id,
+                    {BuildLinkReviewExpression(weakLinkCeiling)} AS gers_link_review
                 FROM {UserInputTable} u
                 LEFT JOIN {AcceptedTable} a
                   ON u.record_id = a.record_id;";
@@ -300,6 +302,7 @@ namespace DuckDBGeoparquet.Services
             string maxDistance = Format(options.MaxDistanceMeters);
             string addressThreshold = Format(options.AddressSimilarityThreshold);
             string scoreThreshold = Format(options.AcceptScoreThreshold);
+            string weakLinkCeiling = Format(options.AcceptScoreThreshold + GersifyMapReviewSql.WeakLinkScoreBuffer);
             string bboxFilter = BuildOvertureBboxFilter(options.InputExtent, availableColumns);
             string numberExpr = BuildFirstExistingExpression(
                 availableColumns,
@@ -496,7 +499,8 @@ namespace DuckDBGeoparquet.Services
                     a.address_similarity AS gers_address_similarity,
                     a.overture_address,
                     a.overture_name,
-                    a.overture_id
+                    a.overture_id,
+                    {BuildLinkReviewExpression(weakLinkCeiling)} AS gers_link_review
                 FROM {UserInputTable} u
                 LEFT JOIN {AcceptedTable} a
                   ON u.record_id = a.record_id;";
@@ -685,6 +689,13 @@ namespace DuckDBGeoparquet.Services
 
         private static string Escape(string value) =>
             GeoParquetSql.EscapeSqlLiteral(value?.Replace('\\', '/') ?? string.Empty);
+
+        public static string BuildLinkReviewExpression(string weakLinkCeiling) =>
+            $@"CASE
+                    WHEN a.gers_id IS NULL OR trim(cast(a.gers_id AS VARCHAR)) = '' THEN 'unmatched'
+                    WHEN a.gers_match_score < {weakLinkCeiling} THEN 'weak'
+                    ELSE 'linked'
+                END";
 
         private static string Format(double value) =>
             value.ToString("G", CultureInfo.InvariantCulture);

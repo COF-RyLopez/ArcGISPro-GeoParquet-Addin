@@ -47,6 +47,18 @@
                                            ToolTipService.ToolTip="Your source layer stays the system of record. GERSify writes a new output layer plus review artifacts.">
                                     Keep your authoritative layer as the system of record. GERSify adds stable Overture GERS IDs and match metadata to a <Run FontWeight="SemiBold">new</Run> output layer. Your original geometry, attributes, and governance are unchanged.
                                 </TextBlock>
+                                <TextBlock Text="Why governments use GERS"
+                                           FontWeight="SemiBold"
+                                           Margin="0,8,0,4"/>
+                                <TextBlock TextWrapping="Wrap"
+                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                           Margin="0,0,0,8">
+                                    <Run FontWeight="SemiBold">Keep authority.</Run> Your layer stays the system of record — geometry, IDs, and governance are unchanged.
+                                    <LineBreak/>
+                                    <Run FontWeight="SemiBold">Gain interoperability.</Run> GERS IDs connect your data to Overture, other agencies, and cross-release workflows without migration.
+                                    <LineBreak/>
+                                    <Run FontWeight="SemiBold">Prove provenance.</Run> Bridge files document who linked what, when, and from which release — ready for audit and NG911-style review.
+                                </TextBlock>
                                 <TextBlock Text="How to use"
                                            FontWeight="SemiBold"
                                            Margin="0,0,0,4"/>
@@ -297,21 +309,117 @@
                                     ToolTipService.ToolTip="Run matching. Creates a new point feature class with gers_id and score fields, plus candidate review and bridge CSV files."/>
                         </StackPanel>
 
-                        <Border Padding="10"
+                        <Border Padding="12"
                                 Margin="0,0,0,4"
                                 Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
                                 BorderBrush="{DynamicResource Esri_BorderBrush}"
                                 BorderThickness="1"
                                 Visibility="{Binding HasLastGersifyRun, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <StackPanel>
-                                <TextBlock Text="Review Last Run"
+                            <StackPanel DataContext="{Binding LastRunLinkageSummary}">
+                                <TextBlock Text="Linkage Results"
+                                           FontWeight="SemiBold"
+                                           FontSize="14"
+                                           Margin="0,0,0,2"/>
+                                <TextBlock Text="{Binding Headline}"
+                                           TextWrapping="Wrap"
                                            FontWeight="SemiBold"
                                            Margin="0,0,0,4"/>
-                                <TextBlock Text="{Binding LastRunSummaryText}"
+                                <TextBlock Text="{Binding Subheadline}"
                                            TextWrapping="Wrap"
-                                           Margin="0,0,0,8"
-                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
-                                <WrapPanel>
+                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                           Margin="0,0,0,10"/>
+
+                                <Border Padding="8"
+                                        Margin="0,0,0,10"
+                                        BorderBrush="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                        BorderThickness="1">
+                                    <TextBlock TextWrapping="Wrap"
+                                               Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+                                        <Run FontWeight="SemiBold">Source layer unchanged.</Run>
+                                        <Run Text="{Binding SourceLayerName, StringFormat=' {0} was not modified.'}"/>
+                                        <LineBreak/>
+                                        Authoritative geometry stays local. GERS IDs attach in a new review layer for interoperability.
+                                    </TextBlock>
+                                </Border>
+
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Padding="8" Margin="0,0,4,0" BorderThickness="1" BorderBrush="#2E7D32">
+                                        <StackPanel>
+                                            <TextBlock Text="Linked" FontSize="11" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                            <TextBlock Text="{Binding LinkedCount, StringFormat={}{0:N0}}" FontWeight="SemiBold" FontSize="16"/>
+                                            <TextBlock Text="{Binding LinkedPercentText}" FontSize="11" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Grid.Column="1" Padding="8" Margin="4,0,4,0" BorderThickness="1" BorderBrush="#C62828">
+                                        <StackPanel>
+                                            <TextBlock Text="Unmatched" FontSize="11" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                            <TextBlock Text="{Binding UnmatchedCount, StringFormat={}{0:N0}}" FontWeight="SemiBold" FontSize="16"/>
+                                            <TextBlock Text="needs review" FontSize="11" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Grid.Column="2" Padding="8" Margin="4,0,0,0" BorderThickness="1" BorderBrush="#F9A825">
+                                        <StackPanel>
+                                            <TextBlock Text="Weak links" FontSize="11" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                            <TextBlock Text="{Binding WeakLinkCount, StringFormat={}{0:N0}}" FontWeight="SemiBold" FontSize="16"/>
+                                            <TextBlock Text="borderline score" FontSize="11" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+
+                                <TextBlock Text="What you can do now"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,4"/>
+                                <TextBlock TextWrapping="Wrap"
+                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                           Margin="0,0,0,4">
+                                    • Share <Run FontFamily="Consolas">gers_id</Run> with regional partners without exporting your master data.
+                                    <LineBreak/>
+                                    • Trace upstream Overture sources when addresses change across releases.
+                                    <LineBreak/>
+                                    • Enrich maps and apps while keeping your authoritative geometry local.
+                                </TextBlock>
+                                <TextBlock Text="{Binding StrategySummary, StringFormat='Accepted strategies: {0}'}"
+                                           TextWrapping="Wrap"
+                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                           Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding RelateSummary}"
+                                           TextWrapping="Wrap"
+                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                           Margin="0,0,0,10"/>
+
+                                <TextBlock Text="Review on the map"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,6"/>
+                                <WrapPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                                    <Button Content="Show Unmatched"
+                                            Command="{Binding ShowUnmatchedOnMapCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Width="118"
+                                            Margin="0,0,6,6"
+                                            ToolTipService.ToolTip="Filter and zoom to red unmatched features on the GERSified output layer."/>
+                                    <Button Content="Show Weak Links"
+                                            Command="{Binding ShowWeakLinksOnMapCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Width="118"
+                                            Margin="0,0,6,6"
+                                            ToolTipService.ToolTip="Filter and zoom to amber borderline links for extra QA before adoption."/>
+                                    <Button Content="Clear Review"
+                                            Command="{Binding ClearMapReviewCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Width="96"
+                                            Margin="0,0,6,6"
+                                            ToolTipService.ToolTip="Remove map filters and selections applied by GERSify map review."/>
+                                </WrapPanel>
+
+                                <TextBlock Text="Artifacts"
+                                           FontWeight="SemiBold"
+                                           Margin="0,4,0,6"/>
+                                <WrapPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                     <Button Content="Open Folder"
                                             Command="{Binding OpenReviewFolderCommand}"
                                             Style="{DynamicResource Esri_Button}"
@@ -330,24 +438,6 @@
                                             Width="96"
                                             Margin="0,0,6,6"
                                             ToolTipService.ToolTip="Open the accepted-link bridge CSV with provenance columns."/>
-                                    <Button Content="Show Unmatched"
-                                            Command="{Binding ShowUnmatchedOnMapCommand}"
-                                            Style="{DynamicResource Esri_Button}"
-                                            Width="110"
-                                            Margin="0,0,6,6"
-                                            ToolTipService.ToolTip="Filter and zoom the GERSified output layer to features with no gers_id. Selects on the source layer when the unmatched set is small."/>
-                                    <Button Content="Show Weak Links"
-                                            Command="{Binding ShowWeakLinksOnMapCommand}"
-                                            Style="{DynamicResource Esri_Button}"
-                                            Width="110"
-                                            Margin="0,0,6,6"
-                                            ToolTipService.ToolTip="Filter accepted links in the score band just above your acceptance threshold for extra QA."/>
-                                    <Button Content="Clear Review"
-                                            Command="{Binding ClearMapReviewCommand}"
-                                            Style="{DynamicResource Esri_Button}"
-                                            Width="96"
-                                            Margin="0,0,6,6"
-                                            ToolTipService.ToolTip="Remove map filters and selections applied by GERSify map review."/>
                                 </WrapPanel>
                             </StackPanel>
                         </Border>

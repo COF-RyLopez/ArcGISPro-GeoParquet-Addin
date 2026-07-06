@@ -175,6 +175,17 @@ namespace DuckDBGeoparquet.Tests
         }
 
         [Fact]
+        public void BuildLinkReviewExpression_ClassifiesLinkedWeakAndUnmatched()
+        {
+            string expression = GersSql.BuildLinkReviewExpression("80");
+
+            Assert.Contains("THEN 'unmatched'", expression);
+            Assert.Contains("THEN 'weak'", expression);
+            Assert.Contains("ELSE 'linked'", expression);
+            Assert.Contains("< 80", expression);
+        }
+
+        [Fact]
         public void BuildCopyGersifyOutputsCommand_WritesSelectedTargetToBridgeCsv()
         {
             string sql = GersSql.BuildCopyGersifyOutputsCommand(
