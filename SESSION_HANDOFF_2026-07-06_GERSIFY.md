@@ -5,15 +5,19 @@ Use this as the starting brief for the next Codex session.
 ## Copy/Paste Prompt
 
 ```text
-Continue work in /Users/ryanlopez/Desktop/ArcGISPro-GeoParquet-Addin on branch codex/gersify-esri-tool.
+Continue work in the ArcGISPro-GeoParquet-Addin repo on branch codex/gersify-esri-tool.
 
-Read SESSION_HANDOFF_2026-07-06_GERSIFY.md first, then continue from there.
+I am on my Windows work machine, so do not assume the Mac path /Users/ryanlopez/Desktop/ArcGISPro-GeoParquet-Addin exists. Use the local Windows clone path for this repo, such as C:\Users\rylopez\source\repos\ArcGISPro-GeoParquet-Addin, or discover the current repo root from the session.
+
+First, make sure the Windows clone has the latest codex/gersify-esri-tool branch from GitHub. This handoff file is committed in the repo root as SESSION_HANDOFF_2026-07-06_GERSIFY.md after pulling the branch.
+
+Read SESSION_HANDOFF_2026-07-06_GERSIFY.md first if it is available locally, then continue from there. If it is not available yet, use this prompt as the handoff context.
 
 Important context:
 - We are building the "GERSify Data" tooling in the ArcGIS Pro Overture add-in.
 - The immediate proof point is Fresno County address data, but do not hard-code the product around Fresno. The long-term goal is that any jurisdiction, with its own schema and naming conventions, can map local data to stable Overture GERS IDs.
 - This should become the aha moment for local governments and GIS vendors: local data can be connected to the broader Overture Maps ecosystem, traceable source records, repeatable cartography, cross-release stable IDs, and downstream workflows.
-- Current branch is pushed through commit 11f4260 Fallback to known ZIP fields.
+- Current branch is pushed at least through commit 7592165 Add GERSify session handoff.
 - Tests passed locally: dotnet test DuckDBGeoparquet.Tests/DuckDBGeoparquet.Tests.csproj --no-build -v minimal, 97/97 passing.
 - On macOS, the add-in project compiles DuckDBGeoparquet.dll but the final Esri packaging target fails with the known CodeTaskFactory/ConvertToRelativePath issue. Full add-in validation should happen on Windows with ArcGIS Pro.
 
@@ -37,10 +41,11 @@ Fresno County data is the current proving ground. The architecture should stay g
 
 ## Current Branch / Repo State
 
-- Repo: `/Users/ryanlopez/Desktop/ArcGISPro-GeoParquet-Addin`
+- Repo: use the local clone path on the current machine. On the Mac session it was `/Users/ryanlopez/Desktop/ArcGISPro-GeoParquet-Addin`; on Windows it may be something like `C:\Users\rylopez\source\repos\ArcGISPro-GeoParquet-Addin`.
 - Branch: `codex/gersify-esri-tool`
 - Working tree was clean at handoff time.
 - Latest pushed commits:
+  - `7592165` Add GERSify session handoff
   - `11f4260` Fallback to known ZIP fields
   - `e1e9242` Tighten address match labeling
   - `da90cd4` Map Fresno street direction fields
