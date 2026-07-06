@@ -57,6 +57,8 @@ namespace DuckDBGeoparquet.Views
         private string _bridgeType = "place";
         private string _statusText = "Ready.";
         private string _logText = string.Empty;
+        private string _fieldMappingPreviewText = "Choose an input layer to preview the resolved field mapping.";
+        private string _fieldMappingWarningText = string.Empty;
 
         protected GersifyDockpaneViewModel()
         {
@@ -153,7 +155,10 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 if (SetProperty(ref _selectedIdField, value))
+                {
+                    _ = RefreshFieldMappingPreviewAsync();
                     RaiseCommandStatesChanged();
+                }
             }
         }
 
@@ -163,7 +168,10 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 if (SetProperty(ref _selectedNameField, value))
+                {
+                    _ = RefreshFieldMappingPreviewAsync();
                     RaiseCommandStatesChanged();
+                }
             }
         }
 
@@ -173,7 +181,10 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 if (SetProperty(ref _selectedAddressField, value))
+                {
+                    _ = RefreshFieldMappingPreviewAsync();
                     RaiseCommandStatesChanged();
+                }
             }
         }
 
@@ -183,7 +194,10 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 if (SetProperty(ref _selectedStreetNumberField, value))
+                {
+                    _ = RefreshFieldMappingPreviewAsync();
                     RaiseCommandStatesChanged();
+                }
             }
         }
 
@@ -193,7 +207,10 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 if (SetProperty(ref _selectedStreetFractionField, value))
+                {
+                    _ = RefreshFieldMappingPreviewAsync();
                     RaiseCommandStatesChanged();
+                }
             }
         }
 
@@ -203,7 +220,10 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 if (SetProperty(ref _selectedStreetPrefixField, value))
+                {
+                    _ = RefreshFieldMappingPreviewAsync();
                     RaiseCommandStatesChanged();
+                }
             }
         }
 
@@ -213,7 +233,10 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 if (SetProperty(ref _selectedStreetNameField, value))
+                {
+                    _ = RefreshFieldMappingPreviewAsync();
                     RaiseCommandStatesChanged();
+                }
             }
         }
 
@@ -223,7 +246,10 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 if (SetProperty(ref _selectedStreetTypeField, value))
+                {
+                    _ = RefreshFieldMappingPreviewAsync();
                     RaiseCommandStatesChanged();
+                }
             }
         }
 
@@ -233,7 +259,10 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 if (SetProperty(ref _selectedStreetSuffixField, value))
+                {
+                    _ = RefreshFieldMappingPreviewAsync();
                     RaiseCommandStatesChanged();
+                }
             }
         }
 
@@ -243,7 +272,10 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 if (SetProperty(ref _selectedUnitField, value))
+                {
+                    _ = RefreshFieldMappingPreviewAsync();
                     RaiseCommandStatesChanged();
+                }
             }
         }
 
@@ -253,7 +285,10 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 if (SetProperty(ref _selectedCityField, value))
+                {
+                    _ = RefreshFieldMappingPreviewAsync();
                     RaiseCommandStatesChanged();
+                }
             }
         }
 
@@ -263,7 +298,10 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 if (SetProperty(ref _selectedStateField, value))
+                {
+                    _ = RefreshFieldMappingPreviewAsync();
                     RaiseCommandStatesChanged();
+                }
             }
         }
 
@@ -273,7 +311,10 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 if (SetProperty(ref _selectedPostcodeField, value))
+                {
+                    _ = RefreshFieldMappingPreviewAsync();
                     RaiseCommandStatesChanged();
+                }
             }
         }
 
@@ -389,6 +430,18 @@ namespace DuckDBGeoparquet.Views
             set => SetProperty(ref _logText, value);
         }
 
+        public string FieldMappingPreviewText
+        {
+            get => _fieldMappingPreviewText;
+            set => SetProperty(ref _fieldMappingPreviewText, value);
+        }
+
+        public string FieldMappingWarningText
+        {
+            get => _fieldMappingWarningText;
+            set => SetProperty(ref _fieldMappingWarningText, value);
+        }
+
         public ICommand RefreshLayersCommand { get; }
         public ICommand BrowseReleaseFolderCommand { get; }
         public ICommand BrowseOutputFolderCommand { get; }
@@ -456,6 +509,64 @@ namespace DuckDBGeoparquet.Views
             SelectedCityField = SelectField(fields, "address_zipcity", "city", "locality", "town", "scity");
             SelectedStateField = SelectField(fields, "address_state", "state", "region", "province", "state2");
             SelectedPostcodeField = SelectField(fields, "address_zip5", "postcode", "postal_code", "zip", "zip5", "address_zip4");
+            _ = RefreshFieldMappingPreviewAsync();
+        }
+
+        private async Task RefreshFieldMappingPreviewAsync()
+        {
+            var layerItem = SelectedInputLayer;
+            if (layerItem?.Layer == null)
+            {
+                FieldMappingPreviewText = "Choose an input layer to preview the resolved field mapping.";
+                FieldMappingWarningText = string.Empty;
+                return;
+            }
+
+            string idField = SelectedIdField;
+            string nameField = SelectedNameField;
+            string addressField = SelectedAddressField;
+            string streetNumberField = SelectedStreetNumberField;
+            string streetFractionField = SelectedStreetFractionField;
+            string streetPrefixField = SelectedStreetPrefixField;
+            string streetNameField = SelectedStreetNameField;
+            string streetTypeField = SelectedStreetTypeField;
+            string streetSuffixField = SelectedStreetSuffixField;
+            string unitField = SelectedUnitField;
+            string cityField = SelectedCityField;
+            string stateField = SelectedStateField;
+            string postcodeField = SelectedPostcodeField;
+            var inputFields = InputFields.ToList();
+
+            try
+            {
+                var preview = await QueuedTask.Run(() => BuildFieldMappingPreview(
+                    layerItem.Layer,
+                    inputFields,
+                    idField,
+                    nameField,
+                    addressField,
+                    streetNumberField,
+                    streetFractionField,
+                    streetPrefixField,
+                    streetNameField,
+                    streetTypeField,
+                    streetSuffixField,
+                    unitField,
+                    cityField,
+                    stateField,
+                    postcodeField));
+
+                if (ReferenceEquals(layerItem, SelectedInputLayer))
+                {
+                    FieldMappingPreviewText = preview.PreviewText;
+                    FieldMappingWarningText = preview.WarningText;
+                }
+            }
+            catch (Exception ex)
+            {
+                FieldMappingPreviewText = "Could not preview field mapping.";
+                FieldMappingWarningText = ex.Message;
+            }
         }
 
         private async Task RefreshTraceFieldsAsync(LayerSelectionItem layerItem)
@@ -486,6 +597,119 @@ namespace DuckDBGeoparquet.Views
                     .ToList();
             });
         }
+
+        private static FieldMappingPreview BuildFieldMappingPreview(
+            FeatureLayer layer,
+            IReadOnlyCollection<string> inputFields,
+            string idField,
+            string nameField,
+            string addressField,
+            string streetNumberField,
+            string streetFractionField,
+            string streetPrefixField,
+            string streetNameField,
+            string streetTypeField,
+            string streetSuffixField,
+            string unitField,
+            string cityField,
+            string stateField,
+            string postcodeField)
+        {
+            var warnings = new List<string>();
+            var addressSamples = new List<string>();
+            var postcodeSamples = new List<string>();
+            bool sampledSelectedPostcodeWithDigits = false;
+            bool sampledSelectedPostcodeWithoutDigits = false;
+            bool sampledUnitValues = false;
+
+            using var featureClass = layer.GetFeatureClass();
+            int previewRowCount = 0;
+            using var cursor = featureClass.Search(new QueryFilter(), false);
+            while (cursor.MoveNext() && previewRowCount < 25)
+            {
+                previewRowCount++;
+                using var row = cursor.Current;
+                string address = BuildAddressValue(row, addressField, streetNumberField, streetFractionField, streetPrefixField, streetNameField, streetTypeField, streetSuffixField, unitField);
+                if (!string.IsNullOrWhiteSpace(address) && addressSamples.Count < 5)
+                    addressSamples.Add(address);
+
+                string selectedPostcode = CleanPart(GetRowValue(row, postcodeField));
+                if (!string.IsNullOrWhiteSpace(selectedPostcode))
+                {
+                    if (selectedPostcode.Any(char.IsDigit))
+                        sampledSelectedPostcodeWithDigits = true;
+                    else
+                        sampledSelectedPostcodeWithoutDigits = true;
+                }
+
+                string postcode = BuildPostcodeValue(row, postcodeField, inputFields);
+                if (!string.IsNullOrWhiteSpace(postcode))
+                    postcodeSamples.Add(postcode);
+
+                if (!sampledUnitValues && !string.IsNullOrWhiteSpace(GetRowValue(row, unitField)))
+                    sampledUnitValues = true;
+            }
+
+            if (string.IsNullOrWhiteSpace(idField))
+                warnings.Add("Unique ID is required.");
+            if (string.IsNullOrWhiteSpace(addressField) && string.IsNullOrWhiteSpace(streetNameField))
+                warnings.Add("No full-address or street-name field is selected.");
+            if (sampledSelectedPostcodeWithoutDigits && !sampledSelectedPostcodeWithDigits)
+                warnings.Add($"Selected postcode field '{postcodeField}' has no digits in the preview sample; export will fall back to known ZIP/postcode aliases when possible.");
+            if (HasLikelyDirectionField(inputFields) && string.IsNullOrWhiteSpace(streetPrefixField) && string.IsNullOrWhiteSpace(streetSuffixField))
+                warnings.Add("A likely street direction field exists, but Prefix and Suffix are blank.");
+            if (sampledUnitValues)
+                warnings.Add("Unit/subaddress values are present. Overture Addresses may only contain base address candidates for some records.");
+
+            string mappingText = string.Join(Environment.NewLine, new[]
+            {
+                $"Unique ID: {FormatField(idField)}",
+                $"Name: {FormatField(nameField)}",
+                $"Full Address: {FormatField(addressField)}",
+                $"Number: {FormatField(streetNumberField)}",
+                $"Fraction: {FormatField(streetFractionField)}",
+                $"Prefix: {FormatField(streetPrefixField)}",
+                $"Street: {FormatField(streetNameField)}",
+                $"Type: {FormatField(streetTypeField)}",
+                $"Suffix: {FormatField(streetSuffixField)}",
+                $"Unit: {FormatField(unitField)}",
+                $"City: {FormatField(cityField)}",
+                $"State: {FormatField(stateField)}",
+                $"Postcode: {FormatField(postcodeField)}"
+            });
+
+            string sampleText = string.Join(Environment.NewLine,
+                addressSamples
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(3)
+                    .Select((value, index) => $"Address sample {index + 1}: {value}")
+                    .Concat(postcodeSamples
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(3)
+                        .Select((value, index) => $"Postcode sample {index + 1}: {value}")));
+
+            if (string.IsNullOrWhiteSpace(sampleText))
+                sampleText = "No non-empty address or postcode samples found in the first preview rows.";
+
+            return new FieldMappingPreview(
+                $"{mappingText}{Environment.NewLine}{Environment.NewLine}{sampleText}",
+                warnings.Count == 0 ? "Mapping preview found no obvious issues in the sample." : string.Join(Environment.NewLine, warnings.Select(warning => $"- {warning}")));
+        }
+
+        private static bool HasLikelyDirectionField(IEnumerable<string> fields)
+        {
+            return fields.Any(field =>
+            {
+                string normalized = NormalizeFieldName(field);
+                return normalized.Contains("direction", StringComparison.OrdinalIgnoreCase) ||
+                       normalized.EndsWith("dir", StringComparison.OrdinalIgnoreCase) ||
+                       normalized.Contains("predir", StringComparison.OrdinalIgnoreCase) ||
+                       normalized.Contains("postdir", StringComparison.OrdinalIgnoreCase);
+            });
+        }
+
+        private static string FormatField(string fieldName) =>
+            string.IsNullOrWhiteSpace(fieldName) ? "(blank)" : fieldName;
 
         private async Task RunGersifyAsync()
         {
@@ -667,6 +891,11 @@ namespace DuckDBGeoparquet.Views
                 sb.AppendLine("record_id,name,address,city,state,postcode,longitude,latitude");
 
                 using var featureClass = layer.GetFeatureClass();
+                var availableFields = featureClass.GetDefinition()
+                    .GetFields()
+                    .Select(field => field.Name)
+                    .Where(name => !string.IsNullOrWhiteSpace(name))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
                 using var cursor = featureClass.Search(new QueryFilter(), false);
                 while (cursor.MoveNext())
                 {
@@ -704,7 +933,7 @@ namespace DuckDBGeoparquet.Views
                         Csv(BuildAddressValue(row, addressField, streetNumberField, streetFractionField, streetPrefixField, streetNameField, streetTypeField, streetSuffixField, unitField)),
                         Csv(GetRowValue(row, cityField)),
                         Csv(GetRowValue(row, stateField)),
-                        Csv(BuildPostcodeValue(row, postcodeField)),
+                        Csv(BuildPostcodeValue(row, postcodeField, availableFields)),
                         point.X.ToString("G", CultureInfo.InvariantCulture),
                         point.Y.ToString("G", CultureInfo.InvariantCulture)));
 
@@ -1029,13 +1258,13 @@ namespace DuckDBGeoparquet.Views
                 .Where(part => !string.IsNullOrWhiteSpace(part)));
         }
 
-        private static string BuildPostcodeValue(Row row, string postcodeField)
+        private static string BuildPostcodeValue(Row row, string postcodeField, IReadOnlyCollection<string> availableFields = null)
         {
             string postcode = CleanPart(GetRowValue(row, postcodeField));
             if (postcode.Any(char.IsDigit))
                 return postcode;
 
-            string fallbackPostcode = SelectFirstNumericRowValue(row,
+            string fallbackPostcode = SelectFirstNumericRowValue(row, availableFields,
                 "ADDRESS_ZIP5",
                 "address_zip5",
                 "ZIP5",
@@ -1050,10 +1279,13 @@ namespace DuckDBGeoparquet.Views
             return fallbackPostcode;
         }
 
-        private static string SelectFirstNumericRowValue(Row row, params string[] fieldNames)
+        private static string SelectFirstNumericRowValue(Row row, IReadOnlyCollection<string> availableFields, params string[] fieldNames)
         {
             foreach (string fieldName in fieldNames)
             {
+                if (availableFields != null && !availableFields.Contains(fieldName, StringComparer.OrdinalIgnoreCase))
+                    continue;
+
                 string value = CleanPart(GetRowValue(row, fieldName));
                 if (value.Any(char.IsDigit))
                     return value;
@@ -1099,6 +1331,7 @@ namespace DuckDBGeoparquet.Views
         }
 
         private sealed record GersifyInputExport(string CsvPath, int FeatureCount, ExtentBounds Extent);
+        private sealed record FieldMappingPreview(string PreviewText, string WarningText);
     }
 
     public sealed class LayerSelectionItem

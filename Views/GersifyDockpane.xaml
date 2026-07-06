@@ -138,6 +138,25 @@
                                       ToolTipService.ToolTip="Optional. Used only to improve address/context matching."/>
                         </Grid>
 
+                        <TextBlock Text="Mapping Preview" FontWeight="SemiBold" Margin="0,4,0,4"
+                                   ToolTipService.ToolTip="Shows the fields GERSify will export plus sample address and postcode values from the selected layer."/>
+                        <TextBox Text="{Binding FieldMappingPreviewText, Mode=OneWay}"
+                                 IsReadOnly="True"
+                                 TextWrapping="Wrap"
+                                 MinHeight="120"
+                                 MaxHeight="220"
+                                 VerticalScrollBarVisibility="Auto"
+                                 FontFamily="Consolas"
+                                 Margin="0,0,0,6"
+                                 Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                                 Foreground="{DynamicResource Esri_TextControlBrush}"
+                                 ToolTipService.ToolTip="Preview the resolved source fields and a few built output values before running GERSify."/>
+                        <TextBlock Text="{Binding FieldMappingWarningText}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,8"
+                                   Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                   ToolTipService.ToolTip="Warnings are based on selected fields and a small sample of source rows."/>
+
                         <TextBlock Text="Overture Data" FontWeight="SemiBold" Margin="0,6,0,4"
                                    ToolTipService.ToolTip="Folder containing downloaded Overture data for one release. It must include the selected match target."/>
                         <Grid Margin="0,0,0,8">
