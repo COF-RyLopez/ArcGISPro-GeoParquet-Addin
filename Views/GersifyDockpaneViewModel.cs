@@ -688,6 +688,9 @@ namespace DuckDBGeoparquet.Views
         {
             var warnings = new List<string>();
             warnings.AddRange(GersifyRecordIdPolicy.BuildIdFieldWarnings(idField, generateStableLinkIds));
+            var availableFieldSet = inputFields.Count == 0
+                ? null
+                : new HashSet<string>(inputFields, StringComparer.OrdinalIgnoreCase);
             var addressSamples = new List<string>();
             var postcodeSamples = new List<string>();
             bool sampledSelectedPostcodeWithDigits = false;
@@ -701,11 +704,11 @@ namespace DuckDBGeoparquet.Views
             {
                 previewRowCount++;
                 using var row = cursor.Current;
-                string address = BuildAddressValue(row, addressField, streetNumberField, streetFractionField, streetPrefixField, streetNameField, streetTypeField, streetSuffixField, unitField);
+                string address = BuildAddressValue(row, addressField, streetNumberField, streetFractionField, streetPrefixField, streetNameField, streetTypeField, streetSuffixField, unitField, availableFieldSet);
                 if (!string.IsNullOrWhiteSpace(address) && addressSamples.Count < 5)
                     addressSamples.Add(address);
 
-                string selectedPostcode = CleanPart(GetRowValue(row, postcodeField));
+                string selectedPostcode = CleanPart(GetRowValue(row, postcodeField, availableFieldSet));
                 if (!string.IsNullOrWhiteSpace(selectedPostcode))
                 {
                     if (selectedPostcode.Any(char.IsDigit))
@@ -718,7 +721,7 @@ namespace DuckDBGeoparquet.Views
                 if (!string.IsNullOrWhiteSpace(postcode))
                     postcodeSamples.Add(postcode);
 
-                if (!sampledUnitValues && !string.IsNullOrWhiteSpace(GetRowValue(row, unitField)))
+                if (!sampledUnitValues && !string.IsNullOrWhiteSpace(GetRowValue(row, unitField, availableFieldSet)))
                     sampledUnitValues = true;
             }
 
@@ -874,14 +877,14 @@ namespace DuckDBGeoparquet.Views
                     string outputRelateField = GersifyRecordIdPolicy.ResolveOutputRelateField(
                         SelectedIdField,
                         GenerateStableLinkIds);
-                    bool relateCreated = await TryRelateLinkageToSourceLayerAsync(
+                    var relateResult = await TryRelateLinkageToSourceLayerAsync(
                         SelectedInputLayer.Layer,
                         SelectedIdField,
                         result.OutputFeatureClassPath,
                         outputRelateField);
-                    relateSummary = relateCreated
-                        ? $"Map relate created on '{SelectedInputLayer.Name}' — use the Attributes pane related records to inspect linkage fields."
-                        : "Map relate could not be created automatically. Use the GERSified output layer or bridge CSV for review.";
+                    relateSummary = relateResult.Success
+                        ? $"Map relate '{relateResult.Detail}' created on '{SelectedInputLayer.Name}' ({SelectedIdField} -> {outputRelateField})."
+                        : $"Map relate could not be created automatically ({relateResult.Detail}). Use the GERSified output layer or bridge CSV for review.";
                     AddToLog(relateSummary);
                 }
 
@@ -1021,7 +1024,7 @@ namespace DuckDBGeoparquet.Views
                     if (point == null || double.IsNaN(point.X) || double.IsNaN(point.Y))
                         continue;
 
-                    string sourceRecordKey = GetRowValue(row, idField);
+                    string sourceRecordKey = GetRowValue(row, idField, availableFields);
                     if (string.IsNullOrWhiteSpace(sourceRecordKey))
                     {
                         sourceRecordKey = (count + 1).ToString(CultureInfo.InvariantCulture);
@@ -1034,10 +1037,10 @@ namespace DuckDBGeoparquet.Views
                     sb.AppendLine(string.Join(",",
                         Csv(recordId),
                         Csv(sourceRecordKey),
-                        Csv(GetRowValue(row, nameField)),
-                        Csv(BuildAddressValue(row, addressField, streetNumberField, streetFractionField, streetPrefixField, streetNameField, streetTypeField, streetSuffixField, unitField)),
-                        Csv(GetRowValue(row, cityField)),
-                        Csv(GetRowValue(row, stateField)),
+                        Csv(GetRowValue(row, nameField, availableFields)),
+                        Csv(BuildAddressValue(row, addressField, streetNumberField, streetFractionField, streetPrefixField, streetNameField, streetTypeField, streetSuffixField, unitField, availableFields)),
+                        Csv(GetRowValue(row, cityField, availableFields)),
+                        Csv(GetRowValue(row, stateField, availableFields)),
                         Csv(BuildPostcodeValue(row, postcodeField, availableFields)),
                         point.X.ToString("G", CultureInfo.InvariantCulture),
                         point.Y.ToString("G", CultureInfo.InvariantCulture)));
@@ -1225,7 +1228,7 @@ namespace DuckDBGeoparquet.Views
             });
         }
 
-        private static async Task<bool> TryRelateLinkageToSourceLayerAsync(
+        private static async Task<(bool Success, string Detail)> TryRelateLinkageToSourceLayerAsync(
             FeatureLayer sourceLayer,
             string idField,
             string outputFeatureClassPath,
@@ -1236,7 +1239,7 @@ namespace DuckDBGeoparquet.Views
                 string.IsNullOrWhiteSpace(outputFeatureClassPath) ||
                 string.IsNullOrWhiteSpace(outputRelateField))
             {
-                return false;
+                return (false, "Map relate was skipped because the source layer, ID field, or output path was missing.");
             }
 
             string relateName = $"GERSify_{SanitizeRelateName(sourceLayer.Name)}";
@@ -1248,18 +1251,18 @@ namespace DuckDBGeoparquet.Views
                     outputFeatureClassPath,
                     outputRelateField,
                     relateName,
-                    "SIMPLE"),
+                    "ONE_TO_ONE"),
                 null,
                 flags: GPExecuteToolFlags.Default);
 
             if (result.IsFailed)
             {
-                System.Diagnostics.Debug.WriteLine(
-                    "AddRelate failed: " +
-                    string.Join(" | ", result.Messages.Select(message => message.Text)));
+                string message = string.Join(" | ", result.Messages.Select(message => message.Text));
+                System.Diagnostics.Debug.WriteLine("AddRelate failed: " + message);
+                return (false, string.IsNullOrWhiteSpace(message) ? "AddRelate failed." : message);
             }
 
-            return !result.IsFailed;
+            return (true, relateName);
         }
 
         private static string SanitizeRelateName(string layerName)
@@ -1302,8 +1305,11 @@ namespace DuckDBGeoparquet.Views
             });
         }
 
-        private static Uri ToFileUri(string path) =>
-            new(Path.GetFullPath(path), UriKind.Absolute);
+        private static Uri ToFileUri(string path)
+        {
+            // UriKind.Absolute rejects plain Windows paths; the implicit file-path constructor is required.
+            return new Uri(Path.GetFullPath(path));
+        }
 
         private bool CanRunGersify()
         {
@@ -1447,9 +1453,12 @@ namespace DuckDBGeoparquet.Views
             return sb.ToString();
         }
 
-        private static string GetRowValue(Row row, string fieldName)
+        private static string GetRowValue(Row row, string fieldName, IReadOnlySet<string> availableFields = null)
         {
             if (row == null || string.IsNullOrWhiteSpace(fieldName))
+                return string.Empty;
+
+            if (availableFields != null && !availableFields.Contains(fieldName))
                 return string.Empty;
 
             try
@@ -1457,7 +1466,11 @@ namespace DuckDBGeoparquet.Views
                 object value = row[fieldName];
                 return Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
             }
-            catch
+            catch (GeodatabaseFieldException)
+            {
+                return string.Empty;
+            }
+            catch (Exception)
             {
                 return string.Empty;
             }
@@ -1472,28 +1485,32 @@ namespace DuckDBGeoparquet.Views
             string streetNameField,
             string streetTypeField,
             string streetSuffixField,
-            string unitField)
+            string unitField,
+            IReadOnlySet<string> availableFields = null)
         {
-            string fullAddress = CleanPart(GetRowValue(row, addressField));
+            string fullAddress = CleanPart(GetRowValue(row, addressField, availableFields));
             if (!string.IsNullOrWhiteSpace(fullAddress))
                 return fullAddress;
 
             return string.Join(" ", new[]
                 {
-                    CleanPart(GetRowValue(row, streetNumberField)),
-                    CleanPart(GetRowValue(row, streetFractionField)),
-                    CleanPart(GetRowValue(row, streetPrefixField)),
-                    CleanPart(GetRowValue(row, streetNameField)),
-                    CleanPart(GetRowValue(row, streetTypeField)),
-                    CleanPart(GetRowValue(row, streetSuffixField)),
-                    CleanPart(GetRowValue(row, unitField))
+                    CleanPart(GetRowValue(row, streetNumberField, availableFields)),
+                    CleanPart(GetRowValue(row, streetFractionField, availableFields)),
+                    CleanPart(GetRowValue(row, streetPrefixField, availableFields)),
+                    CleanPart(GetRowValue(row, streetNameField, availableFields)),
+                    CleanPart(GetRowValue(row, streetTypeField, availableFields)),
+                    CleanPart(GetRowValue(row, streetSuffixField, availableFields)),
+                    CleanPart(GetRowValue(row, unitField, availableFields))
                 }
                 .Where(part => !string.IsNullOrWhiteSpace(part)));
         }
 
         private static string BuildPostcodeValue(Row row, string postcodeField, IReadOnlyCollection<string> availableFields = null)
         {
-            string postcode = CleanPart(GetRowValue(row, postcodeField));
+            IReadOnlySet<string> availableFieldSet = availableFields == null || availableFields.Count == 0
+                ? null
+                : new HashSet<string>(availableFields, StringComparer.OrdinalIgnoreCase);
+            string postcode = CleanPart(GetRowValue(row, postcodeField, availableFieldSet));
             if (postcode.Any(char.IsDigit))
                 return postcode;
 
@@ -1514,12 +1531,16 @@ namespace DuckDBGeoparquet.Views
 
         private static string SelectFirstNumericRowValue(Row row, IReadOnlyCollection<string> availableFields, params string[] fieldNames)
         {
+            IReadOnlySet<string> availableFieldSet = availableFields == null || availableFields.Count == 0
+                ? null
+                : new HashSet<string>(availableFields, StringComparer.OrdinalIgnoreCase);
+
             foreach (string fieldName in fieldNames)
             {
-                if (availableFields != null && !availableFields.Contains(fieldName, StringComparer.OrdinalIgnoreCase))
+                if (availableFieldSet != null && !availableFieldSet.Contains(fieldName))
                     continue;
 
-                string value = CleanPart(GetRowValue(row, fieldName));
+                string value = CleanPart(GetRowValue(row, fieldName, availableFieldSet));
                 if (value.Any(char.IsDigit))
                     return value;
             }
