@@ -29,7 +29,8 @@ namespace DuckDBGeoparquet.Tests
             Assert.Contains("read_parquet('/data/release/place/*.parquet', hive_partitioning=1, union_by_name=1)", sql);
             Assert.DoesNotContain("unnest(addresses)", sql);
             Assert.Contains("jaro_winkler_similarity", sql);
-            Assert.Contains("o.overture_name_norm,\n                        o.overture_street_norm,", sql);
+            string normalizedSql = sql.Replace("\r\n", "\n", System.StringComparison.Ordinal);
+            Assert.Contains("o.overture_name_norm,\n                        o.overture_street_norm,", normalizedSql);
         }
 
         [Fact]
