@@ -433,7 +433,7 @@ namespace DuckDBGeoparquet.Services
                     SELECT
                         *,
                         CASE
-                            WHEN house_number_match AND postcode_compatible AND address_similarity >= 0.96 THEN 'exact_address'
+                            WHEN house_number_match AND postcode_compatible AND address_similarity >= 0.995 THEN 'exact_address'
                             WHEN address_similarity IS NOT NULL THEN 'address'
                             ELSE 'nearby_only'
                         END AS match_strategy,

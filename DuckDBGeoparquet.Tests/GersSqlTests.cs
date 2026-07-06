@@ -100,7 +100,7 @@ namespace DuckDBGeoparquet.Tests
             Assert.Contains("CAST(street AS VARCHAR)", sql);
             Assert.Contains("AS house_number_match", sql);
             Assert.Contains("AS postcode_compatible", sql);
-            Assert.Contains("WHEN house_number_match AND postcode_compatible AND address_similarity >= 0.96 THEN 'exact_address'", sql);
+            Assert.Contains("WHEN house_number_match AND postcode_compatible AND address_similarity >= 0.995 THEN 'exact_address'", sql);
             Assert.Contains("AND house_number_match", sql);
             Assert.Contains("a.overture_address", sql);
         }

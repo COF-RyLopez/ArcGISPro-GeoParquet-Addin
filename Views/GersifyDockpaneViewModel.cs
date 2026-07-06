@@ -704,7 +704,7 @@ namespace DuckDBGeoparquet.Views
                         Csv(BuildAddressValue(row, addressField, streetNumberField, streetFractionField, streetPrefixField, streetNameField, streetTypeField, streetSuffixField, unitField)),
                         Csv(GetRowValue(row, cityField)),
                         Csv(GetRowValue(row, stateField)),
-                        Csv(GetRowValue(row, postcodeField)),
+                        Csv(BuildPostcodeValue(row, postcodeField)),
                         point.X.ToString("G", CultureInfo.InvariantCulture),
                         point.Y.ToString("G", CultureInfo.InvariantCulture)));
 
@@ -1027,6 +1027,12 @@ namespace DuckDBGeoparquet.Views
                     CleanPart(GetRowValue(row, unitField))
                 }
                 .Where(part => !string.IsNullOrWhiteSpace(part)));
+        }
+
+        private static string BuildPostcodeValue(Row row, string postcodeField)
+        {
+            string postcode = CleanPart(GetRowValue(row, postcodeField));
+            return postcode.Any(char.IsDigit) ? postcode : string.Empty;
         }
 
         private static string CleanPart(string value)
