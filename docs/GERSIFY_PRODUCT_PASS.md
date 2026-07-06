@@ -30,7 +30,8 @@ GERSify does **not** replace geometry, overwrite source features, or imply migra
    - New `GERSified_*` feature class — copy of input geometry plus linkage fields.
 7. **Optional map relate** — when enabled, adds a non-destructive relate from your authoritative layer to the GERSified output on your unique ID. Use the Attributes pane → related records to inspect `gers_id` and match scores without editing source geometry.
 8. **Map review (Review Last Run)** — after a run, use **Show Unmatched** or **Show Weak Links** to filter and zoom the GERSified output layer on the map. Unmatched sets of 3,000 or fewer also select the corresponding authoritative features. **Clear Review** removes filters and selections.
-9. **Trace sources** (optional) — use bridge files to see which upstream datasets contributed to a GERS ID.
+9. **Improve Overture at the source** — use **Trace Linked Sources** to query Overture bridge files for upstream providers (OpenStreetMap, Esri Community Maps, Meta, Microsoft, PinMeTo). Open OSM features directly; other providers include contribution guidance so fixes can flow into the next Overture release.
+10. **Trace sources** (optional) — the Trace Sources tab supports ad-hoc lookups for any layer with `gers_id` values.
 
 ## Outputs and provenance
 

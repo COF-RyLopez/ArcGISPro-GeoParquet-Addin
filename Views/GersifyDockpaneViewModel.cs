@@ -64,6 +64,12 @@ namespace DuckDBGeoparquet.Views
         private string _lastSourceLayerName;
         private string _lastSourceIdField;
         private double _lastAcceptScoreThreshold = 72;
+        private string _lastOvertureRelease;
+        private string _lastTargetTheme;
+        private string _lastTargetType;
+        private string _lastSourceLookupCsvPath;
+        private bool _hasSourceTraceResults;
+        private string _sourceTraceSummaryText = string.Empty;
         private string _bridgeRoot = "https://overturemapswestus2.blob.core.windows.net/bridgefiles";
         private string _bridgeRelease = GersifyOptions.DefaultReleaseVersion;
         private string _bridgeTheme = "places";
@@ -89,6 +95,7 @@ namespace DuckDBGeoparquet.Views
             InputFields = [];
             OptionalInputFields = [];
             TraceFields = [];
+            SourceTraceSamples = [];
             SelectedGersifyTarget = GersifyTargets.FirstOrDefault();
 
             string addinDataBase = ProjectDataLocator.GetAddinDataBase();
@@ -106,6 +113,11 @@ namespace DuckDBGeoparquet.Views
             ShowUnmatchedOnMapCommand = new RelayCommand(async () => await ApplyMapReviewAsync(GersifyMapReviewMode.Unmatched), CanApplyMapReview);
             ShowWeakLinksOnMapCommand = new RelayCommand(async () => await ApplyMapReviewAsync(GersifyMapReviewMode.WeakLinks), CanApplyMapReview);
             ClearMapReviewCommand = new RelayCommand(async () => await ApplyMapReviewAsync(GersifyMapReviewMode.Clear), CanApplyMapReview);
+            TraceLinkedSourcesCommand = new RelayCommand(async () => await TraceLinkedSourcesAsync(), CanTraceLinkedSources);
+            OpenSourceLookupCsvCommand = new RelayCommand(() => OpenFileInShell(_lastSourceLookupCsvPath), () => CanOpenLastRunFile(_lastSourceLookupCsvPath));
+            OpenGersBridgeDocsCommand = new RelayCommand(() => OpenUrlInShell("https://docs.overturemaps.org/gers/bridge-files/"));
+            OpenTraceEditUrlCommand = new RelayCommand(OpenTraceEditUrl, parameter => parameter is GersSourceTraceRecord);
+            TraceSelectionOnMapCommand = new RelayCommand(async () => await TraceSelectionOnMapAsync(), CanTraceSelectionOnMap);
         }
 
         protected override async Task InitializeAsync()
@@ -127,6 +139,7 @@ namespace DuckDBGeoparquet.Views
         public ObservableCollection<string> InputFields { get; }
         public ObservableCollection<string> OptionalInputFields { get; }
         public ObservableCollection<string> TraceFields { get; }
+        public ObservableCollection<GersSourceTraceRecord> SourceTraceSamples { get; }
 
         public GersifyTargetOption SelectedGersifyTarget
         {
@@ -438,6 +451,18 @@ namespace DuckDBGeoparquet.Views
             private set => SetProperty(ref _lastRunLinkageSummary, value);
         }
 
+        public bool HasSourceTraceResults
+        {
+            get => _hasSourceTraceResults;
+            private set => SetProperty(ref _hasSourceTraceResults, value);
+        }
+
+        public string SourceTraceSummaryText
+        {
+            get => _sourceTraceSummaryText;
+            private set => SetProperty(ref _sourceTraceSummaryText, value);
+        }
+
         public string LastRunSummaryText
         {
             get => _lastRunSummaryText;
@@ -519,6 +544,11 @@ namespace DuckDBGeoparquet.Views
         public ICommand ShowUnmatchedOnMapCommand { get; }
         public ICommand ShowWeakLinksOnMapCommand { get; }
         public ICommand ClearMapReviewCommand { get; }
+        public ICommand TraceLinkedSourcesCommand { get; }
+        public ICommand OpenSourceLookupCsvCommand { get; }
+        public ICommand OpenGersBridgeDocsCommand { get; }
+        public ICommand OpenTraceEditUrlCommand { get; }
+        public ICommand TraceSelectionOnMapCommand { get; }
 
         private async Task RefreshLayersAsync()
         {
@@ -811,6 +841,8 @@ namespace DuckDBGeoparquet.Views
             try
             {
                 string releaseFolder = ResolveReleaseFolder();
+                _lastOvertureRelease = Path.GetFileName(
+                    releaseFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
                 if (string.IsNullOrWhiteSpace(releaseFolder) || !Directory.Exists(releaseFolder))
                 {
                     StatusText = "Choose a loaded Overture release folder.";
@@ -938,6 +970,204 @@ namespace DuckDBGeoparquet.Views
             }
         }
 
+        private async Task TraceLinkedSourcesAsync()
+        {
+            IsRunning = true;
+            string inputCsvPath = null;
+            try
+            {
+                Directory.CreateDirectory(OutputFolder);
+                StatusText = "Tracing upstream Overture source records...";
+                inputCsvPath = GersSourceTraceCsv.ExportGersIdsFromBridgeCsv(_lastBridgeCsvPath);
+                AddToLog($"Tracing {Path.GetFileName(_lastBridgeCsvPath)} against Overture bridge files ({BridgeRelease}, {BridgeTheme}/{BridgeType}).");
+
+                var progress = new Progress<string>(message =>
+                {
+                    StatusText = message;
+                    AddToLog(message);
+                });
+
+                using var service = new BridgeFileService();
+                var result = await service.TraceSourcesAsync(new TraceSourcesOptions
+                {
+                    InputCsvPath = inputCsvPath,
+                    OutputFolder = OutputFolder,
+                    BridgeRoot = BridgeRoot,
+                    Release = string.IsNullOrWhiteSpace(_lastOvertureRelease) ? BridgeRelease : _lastOvertureRelease,
+                    Theme = string.IsNullOrWhiteSpace(_lastTargetTheme) ? BridgeTheme : _lastTargetTheme,
+                    Type = string.IsNullOrWhiteSpace(_lastTargetType) ? BridgeType : _lastTargetType
+                }, progress);
+
+                await TryAddStandaloneTableAsync(result.OutputCsvPath);
+                ApplySourceTraceResults(result);
+                StatusText = $"Traced {result.InputCount:N0} GERS ID(s) to {result.OutputCount:N0} upstream source record(s).";
+                AddToLog(SourceTraceSummaryText);
+                AddToLog($"Source lookup CSV: {result.OutputCsvPath}");
+            }
+            catch (Exception ex)
+            {
+                StatusText = $"Trace linked sources failed: {ex.Message}";
+                AddToLog(ex.ToString());
+            }
+            finally
+            {
+                TryDelete(inputCsvPath);
+                IsRunning = false;
+            }
+        }
+
+        private async Task TraceSelectionOnMapAsync()
+        {
+            IsRunning = true;
+            string inputCsvPath = null;
+            try
+            {
+                inputCsvPath = await ExportSelectedGersIdsAsync(_lastOutputFeatureClassPath);
+                if (string.IsNullOrWhiteSpace(inputCsvPath))
+                {
+                    StatusText = "Select one or more linked features on the GERSified output layer first.";
+                    return;
+                }
+
+                Directory.CreateDirectory(OutputFolder);
+                using var service = new BridgeFileService();
+                var result = await service.TraceSourcesAsync(new TraceSourcesOptions
+                {
+                    InputCsvPath = inputCsvPath,
+                    OutputFolder = OutputFolder,
+                    BridgeRoot = BridgeRoot,
+                    Release = string.IsNullOrWhiteSpace(_lastOvertureRelease) ? BridgeRelease : _lastOvertureRelease,
+                    Theme = string.IsNullOrWhiteSpace(_lastTargetTheme) ? BridgeTheme : _lastTargetTheme,
+                    Type = string.IsNullOrWhiteSpace(_lastTargetType) ? BridgeType : _lastTargetType,
+                    MaxRows = 500
+                });
+
+                ApplySourceTraceResults(result);
+                StatusText = $"Traced {result.OutputCount:N0} upstream source record(s) for the current map selection.";
+            }
+            catch (Exception ex)
+            {
+                StatusText = $"Trace selection failed: {ex.Message}";
+                AddToLog(ex.ToString());
+            }
+            finally
+            {
+                TryDelete(inputCsvPath);
+                IsRunning = false;
+            }
+        }
+
+        private void ApplySourceTraceResults(TraceSourcesResult result)
+        {
+            _lastSourceLookupCsvPath = result.OutputCsvPath;
+            SourceTraceSummaryText =
+                $"Upstream sources: {result.DatasetSummaryText}. " +
+                "Open a provider link to fix the source record so the next Overture release can conflate the correction.";
+            SourceTraceSamples.Clear();
+            foreach (GersSourceTraceRecord record in result.SampleRecords)
+            {
+                SourceTraceSamples.Add(record);
+            }
+
+            HasSourceTraceResults = SourceTraceSamples.Count > 0 || !string.IsNullOrWhiteSpace(result.DatasetSummaryText);
+            RaiseCommandStatesChanged();
+        }
+
+        private static async Task<string> ExportSelectedGersIdsAsync(string outputFeatureClassPath)
+        {
+            if (!GersifyOutputPaths.FeatureClassExists(outputFeatureClassPath))
+                return null;
+
+            return await QueuedTask.Run(() =>
+            {
+                FeatureLayer layer = MapView.Active?.Map?
+                    .GetLayersAsFlattenedList()
+                    .OfType<FeatureLayer>()
+                    .FirstOrDefault(candidate =>
+                    {
+                        try
+                        {
+                            using var featureClass = candidate.GetFeatureClass();
+                            string layerPath = featureClass.GetPath()?.LocalPath;
+                            return !string.IsNullOrWhiteSpace(layerPath) &&
+                                   string.Equals(
+                                       Path.GetFullPath(layerPath),
+                                       Path.GetFullPath(outputFeatureClassPath),
+                                       StringComparison.OrdinalIgnoreCase);
+                        }
+                        catch
+                        {
+                            return false;
+                        }
+                    });
+
+                if (layer == null)
+                    return null;
+
+                using FeatureClass featureClass = layer.GetFeatureClass();
+                string gersIdField = featureClass.GetDefinition()
+                    .GetFields()
+                    .Select(field => field.Name)
+                    .FirstOrDefault(name => string.Equals(name, "gers_id", StringComparison.OrdinalIgnoreCase));
+                if (string.IsNullOrWhiteSpace(gersIdField))
+                    return null;
+
+                var selection = layer.GetSelection();
+                if (selection == null || selection.GetCount() == 0)
+                    return null;
+
+                string csvPath = Path.Combine(Path.GetTempPath(), $"gers_trace_selection_{Guid.NewGuid():N}.csv");
+                var sb = new StringBuilder();
+                sb.AppendLine("gers_id");
+                int count = 0;
+                using RowCursor cursor = selection.Search(null, false);
+                while (cursor.MoveNext())
+                {
+                    using Row row = cursor.Current;
+                    string gersId = Convert.ToString(row[gersIdField], CultureInfo.InvariantCulture);
+                    if (!string.IsNullOrWhiteSpace(gersId))
+                    {
+                        sb.AppendLine(Csv(gersId));
+                        count++;
+                    }
+                }
+
+                if (count == 0)
+                    return null;
+
+                File.WriteAllText(csvPath, sb.ToString(), Encoding.UTF8);
+                return csvPath;
+            });
+        }
+
+        private bool CanTraceLinkedSources() =>
+            HasLastGersifyRun &&
+            !IsRunning &&
+            CanOpenLastRunFile(_lastBridgeCsvPath);
+
+        private bool CanTraceSelectionOnMap() =>
+            HasLastGersifyRun &&
+            !IsRunning &&
+            GersifyOutputPaths.FeatureClassExists(_lastOutputFeatureClassPath);
+
+        private void OpenTraceEditUrl(object parameter)
+        {
+            if (parameter is not GersSourceTraceRecord record)
+                return;
+
+            string url = !string.IsNullOrWhiteSpace(record.EditUrl)
+                ? record.EditUrl
+                : record.ContributionUrl;
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                StatusText = "No edit URL is available for this upstream source.";
+                return;
+            }
+
+            OpenUrlInShell(url);
+            StatusText = $"Opened {record.EditPlatform ?? record.Dataset} contribution link.";
+        }
+
         private async Task RunTraceSourcesAsync()
         {
             IsRunning = true;
@@ -968,6 +1198,7 @@ namespace DuckDBGeoparquet.Views
                 }, progress);
 
                 await TryAddStandaloneTableAsync(result.OutputCsvPath);
+                ApplySourceTraceResults(result);
                 StatusText = $"Found {result.OutputCount:N0} source record(s) for {result.InputCount:N0} GERS ID(s).";
                 AddToLog($"Source lookup CSV: {result.OutputCsvPath}");
             }
@@ -1185,6 +1416,19 @@ namespace DuckDBGeoparquet.Views
             _lastSourceLayerName = SelectedInputLayer?.Name;
             _lastSourceIdField = SelectedIdField;
             _lastAcceptScoreThreshold = ParseDouble(AcceptScoreThreshold, 72);
+            _lastTargetTheme = result.TargetTheme;
+            _lastTargetType = result.TargetDatasetType;
+            if (!string.IsNullOrWhiteSpace(_lastOvertureRelease))
+            {
+                BridgeRelease = _lastOvertureRelease;
+            }
+
+            BridgeTheme = result.TargetTheme;
+            BridgeType = result.TargetDatasetType;
+            HasSourceTraceResults = false;
+            SourceTraceSamples.Clear();
+            SourceTraceSummaryText = string.Empty;
+            _lastSourceLookupCsvPath = null;
             int unmatchedCount = Math.Max(0, result.InputCount - result.AcceptedCount);
             double weakCeiling = _lastAcceptScoreThreshold + GersifyMapReviewSql.WeakLinkScoreBuffer;
             int weakCount = result.AcceptedMatches?.Count(match =>
@@ -1307,6 +1551,18 @@ namespace DuckDBGeoparquet.Views
             Process.Start(new ProcessStartInfo
             {
                 FileName = path,
+                UseShellExecute = true
+            });
+        }
+
+        private static void OpenUrlInShell(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+                return;
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = url,
                 UseShellExecute = true
             });
         }
@@ -1475,6 +1731,9 @@ namespace DuckDBGeoparquet.Views
             (ShowUnmatchedOnMapCommand as RelayCommand)?.RaiseCanExecuteChanged();
             (ShowWeakLinksOnMapCommand as RelayCommand)?.RaiseCanExecuteChanged();
             (ClearMapReviewCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (TraceLinkedSourcesCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (OpenSourceLookupCsvCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (TraceSelectionOnMapCommand as RelayCommand)?.RaiseCanExecuteChanged();
         }
 
         private void AddToLog(string message)

@@ -392,6 +392,69 @@
                                            Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
                                            Margin="0,0,0,10"/>
 
+                                <TextBlock Text="Improve Overture at the source"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,4"/>
+                                <TextBlock TextWrapping="Wrap"
+                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                           Margin="0,0,0,8">
+                                    GERS IDs are stable handles on Overture's reference map. Bridge files trace each linked <Run FontFamily="Consolas">gers_id</Run> back to upstream providers such as OpenStreetMap, Esri Community Maps, Meta, Microsoft, and PinMeTo. Fix the upstream record so the next Overture release can conflate your correction.
+                                </TextBlock>
+                                <WrapPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                           Margin="0,0,0,8">
+                                    <Button Content="Trace Linked Sources"
+                                            Command="{Binding TraceLinkedSourcesCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Width="140"
+                                            Margin="0,0,6,6"
+                                            ToolTipService.ToolTip="Query Overture bridge files for all accepted GERS IDs from the last run."/>
+                                    <Button Content="Trace Selection"
+                                            Command="{Binding TraceSelectionOnMapCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Width="110"
+                                            Margin="0,0,6,6"
+                                            ToolTipService.ToolTip="Trace upstream sources for the selected feature(s) on the GERSified output layer."/>
+                                    <Button Content="Open Source Lookup"
+                                            Command="{Binding OpenSourceLookupCsvCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Width="130"
+                                            Margin="0,0,6,6"
+                                            ToolTipService.ToolTip="Open the latest source lookup CSV with edit and contribution links."/>
+                                    <Button Content="GERS Bridge Docs"
+                                            Command="{Binding OpenGersBridgeDocsCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Width="120"
+                                            Margin="0,0,6,6"
+                                            ToolTipService.ToolTip="Open Overture documentation on bridge files and source traceability."/>
+                                </WrapPanel>
+                                <TextBlock Text="{Binding SourceTraceSummaryText}"
+                                           TextWrapping="Wrap"
+                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                           Margin="0,0,0,8"
+                                           Visibility="{Binding HasSourceTraceResults, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                <ListBox ItemsSource="{Binding SourceTraceSamples}"
+                                         MaxHeight="160"
+                                         Margin="0,0,0,10"
+                                         Visibility="{Binding HasSourceTraceResults, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="0,4,0,4">
+                                                <TextBlock Text="{Binding DisplayLabel}" FontWeight="SemiBold"/>
+                                                <TextBlock Text="{Binding EditInstructions}"
+                                                           TextWrapping="Wrap"
+                                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                                           Margin="0,2,0,4"/>
+                                                <Button Content="Open upstream editor"
+                                                        Command="{Binding DataContext.OpenTraceEditUrlCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        CommandParameter="{Binding}"
+                                                        Style="{DynamicResource Esri_Button}"
+                                                        Width="150"
+                                                        HorizontalAlignment="Left"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
                                 <TextBlock Text="Review on the map"
                                            FontWeight="SemiBold"
                                            Margin="0,0,0,6"/>
@@ -446,7 +509,7 @@
             </TabItem>
 
             <TabItem Header="Trace Sources"
-                     ToolTipService.ToolTip="Look up source dataset record IDs for existing GERS IDs using Overture bridge files. Useful for escalation and source-data maintenance.">
+                     ToolTipService.ToolTip="Trace GERS IDs back to upstream Overture source datasets and open provider edit or contribution links.">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="0,8,0,8">
                         <TextBlock Text="Input Layer" FontWeight="SemiBold" Margin="0,0,0,4"

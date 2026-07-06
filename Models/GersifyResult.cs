@@ -27,5 +27,8 @@ namespace DuckDBGeoparquet.Models
         public int InputCount { get; set; }
         public int OutputCount { get; set; }
         public string OutputCsvPath { get; set; }
+        public IReadOnlyDictionary<string, int> DatasetCounts { get; set; } = new Dictionary<string, int>();
+        public IReadOnlyList<GersSourceTraceRecord> SampleRecords { get; set; } = [];
+        public string DatasetSummaryText { get; set; } = string.Empty;
     }
 }

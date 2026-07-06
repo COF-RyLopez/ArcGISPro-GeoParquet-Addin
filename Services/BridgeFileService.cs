@@ -44,11 +44,18 @@ namespace DuckDBGeoparquet.Services
             await ExecuteNonQueryAsync(GersSql.BuildTraceSourcesCommand(options, outputCsvPath), cancellationToken);
             int outputCount = await ExecuteCountAsync(GersSql.TraceOutputTable, cancellationToken);
 
+            GersSourceTraceCsv.EnrichTraceOutputCsv(outputCsvPath);
+            var datasetCounts = GersSourceTraceCsv.ReadDatasetCounts(outputCsvPath);
+            var sampleRecords = GersSourceTraceCsv.ReadTraceOutput(outputCsvPath, 25);
+
             return new TraceSourcesResult
             {
                 InputCount = inputCount,
                 OutputCount = outputCount,
-                OutputCsvPath = outputCsvPath
+                OutputCsvPath = outputCsvPath,
+                DatasetCounts = datasetCounts,
+                SampleRecords = sampleRecords,
+                DatasetSummaryText = GersSourceTraceCsv.FormatDatasetSummary(datasetCounts)
             };
         }
 

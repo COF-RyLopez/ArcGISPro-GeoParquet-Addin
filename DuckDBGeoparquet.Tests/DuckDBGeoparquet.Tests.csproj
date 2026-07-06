@@ -20,6 +20,9 @@
 		<Compile Include="..\Services\GersifyRecordIdPolicy.cs" Link="Linked\GersifyRecordIdPolicy.cs" />
 		<Compile Include="..\Services\GersifyMapReviewSql.cs" Link="Linked\GersifyMapReviewSql.cs" />
 		<Compile Include="..\Services\GersifyOutputPaths.cs" Link="Linked\GersifyOutputPaths.cs" />
+		<Compile Include="..\Services\GersSourceEditResolver.cs" Link="Linked\GersSourceEditResolver.cs" />
+		<Compile Include="..\Services\GersSourceTraceCsv.cs" Link="Linked\GersSourceTraceCsv.cs" />
+		<Compile Include="..\Models\GersSourceTraceRecord.cs" Link="Linked\GersSourceTraceRecord.cs" />
 		<Compile Include="..\Services\GeoParquetSql.cs" Link="Linked\GeoParquetSql.cs" />
 		<Compile Include="..\Services\S3Ingester.cs" Link="Linked\S3Ingester.cs" />
 		<Compile Include="..\Services\ParquetFileDeleter.cs" Link="Linked\ParquetFileDeleter.cs" />
