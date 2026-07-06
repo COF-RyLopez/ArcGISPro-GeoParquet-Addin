@@ -21,7 +21,7 @@ namespace DuckDBGeoparquet.Views
 {
     internal class OvertureGeocoderDockpaneViewModel : DockPane
     {
-        private const string DockPaneId = "DuckDBGeoparquet_Views_OvertureGeocoderDockpane";
+        private const string DockPaneId = "DuckDBGeoparquet_Views_OvertureGeocoderDockpane_V2";
         private OvertureGeocoderService _geocoderService;
         private readonly List<IDisposable> _candidateOverlays = [];
         private readonly List<IDisposable> _selectionOverlays = [];

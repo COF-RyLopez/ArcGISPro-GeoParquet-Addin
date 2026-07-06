@@ -14,7 +14,7 @@ namespace DuckDBGeoparquet.Views
 {
     internal class MfcDockpaneViewModel : DockPane
     {
-        private const string _dockPaneID = "DuckDBGeoparquet_Views_MfcDockpane";
+        private const string _dockPaneID = "DuckDBGeoparquet_Views_MfcDockpane_V2";
         private const string DefaultMfcFileName = "OvertureData.mfc";
         private const string AddExistingMfcCommandId = "esri_bdc_addExistingBDConnectionButton";
 

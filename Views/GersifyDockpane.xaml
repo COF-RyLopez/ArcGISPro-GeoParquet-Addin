@@ -1,0 +1,447 @@
+<UserControl x:Class="DuckDBGeoparquet.Views.GersifyDockpaneView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:extensions="clr-namespace:ArcGIS.Desktop.Extensions;assembly=ArcGIS.Desktop.Extensions"
+             xmlns:local="clr-namespace:DuckDBGeoparquet.Views"
+             mc:Ignorable="d"
+             d:DesignHeight="680"
+             d:DesignWidth="430"
+             d:DataContext="{d:DesignInstance local:GersifyDockpaneViewModel}">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <extensions:DesignOnlyResourceDictionary Source="pack://application:,,,/ArcGIS.Desktop.Framework;component\Themes\Default.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid Margin="16,12,16,12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="120"/>
+        </Grid.RowDefinitions>
+
+        <TabControl Grid.Row="0">
+            <TabItem Header="GERSify Your Data"
+                     ToolTipService.ToolTip="Link your authoritative point layer to Overture GERS IDs without replacing geometry or governance.">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="0,8,0,8">
+                        <Border Padding="10"
+                                Margin="0,0,0,12"
+                                Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                                BorderBrush="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock Text="Link, don't replace"
+                                           FontWeight="SemiBold"
+                                           FontSize="13"
+                                           Margin="0,0,0,6"
+                                           ToolTipService.ToolTip="Overture's GERS ID links your data to the open map ecosystem without replacing your authoritative geometry."/>
+                                <TextBlock TextWrapping="Wrap"
+                                           Margin="0,0,0,8"
+                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                           ToolTipService.ToolTip="Your source layer stays the system of record. GERSify writes a new output layer plus review artifacts.">
+                                    Keep your authoritative layer as the system of record. GERSify adds stable Overture GERS IDs and match metadata to a <Run FontWeight="SemiBold">new</Run> output layer. Your original geometry, attributes, and governance are unchanged.
+                                </TextBlock>
+                                <TextBlock Text="How to use"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,4"/>
+                                <TextBlock TextWrapping="Wrap"
+                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+                                    1. Load Overture Addresses or Places for your area in Download Overture.
+                                    <LineBreak/>
+                                    2. Select your authoritative point layer and map match fields below.
+                                    <LineBreak/>
+                                    3. Run GERSify, review the candidates CSV, and inspect match scores before adopting links.
+                                    <LineBreak/>
+                                    4. Use <Run FontFamily="Consolas">gers_id</Run> for enrichment, source tracing, and cross-release workflows.
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="Input Layer" FontWeight="SemiBold" Margin="0,0,0,4"
+                                   ToolTipService.ToolTip="Choose the point feature layer that contains the places, businesses, or facilities you want to match."/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <ComboBox Grid.Column="0"
+                                      ItemsSource="{Binding InputLayers}"
+                                      SelectedItem="{Binding SelectedInputLayer}"
+                                      DisplayMemberPath="Name"
+                                      Margin="0,0,8,0"
+                                      ToolTipService.ToolTip="The source point layer. Each feature is exported temporarily, matched in DuckDB, then written to a new GERSified output layer."/>
+                            <Button Grid.Column="1"
+                                    Content="Refresh"
+                                    Command="{Binding RefreshLayersCommand}"
+                                    Width="82"
+                                    Style="{DynamicResource Esri_Button}"
+                                    ToolTipService.ToolTip="Reload the list of feature layers from the active map."/>
+                        </Grid>
+
+                        <TextBlock Text="Match Target" FontWeight="SemiBold" Margin="0,4,0,4"
+                                   ToolTipService.ToolTip="Choose Addresses for strict 1:1 address validation, or Places for POI/place enrichment."/>
+                        <ComboBox ItemsSource="{Binding GersifyTargets}"
+                                  SelectedItem="{Binding SelectedGersifyTarget}"
+                                  DisplayMemberPath="Name"
+                                  Margin="0,0,0,8"
+                                  ToolTipService.ToolTip="Addresses compares your address points to Overture Addresses. Places compares names and addresses to Overture Places."/>
+
+                        <TextBlock Text="Field Mapping" FontWeight="SemiBold" Margin="0,4,0,4"
+                                   ToolTipService.ToolTip="Map your layer fields to the values used for matching. Unique ID is required. Use either a place name, address fields, or both."/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Unique ID" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Your durable business record key (GlobalID, site_id, address_id). Avoid OBJECTID/FID — they change when data is reloaded."/>
+                            <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding InputFields}" SelectedItem="{Binding SelectedIdField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Pick the field that identifies each feature in your system of record. GERS ID is added separately for interoperability."/>
+                            <CheckBox Grid.Row="1" Grid.Column="1"
+                                      Content="Generate stable link IDs (UUID record_id)"
+                                      IsChecked="{Binding GenerateStableLinkIds}"
+                                      Margin="0,0,0,8"
+                                      ToolTipService.ToolTip="When enabled, bridge/output record_id uses new UUIDs while source_record_key keeps the selected field value. Recommended for OBJECTID/FID layers."/>
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Name" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Optional place or business name used for string similarity against Overture Places."/>
+                            <ComboBox Grid.Row="2" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedNameField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Choose this when your input has place or business names. Leave blank for address-point datasets."/>
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Full Address" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Optional complete street address. If blank, the tool builds one from the parsed address fields below."/>
+                            <ComboBox Grid.Row="3" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedAddressField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Use this if your table already has a complete address field. Leave blank when address components are split across fields."/>
+
+                            <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Text="Parsed Address Fields" FontWeight="SemiBold" Margin="0,4,0,4"
+                                       ToolTipService.ToolTip="Use these when your address data is parsed into pieces such as ADDRESS_NUMBER, street name, type, unit, ZIP city, and ZIP5."/>
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Number" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Street number, such as ADDRESS_NUMBER."/>
+                            <ComboBox Grid.Row="5" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStreetNumberField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Optional. Used with the other parsed fields to build a matchable address string."/>
+                            <TextBlock Grid.Row="6" Grid.Column="0" Text="Fraction" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Fractional address number, such as ADDRESS_FRACTION for 1/2 addresses."/>
+                            <ComboBox Grid.Row="6" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStreetFractionField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Optional. Leave blank unless your data stores fractional address numbers."/>
+                            <TextBlock Grid.Row="7" Grid.Column="0" Text="Prefix" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Street directional prefix, such as N, S, E, or W."/>
+                            <ComboBox Grid.Row="7" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStreetPrefixField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Optional street prefix/directional field."/>
+                            <TextBlock Grid.Row="8" Grid.Column="0" Text="Street" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Street name field."/>
+                            <ComboBox Grid.Row="8" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStreetNameField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Pick the street name field if your address is parsed. This pairs with Number and Type."/>
+                            <TextBlock Grid.Row="9" Grid.Column="0" Text="Type" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Street type, such as ST, AVE, RD, or BLVD."/>
+                            <ComboBox Grid.Row="9" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStreetTypeField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Optional street type field."/>
+                            <TextBlock Grid.Row="10" Grid.Column="0" Text="Suffix" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Street suffix or post-directional, such as NE or SW."/>
+                            <ComboBox Grid.Row="10" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStreetSuffixField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Optional street suffix/post-directional field."/>
+                            <TextBlock Grid.Row="11" Grid.Column="0" Text="Unit" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Unit, suite, apartment, or address unit field."/>
+                            <ComboBox Grid.Row="11" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedUnitField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Optional unit field. It is included in the address text when present."/>
+                            <TextBlock Grid.Row="12" Grid.Column="0" Text="City" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Optional locality context included in the address similarity text."/>
+                            <ComboBox Grid.Row="12" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedCityField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Optional. Used only to improve address/context matching."/>
+                            <TextBlock Grid.Row="13" Grid.Column="0" Text="State" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Optional region context included in the address similarity text."/>
+                            <ComboBox Grid.Row="13" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedStateField}" Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Optional. Used only to improve address/context matching."/>
+                            <TextBlock Grid.Row="14" Grid.Column="0" Text="Postcode" VerticalAlignment="Center" Margin="0,0,8,0"
+                                       ToolTipService.ToolTip="Optional postal code context included in the address similarity text."/>
+                            <ComboBox Grid.Row="14" Grid.Column="1" ItemsSource="{Binding OptionalInputFields}" SelectedItem="{Binding SelectedPostcodeField}"
+                                      ToolTipService.ToolTip="Optional. Used only to improve address/context matching."/>
+                        </Grid>
+
+                        <TextBlock Text="Linkage Preview" FontWeight="SemiBold" Margin="0,4,0,4"
+                                   ToolTipService.ToolTip="Fields added to the new output layer and bridge CSV. Your source layer is not modified."/>
+                        <TextBox Text="{Binding LinkagePreviewText, Mode=OneWay}"
+                                 IsReadOnly="True"
+                                 TextWrapping="Wrap"
+                                 MinHeight="72"
+                                 MaxHeight="120"
+                                 VerticalScrollBarVisibility="Auto"
+                                 FontFamily="Consolas"
+                                 Margin="0,0,0,8"
+                                 Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                                 Foreground="{DynamicResource Esri_TextControlBrush}"
+                                 ToolTipService.ToolTip="Manifest of linkage fields written to the GERSified output and bridge CSV provenance columns."/>
+
+                        <TextBlock Text="Mapping Preview" FontWeight="SemiBold" Margin="0,4,0,4"
+                                   ToolTipService.ToolTip="Shows the fields GERSify will export plus sample address and postcode values from the selected layer."/>
+                        <TextBox Text="{Binding FieldMappingPreviewText, Mode=OneWay}"
+                                 IsReadOnly="True"
+                                 TextWrapping="Wrap"
+                                 MinHeight="120"
+                                 MaxHeight="220"
+                                 VerticalScrollBarVisibility="Auto"
+                                 FontFamily="Consolas"
+                                 Margin="0,0,0,6"
+                                 Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                                 Foreground="{DynamicResource Esri_TextControlBrush}"
+                                 ToolTipService.ToolTip="Preview the resolved source fields and a few built output values before running GERSify."/>
+                        <TextBlock Text="{Binding FieldMappingWarningText}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,8"
+                                   Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                                   ToolTipService.ToolTip="Warnings are based on selected fields and a small sample of source rows."/>
+
+                        <TextBlock Text="Overture Data" FontWeight="SemiBold" Margin="0,6,0,4"
+                                   ToolTipService.ToolTip="Folder containing downloaded Overture data for one release. It must include the selected match target."/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" Text="{Binding ReleaseFolderPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"
+                                     ToolTipService.ToolTip="Defaults to the newest loaded Overture release under the project. Choose another release folder if needed."/>
+                            <Button Grid.Column="1" Content="Browse..." Command="{Binding BrowseReleaseFolderCommand}" Width="82" Style="{DynamicResource Esri_Button}"
+                                    ToolTipService.ToolTip="Choose the Overture release folder that contains the selected target GeoParquet files."/>
+                        </Grid>
+
+                        <TextBlock Text="Output" FontWeight="SemiBold" Margin="0,6,0,4"
+                                   ToolTipService.ToolTip="The tool writes a new point layer, a candidate review CSV, and a bridge CSV mapping your record IDs to GERS IDs."/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" Text="{Binding OutputFolder, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"
+                                     ToolTipService.ToolTip="Folder for the generated file geodatabase and CSV outputs. Defaults under OvertureProAddinData\\GERSify."/>
+                            <Button Grid.Column="1" Content="Browse..." Command="{Binding BrowseOutputFolderCommand}" Width="82" Style="{DynamicResource Esri_Button}"
+                                    ToolTipService.ToolTip="Choose where the output layer database and CSV files will be written."/>
+                        </Grid>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Dataset Name" VerticalAlignment="Center" Margin="0,0,8,0"
+                                       ToolTipService.ToolTip="Label written to the bridge CSV dataset column so downstream users know which source data was matched."/>
+                            <TextBox Grid.Column="1" Text="{Binding DatasetName, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTipService.ToolTip="Use a short source name, such as your department, system, or feature class name."/>
+                        </Grid>
+
+                        <TextBlock Text="Thresholds" FontWeight="SemiBold" Margin="0,6,0,4"
+                                   ToolTipService.ToolTip="Controls how strict automatic acceptance is. Lower values produce more matches; higher values produce fewer, safer matches."/>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Distance m" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Maximum distance from your point to an Overture candidate. Start with 75 meters for address-quality points."/>
+                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding MaxDistanceMeters, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
+                                     ToolTipService.ToolTip="Candidates farther than this distance are ignored before name/address scoring."/>
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Name" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Minimum name similarity for an automatic match. 1.0 is exact; 0.86 allows minor spelling and formatting differences."/>
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NameSimilarityThreshold, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
+                                     ToolTipService.ToolTip="Raise this for conservative matching; lower it when names vary across systems."/>
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Address" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Minimum address similarity when both your data and Overture have address text. The tool compares street-only text and full city/state/ZIP context, using the stronger score."/>
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding AddressSimilarityThreshold, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
+                                     ToolTipService.ToolTip="Raise this when address fields are clean; lower it when addresses are partial or inconsistently formatted."/>
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Score" VerticalAlignment="Center" Margin="0,0,8,0"
+                                       ToolTipService.ToolTip="Minimum combined score for automatic acceptance."/>
+                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding AcceptScoreThreshold, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
+                                     ToolTipService.ToolTip="Accepted matches get written to gers_id fields and bridge CSV output. Other candidates remain in the review CSV."/>
+                            <CheckBox Grid.Row="4" Grid.Column="1"
+                                      Content="Allow nearby-only fallback"
+                                      IsChecked="{Binding AllowNearbyOnlyMatches}"
+                                      Margin="0,0,0,6"
+                                      ToolTipService.ToolTip="Places only. Allows very close candidates when neither name nor address similarity can be scored. Leave off for strict address validation."/>
+                            <CheckBox Grid.Row="5" Grid.Column="1"
+                                      Content="Relate linkage to source layer after run"
+                                      IsChecked="{Binding RelateLinkageToSourceLayer}"
+                                      ToolTipService.ToolTip="Adds a non-destructive map relate from your authoritative layer to the GERSified output so you can inspect gers_id and match scores without modifying source geometry."/>
+                        </Grid>
+
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,8">
+                            <Button Content="Run GERSify"
+                                    Command="{Binding RunGersifyCommand}"
+                                    Width="110"
+                                    Style="{DynamicResource Esri_Button}"
+                                    ToolTipService.ToolTip="Run matching. Creates a new point feature class with gers_id and score fields, plus candidate review and bridge CSV files."/>
+                        </StackPanel>
+
+                        <Border Padding="10"
+                                Margin="0,0,0,4"
+                                Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                                BorderBrush="{DynamicResource Esri_BorderBrush}"
+                                BorderThickness="1"
+                                Visibility="{Binding HasLastGersifyRun, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock Text="Review Last Run"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding LastRunSummaryText}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,8"
+                                           Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                <WrapPanel>
+                                    <Button Content="Open Folder"
+                                            Command="{Binding OpenReviewFolderCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Width="96"
+                                            Margin="0,0,6,6"
+                                            ToolTipService.ToolTip="Open the output folder in File Explorer."/>
+                                    <Button Content="Candidates CSV"
+                                            Command="{Binding OpenCandidatesCsvCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Width="110"
+                                            Margin="0,0,6,6"
+                                            ToolTipService.ToolTip="Open the candidate review CSV for QA before adopting links."/>
+                                    <Button Content="Bridge CSV"
+                                            Command="{Binding OpenBridgeCsvCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Width="96"
+                                            Margin="0,0,6,6"
+                                            ToolTipService.ToolTip="Open the accepted-link bridge CSV with provenance columns."/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Trace Sources"
+                     ToolTipService.ToolTip="Look up source dataset record IDs for existing GERS IDs using Overture bridge files. Useful for escalation and source-data maintenance.">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="0,8,0,8">
+                        <TextBlock Text="Input Layer" FontWeight="SemiBold" Margin="0,0,0,4"
+                                   ToolTipService.ToolTip="Choose a layer that already has GERS IDs, such as a GERSified output layer or an Overture-derived layer."/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <ComboBox Grid.Column="0"
+                                      ItemsSource="{Binding TraceLayers}"
+                                      SelectedItem="{Binding SelectedTraceLayer}"
+                                      DisplayMemberPath="Name"
+                                      Margin="0,0,8,0"
+                                      ToolTipService.ToolTip="The tool exports the selected GERS ID field, queries bridge files, then writes a source lookup table."/>
+                            <Button Grid.Column="1"
+                                    Content="Refresh"
+                                    Command="{Binding RefreshLayersCommand}"
+                                    Width="82"
+                                    Style="{DynamicResource Esri_Button}"
+                                    ToolTipService.ToolTip="Reload the list of feature layers from the active map."/>
+                        </Grid>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="GERS ID Field" VerticalAlignment="Center" Margin="0,0,8,0"
+                                       ToolTipService.ToolTip="Field containing Overture/GERS IDs to trace back to source records."/>
+                            <ComboBox Grid.Column="1" ItemsSource="{Binding TraceFields}" SelectedItem="{Binding SelectedTraceGersIdField}"
+                                      ToolTipService.ToolTip="Usually gers_id, overture_id, or id depending on the source layer."/>
+                        </Grid>
+
+                        <TextBlock Text="Bridge Files" FontWeight="SemiBold" Margin="0,4,0,4"
+                                   ToolTipService.ToolTip="Bridge files map GERS IDs back to source dataset record IDs for a specific Overture release, theme, and type."/>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Root" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Bridge file storage root. Azure HTTP is the default; S3 can also be used when DuckDB has access."/>
+                            <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding BridgeRoot, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
+                                     ToolTipService.ToolTip="Default: https://overturemapswestus2.blob.core.windows.net/bridgefiles"/>
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Release" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Overture release containing the bridge files to query."/>
+                            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding BridgeRelease, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
+                                     ToolTipService.ToolTip="Use the same release as the Overture data you matched against when possible."/>
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Theme" VerticalAlignment="Center" Margin="0,0,8,6"
+                                       ToolTipService.ToolTip="Bridge theme to query. Use addresses for address validation outputs or places for Places enrichment outputs."/>
+                            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding BridgeTheme, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,6"
+                                     ToolTipService.ToolTip="Examples include places, buildings, transportation, and divisions when bridge coverage exists."/>
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Type" VerticalAlignment="Center" Margin="0,0,8,0"
+                                       ToolTipService.ToolTip="Bridge type to query. Use address for address validation outputs or place for Places enrichment outputs."/>
+                            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding BridgeType, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTipService.ToolTip="Examples include place, building, segment, connector, division_area, and division_boundary when bridge coverage exists."/>
+                        </Grid>
+
+                        <TextBlock Text="Output" FontWeight="SemiBold" Margin="0,6,0,4"
+                                   ToolTipService.ToolTip="Trace Sources writes a CSV table with gers_id, dataset, record_id, update_time, theme, type, and OSM URLs where possible."/>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" Text="{Binding OutputFolder, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"
+                                     ToolTipService.ToolTip="Folder where the source lookup CSV will be written and added to the active map as a standalone table."/>
+                            <Button Grid.Column="1" Content="Browse..." Command="{Binding BrowseOutputFolderCommand}" Width="82" Style="{DynamicResource Esri_Button}"
+                                    ToolTipService.ToolTip="Choose where the source lookup CSV will be written."/>
+                        </Grid>
+
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="Trace Sources"
+                                    Command="{Binding RunTraceSourcesCommand}"
+                                    Width="110"
+                                    Style="{DynamicResource Esri_Button}"
+                                    ToolTipService.ToolTip="Query bridge files for the selected GERS IDs and add the resulting source lookup CSV to the map."/>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <TextBlock Grid.Row="1"
+                   Text="{Binding StatusText}"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
+                   Margin="0,8,0,6"/>
+
+        <TextBox Grid.Row="2"
+                 Text="{Binding LogText, Mode=OneWay}"
+                 IsReadOnly="True"
+                 TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto"
+                 FontFamily="Consolas"
+                 Background="{DynamicResource Esri_DialogClientAreaBackgroundBrush}"
+                 Foreground="{DynamicResource Esri_TextControlBrush}"
+                 TextChanged="LogTextBox_TextChanged"/>
+    </Grid>
+</UserControl>

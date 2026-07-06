@@ -70,7 +70,7 @@ namespace DuckDBGeoparquet.Tests
 
             Assert.Contains("CREATE OR REPLACE TABLE current_table", query);
             Assert.Contains("SELECT *", query);
-            Assert.Contains("read_parquet('s3://bucket/*.parquet', filename=true, hive_partitioning=1)", query);
+            Assert.Contains("read_parquet('s3://bucket/*.parquet', filename=true, hive_partitioning=1, union_by_name=1)", query);
             // No extent → no spatial filter and no clipping.
             Assert.DoesNotContain("WHERE", query);
             Assert.DoesNotContain("ST_Intersection", query);
@@ -84,6 +84,31 @@ namespace DuckDBGeoparquet.Tests
 
             Assert.Contains("SELECT id, geometry, bbox", query);
             Assert.DoesNotContain("sources", query);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_ForPlaces_FlattensAddressFieldsWhenAddressesArePresent()
+        {
+            var columns = new List<string> { "id", "names", "addresses", "geometry", "bbox", "sources" };
+            string query = S3Ingester.BuildLoadQuery("s3://bucket/place/*", "place", columns, extent: null);
+
+            Assert.Contains("string_agg(CAST(a.freeform AS VARCHAR), ' | ')", query);
+            Assert.Contains("AS address_freeform", query);
+            Assert.Contains("AS address_locality", query);
+            Assert.Contains("AS address_region", query);
+            Assert.Contains("AS address_postcode", query);
+            Assert.Contains("AS address_country", query);
+            Assert.DoesNotContain("SELECT id, names, addresses", query);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_ForPlaces_DoesNotDuplicateExistingFlattenedAddressFields()
+        {
+            var columns = new List<string> { "id", "names", "addresses", "address_freeform", "geometry", "bbox" };
+            string query = S3Ingester.BuildLoadQuery("s3://bucket/place/*", "place", columns, extent: null);
+
+            Assert.DoesNotContain("AS address_freeform", query);
+            Assert.Contains("AS address_locality", query);
         }
 
         [Fact]

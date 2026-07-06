@@ -20,6 +20,7 @@ namespace DuckDBGeoparquet.Services
     {
         private const string BboxColumn = "bbox";
         private const string GeometryColumn = "geometry";
+        public const string S3ReadParquetOptions = "filename=true, hive_partitioning=1, union_by_name=1";
 
         /// <summary>
         /// Build a projection list that drops known heavy optional columns for the given dataset type.
@@ -72,7 +73,7 @@ namespace DuckDBGeoparquet.Services
             }
 
             // Determine which columns to project (if any) while always retaining geometry
-            var projectedColumnList = projectedColumns ?? "*";
+            var projectedColumnList = AppendPlaceDerivedColumns(projectedColumns ?? "*", actualS3Type, columnNames);
             bool hasBboxColumn = columnNames != null && columnNames.Any(c => c.Equals(BboxColumn, StringComparison.OrdinalIgnoreCase));
             var projectedColumnsWithoutGeometry = projectedColumns != null
                 ? string.Join(", ", projectedColumns.Split(',').Select(c => c.Trim()).Where(c => !c.Equals("geometry", StringComparison.OrdinalIgnoreCase)))
@@ -86,6 +87,8 @@ namespace DuckDBGeoparquet.Services
                 projectedColumnsWithoutGeometry = "* EXCLUDE(geometry)";
             if (string.IsNullOrWhiteSpace(projectedColumnsWithoutGeometryOrBbox))
                 projectedColumnsWithoutGeometryOrBbox = hasBboxColumn ? "* EXCLUDE(geometry, bbox)" : "* EXCLUDE(geometry)";
+            projectedColumnsWithoutGeometry = AppendPlaceDerivedColumns(projectedColumnsWithoutGeometry, actualS3Type, columnNames);
+            projectedColumnsWithoutGeometryOrBbox = AppendPlaceDerivedColumns(projectedColumnsWithoutGeometryOrBbox, actualS3Type, columnNames);
 
             if (extent != null && !string.IsNullOrEmpty(extentPolygon))
             {
@@ -103,7 +106,7 @@ namespace DuckDBGeoparquet.Services
                                     THEN ST_Intersection(geometry, {extentPolygon})
                                     ELSE NULL
                                 END AS clipped_geometry
-                            FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
+                            FROM read_parquet('{s3Path}', {S3ReadParquetOptions})
                             {spatialFilter}
                         )
                         SELECT
@@ -130,15 +133,53 @@ namespace DuckDBGeoparquet.Services
                                 THEN ST_Intersection(geometry, {extentPolygon})
                                 ELSE NULL
                             END as geometry
-                        FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
+                        FROM read_parquet('{s3Path}', {S3ReadParquetOptions})
                         {spatialFilter}";
             }
 
             return $@"
                         CREATE OR REPLACE TABLE current_table AS
                         SELECT {projectedColumnList}
-                        FROM read_parquet('{s3Path}', filename=true, hive_partitioning=1)
+                        FROM read_parquet('{s3Path}', {S3ReadParquetOptions})
                         {spatialFilter}";
+        }
+
+        private static string AppendPlaceDerivedColumns(string projection, string actualS3Type, IReadOnlyList<string> columnNames)
+        {
+            if (!string.Equals(actualS3Type, "place", StringComparison.OrdinalIgnoreCase) ||
+                columnNames == null ||
+                !columnNames.Any(c => c.Equals("addresses", StringComparison.OrdinalIgnoreCase)))
+            {
+                return projection;
+            }
+
+            var derivedColumns = new List<string>();
+            AddDerivedAddressColumn(derivedColumns, columnNames, "address_freeform",
+                "(SELECT string_agg(CAST(a.freeform AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.freeform IS NOT NULL AND trim(CAST(a.freeform AS VARCHAR)) <> '')");
+            AddDerivedAddressColumn(derivedColumns, columnNames, "address_locality",
+                "(SELECT string_agg(DISTINCT CAST(a.locality AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.locality IS NOT NULL AND trim(CAST(a.locality AS VARCHAR)) <> '')");
+            AddDerivedAddressColumn(derivedColumns, columnNames, "address_region",
+                "(SELECT string_agg(DISTINCT CAST(a.region AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.region IS NOT NULL AND trim(CAST(a.region AS VARCHAR)) <> '')");
+            AddDerivedAddressColumn(derivedColumns, columnNames, "address_postcode",
+                "(SELECT string_agg(DISTINCT left(CAST(a.postcode AS VARCHAR), 5), ' | ') FROM unnest(addresses) AS t(a) WHERE a.postcode IS NOT NULL AND trim(CAST(a.postcode AS VARCHAR)) <> '')");
+            AddDerivedAddressColumn(derivedColumns, columnNames, "address_country",
+                "(SELECT string_agg(DISTINCT CAST(a.country AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.country IS NOT NULL AND trim(CAST(a.country AS VARCHAR)) <> '')");
+
+            return derivedColumns.Count == 0
+                ? projection
+                : $"{projection}, {string.Join(", ", derivedColumns)}";
+        }
+
+        private static void AddDerivedAddressColumn(
+            ICollection<string> derivedColumns,
+            IReadOnlyList<string> columnNames,
+            string columnName,
+            string expression)
+        {
+            if (columnNames.Any(c => c.Equals(columnName, StringComparison.OrdinalIgnoreCase)))
+                return;
+
+            derivedColumns.Add($"{expression} AS {columnName}");
         }
     }
 }

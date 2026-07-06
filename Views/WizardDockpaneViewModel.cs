@@ -32,7 +32,7 @@ namespace DuckDBGeoparquet.Views
 {
     internal partial class WizardDockpaneViewModel : DockPane
     {
-        private const string _dockPaneID = "DuckDBGeoparquet_Views_WizardDockpane";
+        private const string _dockPaneID = "DuckDBGeoparquet_Views_WizardDockpane_V2";
         private DataProcessor _dataProcessor;
         private const string RELEASE_URL = "https://labs.overturemaps.org/data/releases.json";
         private const string S3_BASE_PATH = "s3://overturemaps-us-west-2/release";
