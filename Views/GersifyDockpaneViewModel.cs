@@ -1,4 +1,5 @@
 using ArcGIS.Core.Data;
+using ArcGIS.Core.Data.Exceptions;
 using ArcGIS.Core.Geometry;
 using ArcGIS.Desktop.Core;
 using ArcGIS.Desktop.Core.Geoprocessing;
@@ -59,6 +60,9 @@ namespace DuckDBGeoparquet.Views
         private string _lastBridgeCsvPath;
         private string _lastOutputFeatureClassPath;
         private string _lastRunSummaryText = string.Empty;
+        private string _lastSourceLayerName;
+        private string _lastSourceIdField;
+        private double _lastAcceptScoreThreshold = 72;
         private string _bridgeRoot = "https://overturemapswestus2.blob.core.windows.net/bridgefiles";
         private string _bridgeRelease = GersifyOptions.DefaultReleaseVersion;
         private string _bridgeTheme = "places";
@@ -98,6 +102,9 @@ namespace DuckDBGeoparquet.Views
             OpenReviewFolderCommand = new RelayCommand(OpenReviewFolder, () => CanOpenLastRunArtifact(_lastOutputFeatureClassPath, _lastCandidateCsvPath, _lastBridgeCsvPath));
             OpenCandidatesCsvCommand = new RelayCommand(() => OpenFileInShell(_lastCandidateCsvPath), () => CanOpenLastRunFile(_lastCandidateCsvPath));
             OpenBridgeCsvCommand = new RelayCommand(() => OpenFileInShell(_lastBridgeCsvPath), () => CanOpenLastRunFile(_lastBridgeCsvPath));
+            ShowUnmatchedOnMapCommand = new RelayCommand(async () => await ApplyMapReviewAsync(GersifyMapReviewMode.Unmatched), CanApplyMapReview);
+            ShowWeakLinksOnMapCommand = new RelayCommand(async () => await ApplyMapReviewAsync(GersifyMapReviewMode.WeakLinks), CanApplyMapReview);
+            ClearMapReviewCommand = new RelayCommand(async () => await ApplyMapReviewAsync(GersifyMapReviewMode.Clear), CanApplyMapReview);
         }
 
         protected override async Task InitializeAsync()
@@ -502,6 +509,9 @@ namespace DuckDBGeoparquet.Views
         public ICommand OpenReviewFolderCommand { get; }
         public ICommand OpenCandidatesCsvCommand { get; }
         public ICommand OpenBridgeCsvCommand { get; }
+        public ICommand ShowUnmatchedOnMapCommand { get; }
+        public ICommand ShowWeakLinksOnMapCommand { get; }
+        public ICommand ClearMapReviewCommand { get; }
 
         private async Task RefreshLayersAsync()
         {
@@ -1163,10 +1173,60 @@ namespace DuckDBGeoparquet.Views
             _lastCandidateCsvPath = result.CandidateCsvPath;
             _lastBridgeCsvPath = result.BridgeCsvPath;
             _lastOutputFeatureClassPath = result.OutputFeatureClassPath;
+            _lastSourceLayerName = SelectedInputLayer?.Name;
+            _lastSourceIdField = SelectedIdField;
+            _lastAcceptScoreThreshold = ParseDouble(AcceptScoreThreshold, 72);
             HasLastGersifyRun = true;
+            int unmatchedCount = Math.Max(0, result.InputCount - result.AcceptedCount);
             LastRunSummaryText =
-                $"Accepted {result.AcceptedCount:N0} of {result.InputCount:N0} features against {result.TargetLabel}. {relateSummary}";
+                $"Accepted {result.AcceptedCount:N0} of {result.InputCount:N0} features against {result.TargetLabel}. " +
+                $"{unmatchedCount:N0} unmatched. {relateSummary} " +
+                $"Use map review to filter unmatched or weak links on the GERSified output layer.";
             RaiseCommandStatesChanged();
+        }
+
+        private bool CanApplyMapReview() =>
+            HasLastGersifyRun &&
+            !IsRunning &&
+            !string.IsNullOrWhiteSpace(_lastOutputFeatureClassPath) &&
+            File.Exists(_lastOutputFeatureClassPath);
+
+        private async Task ApplyMapReviewAsync(GersifyMapReviewMode mode)
+        {
+            try
+            {
+                var result = await GersifyMapReviewService.ApplyReviewAsync(
+                    mode,
+                    _lastOutputFeatureClassPath,
+                    _lastAcceptScoreThreshold,
+                    ResolveLastSourceLayer(),
+                    _lastSourceIdField);
+
+                StatusText = result.Message;
+                AddToLog(result.Message);
+            }
+            catch (Exception ex)
+            {
+                StatusText = $"Map review failed: {ex.Message}";
+                AddToLog(ex.ToString());
+            }
+        }
+
+        private FeatureLayer ResolveLastSourceLayer()
+        {
+            if (SelectedInputLayer?.Layer != null &&
+                string.Equals(SelectedInputLayer.Name, _lastSourceLayerName, StringComparison.OrdinalIgnoreCase))
+            {
+                return SelectedInputLayer.Layer;
+            }
+
+            var map = MapView.Active?.Map;
+            if (map == null || string.IsNullOrWhiteSpace(_lastSourceLayerName))
+                return null;
+
+            return map.GetLayersAsFlattenedList()
+                .OfType<FeatureLayer>()
+                .FirstOrDefault(layer => string.Equals(layer.Name, _lastSourceLayerName, StringComparison.OrdinalIgnoreCase));
         }
 
         private bool CanOpenLastRunFile(string path) =>
@@ -1389,6 +1449,9 @@ namespace DuckDBGeoparquet.Views
             (OpenReviewFolderCommand as RelayCommand)?.RaiseCanExecuteChanged();
             (OpenCandidatesCsvCommand as RelayCommand)?.RaiseCanExecuteChanged();
             (OpenBridgeCsvCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (ShowUnmatchedOnMapCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (ShowWeakLinksOnMapCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (ClearMapReviewCommand as RelayCommand)?.RaiseCanExecuteChanged();
         }
 
         private void AddToLog(string message)

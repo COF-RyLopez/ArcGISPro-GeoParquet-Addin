@@ -18,6 +18,7 @@
 		<Compile Include="..\Services\GeocodeTextNormalizer.cs" Link="Linked\GeocodeTextNormalizer.cs" />
 		<Compile Include="..\Services\GersSql.cs" Link="Linked\GersSql.cs" />
 		<Compile Include="..\Services\GersifyRecordIdPolicy.cs" Link="Linked\GersifyRecordIdPolicy.cs" />
+		<Compile Include="..\Services\GersifyMapReviewSql.cs" Link="Linked\GersifyMapReviewSql.cs" />
 		<Compile Include="..\Services\GeoParquetSql.cs" Link="Linked\GeoParquetSql.cs" />
 		<Compile Include="..\Services\S3Ingester.cs" Link="Linked\S3Ingester.cs" />
 		<Compile Include="..\Services\ParquetFileDeleter.cs" Link="Linked\ParquetFileDeleter.cs" />

@@ -330,6 +330,24 @@
                                             Width="96"
                                             Margin="0,0,6,6"
                                             ToolTipService.ToolTip="Open the accepted-link bridge CSV with provenance columns."/>
+                                    <Button Content="Show Unmatched"
+                                            Command="{Binding ShowUnmatchedOnMapCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Width="110"
+                                            Margin="0,0,6,6"
+                                            ToolTipService.ToolTip="Filter and zoom the GERSified output layer to features with no gers_id. Selects on the source layer when the unmatched set is small."/>
+                                    <Button Content="Show Weak Links"
+                                            Command="{Binding ShowWeakLinksOnMapCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Width="110"
+                                            Margin="0,0,6,6"
+                                            ToolTipService.ToolTip="Filter accepted links in the score band just above your acceptance threshold for extra QA."/>
+                                    <Button Content="Clear Review"
+                                            Command="{Binding ClearMapReviewCommand}"
+                                            Style="{DynamicResource Esri_Button}"
+                                            Width="96"
+                                            Margin="0,0,6,6"
+                                            ToolTipService.ToolTip="Remove map filters and selections applied by GERSify map review."/>
                                 </WrapPanel>
                             </StackPanel>
                         </Border>
