@@ -1032,7 +1032,34 @@ namespace DuckDBGeoparquet.Views
         private static string BuildPostcodeValue(Row row, string postcodeField)
         {
             string postcode = CleanPart(GetRowValue(row, postcodeField));
-            return postcode.Any(char.IsDigit) ? postcode : string.Empty;
+            if (postcode.Any(char.IsDigit))
+                return postcode;
+
+            string fallbackPostcode = SelectFirstNumericRowValue(row,
+                "ADDRESS_ZIP5",
+                "address_zip5",
+                "ZIP5",
+                "zip5",
+                "POSTCODE",
+                "postcode",
+                "POSTAL_CODE",
+                "postal_code",
+                "ZIP",
+                "zip",
+                "ADDRESS_ZIP4");
+            return fallbackPostcode;
+        }
+
+        private static string SelectFirstNumericRowValue(Row row, params string[] fieldNames)
+        {
+            foreach (string fieldName in fieldNames)
+            {
+                string value = CleanPart(GetRowValue(row, fieldName));
+                if (value.Any(char.IsDigit))
+                    return value;
+            }
+
+            return string.Empty;
         }
 
         private static string CleanPart(string value)
