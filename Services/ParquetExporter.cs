@@ -293,9 +293,37 @@ namespace DuckDBGeoparquet.Services
 
         private static async Task<bool> CurrentTableHasColumn(DuckDBCommand command, string columnName, CancellationToken cancellationToken)
         {
-            command.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('current_table') WHERE lower(name) = lower('{GeoParquetSql.EscapeSqlLiteral(columnName)}')";
-            var count = await command.ExecuteScalarAsync(cancellationToken);
-            return Convert.ToInt32(count) > 0;
+            if (command == null) throw new ArgumentNullException(nameof(command));
+            string sql = $"SELECT COUNT(*) FROM pragma_table_info('current_table') WHERE lower(name) = lower('{GeoParquetSql.EscapeSqlLiteral(columnName)}')";
+            command.CommandText = sql;
+
+            int maxAttempts = 3;
+            int attempt = 0;
+            while (true)
+            {
+                attempt++;
+                try
+                {
+                    var count = await command.ExecuteScalarAsync(cancellationToken);
+                    return Convert.ToInt32(count) > 0;
+                }
+                catch (OperationCanceledException)
+                {
+                    System.Diagnostics.Debug.WriteLine($"CurrentTableHasColumn cancelled for {columnName}");
+                    // Treat cancellation as no column found so upstream work can decide to skip/export gracefully
+                    return false;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"CurrentTableHasColumn attempt {attempt} failed for {columnName}: {ex.Message}");
+                    if (attempt >= maxAttempts || cancellationToken.IsCancellationRequested)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"CurrentTableHasColumn giving up after {attempt} attempts for {columnName}");
+                        throw;
+                    }
+                    try { await Task.Delay(250 * attempt, cancellationToken); } catch { throw; }
+                }
+            }
         }
 
         private static string DescribeOutputPathKind(string path)
