@@ -5,6 +5,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:extensions="clr-namespace:ArcGIS.Desktop.Extensions;assembly=ArcGIS.Desktop.Extensions"
              xmlns:local="clr-namespace:DuckDBGeoparquet.Views"
+             xmlns:conv="clr-namespace:DuckDBGeoparquet.Views.Converters"
              mc:Ignorable="d"
              d:DesignHeight="680"
              d:DesignWidth="430"
@@ -15,6 +16,7 @@
                 <extensions:DesignOnlyResourceDictionary Source="pack://application:,,,/ArcGIS.Desktop.Framework;component\Themes\Default.xaml"/>
             </ResourceDictionary.MergedDictionaries>
             <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+            <conv:SafeCommandExtractorConverter x:Key="SafeCommandExtractor" />
         </ResourceDictionary>
     </UserControl.Resources>
 
@@ -445,7 +447,7 @@
                                                            Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
                                                            Margin="0,2,0,4"/>
                                                 <Button Content="Open upstream editor"
-                                                        Command="{Binding DataContext.OpenTraceEditUrlCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        Command="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource SafeCommandExtractor}, ConverterParameter=OpenTraceEditUrlCommand}"
                                                         CommandParameter="{Binding}"
                                                         Style="{DynamicResource Esri_Button}"
                                                         Width="150"
@@ -458,21 +460,21 @@
                                 <TextBlock Text="Review on the map"
                                            FontWeight="SemiBold"
                                            Margin="0,0,0,6"/>
-                                <WrapPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                                <WrapPanel>
                                     <Button Content="Show Unmatched"
-                                            Command="{Binding ShowUnmatchedOnMapCommand}"
+                                            Command="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource SafeCommandExtractor}, ConverterParameter=ShowUnmatchedOnMapCommand}"
                                             Style="{DynamicResource Esri_Button}"
                                             Width="118"
                                             Margin="0,0,6,6"
                                             ToolTipService.ToolTip="Filter and zoom to red unmatched features on the GERSified output layer."/>
                                     <Button Content="Show Weak Links"
-                                            Command="{Binding ShowWeakLinksOnMapCommand}"
+                                            Command="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource SafeCommandExtractor}, ConverterParameter=ShowWeakLinksOnMapCommand}"
                                             Style="{DynamicResource Esri_Button}"
                                             Width="118"
                                             Margin="0,0,6,6"
                                             ToolTipService.ToolTip="Filter and zoom to amber borderline links for extra QA before adoption."/>
                                     <Button Content="Clear Review"
-                                            Command="{Binding ClearMapReviewCommand}"
+                                            Command="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource SafeCommandExtractor}, ConverterParameter=ClearMapReviewCommand}"
                                             Style="{DynamicResource Esri_Button}"
                                             Width="96"
                                             Margin="0,0,6,6"
@@ -482,21 +484,21 @@
                                 <TextBlock Text="Artifacts"
                                            FontWeight="SemiBold"
                                            Margin="0,4,0,6"/>
-                                <WrapPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                                <WrapPanel>
                                     <Button Content="Open Folder"
-                                            Command="{Binding OpenReviewFolderCommand}"
+                                            Command="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource SafeCommandExtractor}, ConverterParameter=OpenReviewFolderCommand}"
                                             Style="{DynamicResource Esri_Button}"
                                             Width="96"
                                             Margin="0,0,6,6"
                                             ToolTipService.ToolTip="Open the output folder in File Explorer."/>
                                     <Button Content="Candidates CSV"
-                                            Command="{Binding OpenCandidatesCsvCommand}"
+                                            Command="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource SafeCommandExtractor}, ConverterParameter=OpenCandidatesCsvCommand}"
                                             Style="{DynamicResource Esri_Button}"
                                             Width="110"
                                             Margin="0,0,6,6"
                                             ToolTipService.ToolTip="Open the candidate review CSV for QA before adopting links."/>
                                     <Button Content="Bridge CSV"
-                                            Command="{Binding OpenBridgeCsvCommand}"
+                                            Command="{Binding DataContext, RelativeSource={RelativeSource AncestorType=UserControl}, Converter={StaticResource SafeCommandExtractor}, ConverterParameter=OpenBridgeCsvCommand}"
                                             Style="{DynamicResource Esri_Button}"
                                             Width="96"
                                             Margin="0,0,6,6"
