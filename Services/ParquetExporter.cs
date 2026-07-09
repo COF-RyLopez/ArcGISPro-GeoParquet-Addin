@@ -206,21 +206,21 @@ namespace DuckDBGeoparquet.Services
                 if (File.Exists(outputPath))
                 {
                     await _layerManager.RemoveLayersUsingFileAsync(outputPath);
-                    
+
                     await Task.Delay(50);
-                    
-                    for (int attempt = 1; attempt <= 2; attempt++)
+
+                    for (int attemptDelete = 1; attemptDelete <= 2; attemptDelete++)
                     {
                         try
                         {
                             File.Delete(outputPath);
                             break;
                         }
-                        catch (IOException) when (attempt < 2)
+                        catch (IOException) when (attemptDelete < 2)
                         {
                             await Task.Delay(50);
                         }
-                        catch (IOException) when (attempt == 2)
+                        catch (IOException) when (attemptDelete == 2)
                         {
                             // Ignore, will use temp file fallback
                         }
@@ -245,13 +245,13 @@ namespace DuckDBGeoparquet.Services
 
                 // Execute COPY with bounded retries to handle transient IO issues or intermittent cancellations
                 int maxAttempts = 3;
-                int attempt = 0;
+                int attemptCopy = 0;
                 while (true)
                 {
-                    attempt++;
+                    attemptCopy++;
                     try
                     {
-                        System.Diagnostics.Debug.WriteLine($"[export:{actualS3Type}] copy attempt {attempt} for '{layerName}' to {actualOutputPath}");
+                        System.Diagnostics.Debug.WriteLine($"[export] copy attempt {attemptCopy} for '{layerName}' to {actualOutputPath}");
                         await command.ExecuteNonQueryAsync(cancellationToken);
                         copyStopwatch.Stop();
                         System.Diagnostics.Debug.WriteLine(
@@ -260,7 +260,7 @@ namespace DuckDBGeoparquet.Services
                     }
                     catch (OperationCanceledException)
                     {
-                        System.Diagnostics.Debug.WriteLine($"Export canceled during COPY for {layerName} (attempt {attempt})");
+                        System.Diagnostics.Debug.WriteLine($"Export canceled during COPY for {layerName} (attempt {attemptCopy})");
                         // Cleanup temp file if present
                         try
                         {
@@ -274,19 +274,19 @@ namespace DuckDBGeoparquet.Services
                     }
                     catch (Exception ex)
                     {
-                        System.Diagnostics.Debug.WriteLine($"Export COPY attempt {attempt} failed for {layerName}: {ex.Message}");
-                        if (attempt >= maxAttempts || cancellationToken.IsCancellationRequested)
+                        System.Diagnostics.Debug.WriteLine($"Export COPY attempt {attemptCopy} failed for {layerName}: {ex.Message}");
+                        if (attemptCopy >= maxAttempts || cancellationToken.IsCancellationRequested)
                         {
-                            System.Diagnostics.Debug.WriteLine($"Export COPY giving up after {attempt} attempts for {layerName}");
+                            System.Diagnostics.Debug.WriteLine($"Export COPY giving up after {attemptCopy} attempts for {layerName}");
                             throw;
                         }
-                        await Task.Delay(250 * attempt, cancellationToken);
+                        await Task.Delay(250 * attemptCopy, cancellationToken);
                     }
                 }
                 
                 if (useTempFile && File.Exists(actualOutputPath))
                 {
-                    for (int attempt = 1; attempt <= 3; attempt++)
+                    for (int attemptMove = 1; attemptMove <= 3; attemptMove++)
                     {
                         try
                         {
@@ -297,11 +297,11 @@ namespace DuckDBGeoparquet.Services
                             File.Move(actualOutputPath, outputPath);
                             break;
                         }
-                        catch (IOException) when (attempt < 3)
+                        catch (IOException) when (attemptMove < 3)
                         {
-                            await Task.Delay(attempt * 100);
+                            await Task.Delay(attemptMove * 100);
                         }
-                        catch (IOException) when (attempt == 3)
+                        catch (IOException) when (attemptMove == 3)
                         {
                             outputPath = actualOutputPath;
                         }

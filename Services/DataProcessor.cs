@@ -235,12 +235,6 @@ namespace DuckDBGeoparquet.Services
                 progress?.Report("Ingest operation cancelled");
                 return false;
             }
-            catch (TaskCanceledException ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Ingest task cancelled for {s3Path}: {ex.Message}");
-                progress?.Report("Ingest operation cancelled (task)");
-                return false;
-            }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Query error: {ex.Message}");
@@ -255,34 +249,34 @@ namespace DuckDBGeoparquet.Services
                 throw new InvalidOperationException("Command text is empty before ExecuteNonQueryWithRetriesAsync");
 
             int maxAttempts = 3;
-            int attempt = 0;
+            int attemptExec = 0;
             var sw = System.Diagnostics.Stopwatch.StartNew();
             while (true)
             {
-                attempt++;
+                attemptExec++;
                 try
                 {
-                    System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery attempt {attempt}");
+                    System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery attempt {attemptExec}");
                     await command.ExecuteNonQueryAsync(cancellationToken);
                     sw.Stop();
-                    System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery succeeded in {sw.ElapsedMilliseconds}ms on attempt {attempt}");
+                    System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery succeeded in {sw.ElapsedMilliseconds}ms on attempt {attemptExec}");
                     return;
                 }
                 catch (OperationCanceledException)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery cancelled on attempt {attempt}");
+                    System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery cancelled on attempt {attemptExec}");
                     throw;
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery attempt {attempt} failed: {ex.Message}");
-                    if (attempt >= maxAttempts || cancellationToken.IsCancellationRequested)
+                    System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery attempt {attemptExec} failed: {ex.Message}");
+                    if (attemptExec >= maxAttempts || cancellationToken.IsCancellationRequested)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery giving up after {attempt} attempts");
+                        System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery giving up after {attemptExec} attempts");
                         throw;
                     }
                     // Backoff
-                    int delayMs = 250 * attempt; // 250ms, 500ms, ...
+                    int delayMs = 250 * attemptExec; // 250ms, 500ms, ...
                     try { await Task.Delay(delayMs, cancellationToken); } catch { throw; }
                 }
             }
@@ -295,25 +289,25 @@ namespace DuckDBGeoparquet.Services
                 throw new InvalidOperationException("Command text is empty before ExecuteScalarWithRetriesAsync");
 
             int maxAttempts = 3;
-            int attempt = 0;
+            int attemptScalar = 0;
             while (true)
             {
-                attempt++;
+                attemptScalar++;
                 try
                 {
                     return await command.ExecuteScalarAsync(cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {
-                    System.Diagnostics.Debug.WriteLine($"ExecuteScalar cancelled on attempt {attempt}");
+                    System.Diagnostics.Debug.WriteLine($"ExecuteScalar cancelled on attempt {attemptScalar}");
                     throw;
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"ExecuteScalar attempt {attempt} failed: {ex.Message}");
-                    if (attempt >= maxAttempts || cancellationToken.IsCancellationRequested)
+                    System.Diagnostics.Debug.WriteLine($"ExecuteScalar attempt {attemptScalar} failed: {ex.Message}");
+                    if (attemptScalar >= maxAttempts || cancellationToken.IsCancellationRequested)
                         throw;
-                    int delayMs = 250 * attempt;
+                    int delayMs = 250 * attemptScalar;
                     try { await Task.Delay(delayMs, cancellationToken); } catch { throw; }
                 }
             }
