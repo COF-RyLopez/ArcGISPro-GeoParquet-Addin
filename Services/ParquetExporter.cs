@@ -242,10 +242,47 @@ namespace DuckDBGeoparquet.Services
                 
                 command.CommandText = GeoParquetSql.BuildCopyCommand(query, actualOutputPath, compression);
                 var copyStopwatch = Stopwatch.StartNew();
-                await command.ExecuteNonQueryAsync(cancellationToken);
-                copyStopwatch.Stop();
-                System.Diagnostics.Debug.WriteLine(
-                    $"[perf][export] copy layer=\"{layerName}\" output={DescribeOutputPathKind(actualOutputPath)} compression={GeoParquetSql.ValidateCompression(compression)} elapsed={FormatElapsed(copyStopwatch.Elapsed)}");
+
+                // Execute COPY with bounded retries to handle transient IO issues or intermittent cancellations
+                int maxAttempts = 3;
+                int attempt = 0;
+                while (true)
+                {
+                    attempt++;
+                    try
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[export:{actualS3Type}] copy attempt {attempt} for '{layerName}' to {actualOutputPath}");
+                        await command.ExecuteNonQueryAsync(cancellationToken);
+                        copyStopwatch.Stop();
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[perf][export] copy layer=\"{layerName}\" output={DescribeOutputPathKind(actualOutputPath)} compression={GeoParquetSql.ValidateCompression(compression)} elapsed={FormatElapsed(copyStopwatch.Elapsed)}");
+                        break;
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Export canceled during COPY for {layerName} (attempt {attempt})");
+                        // Cleanup temp file if present
+                        try
+                        {
+                            if (File.Exists(actualOutputPath)) File.Delete(actualOutputPath);
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Failed to cleanup partial export file {actualOutputPath}: {ex.Message}");
+                        }
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Export COPY attempt {attempt} failed for {layerName}: {ex.Message}");
+                        if (attempt >= maxAttempts || cancellationToken.IsCancellationRequested)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Export COPY giving up after {attempt} attempts for {layerName}");
+                            throw;
+                        }
+                        await Task.Delay(250 * attempt, cancellationToken);
+                    }
+                }
                 
                 if (useTempFile && File.Exists(actualOutputPath))
                 {
