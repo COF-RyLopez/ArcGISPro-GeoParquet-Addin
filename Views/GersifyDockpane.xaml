@@ -6,10 +6,12 @@
              xmlns:extensions="clr-namespace:ArcGIS.Desktop.Extensions;assembly=ArcGIS.Desktop.Extensions"
              xmlns:local="clr-namespace:DuckDBGeoparquet.Views"
              xmlns:conv="clr-namespace:DuckDBGeoparquet.Views.Converters"
+             xmlns:diag="clr-namespace:DuckDBGeoparquet.Views.Diagnostics"
              mc:Ignorable="d"
              d:DesignHeight="680"
              d:DesignWidth="430"
-             d:DataContext="{d:DesignInstance local:GersifyDockpaneViewModel}">
+             d:DataContext="{d:DesignInstance local:GersifyDockpaneViewModel}"
+             diag:DataContextLogger.EnableDataContextLogging="True">
     <UserControl.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
@@ -26,6 +28,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="120"/>
         </Grid.RowDefinitions>
+        <!-- Patch placeholder: no-op alignment inserted to ensure file context for subsequent edits -->
 
         <TabControl Grid.Row="0">
             <TabItem Header="GERSify Your Data"
