@@ -164,6 +164,13 @@
                                     <Run Text="SNAPPY: Fast compression, larger files. "/>
                                     <Run Text="GZIP: Good balance of speed and size."/>
                                 </TextBlock>
+                                <CheckBox Content="Add source edit fields (slower)"
+                                          IsChecked="{Binding AddSourceProvenanceFields, Mode=TwoWay}"
+                                          Margin="0,8,0,0"
+                                          ToolTip="Adds source dataset, record ID, update time, and edit/provider URL fields from Overture's nested sources array. This can significantly extend download time. The raw nested sources array is still excluded from exported GeoParquet."/>
+                                <TextBlock TextWrapping="Wrap" Margin="18,2,0,0" Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+                                    Reads nested Overture source records and can significantly extend download time. Use when you need per-feature edit or source links in the downloaded layer.
+                                </TextBlock>
                             </StackPanel>
                         </Border>
                         <!-- 4. Choose Map Purpose -->

@@ -6,6 +6,14 @@ namespace DuckDBGeoparquet.Services
 {
     public static class GersSourceEditResolver
     {
+        public const string OvertureBridgeDocsUrl = "https://docs.overturemaps.org/gers/bridge-files/";
+        public const string OpenStreetMapContributionUrl = "https://wiki.openstreetmap.org/wiki/Main_Page";
+        public const string EsriCommunityMapsContributionUrl = "https://livingatlas.arcgis.com/community-maps/";
+        public const string MetaContributionUrl = "https://mapwith.ai/";
+        public const string MicrosoftMapsContributionUrl = "https://www.microsoft.com/en-us/maps";
+        public const string PinMeToContributionUrl = "https://pinme.to/";
+        public const string GeoBoundariesContributionUrl = "https://www.geoboundaries.org/";
+
         private static readonly Regex OsmNodePattern = new(@"^n(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex OsmWayPattern = new(@"^w(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex OsmRelationPattern = new(@"^r(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -45,7 +53,7 @@ namespace DuckDBGeoparquet.Services
                 return (
                     "OpenStreetMap",
                     osmUrl,
-                    "https://wiki.openstreetmap.org/wiki/Main_Page",
+                    OpenStreetMapContributionUrl,
                     "Edit the feature in OpenStreetMap (iD or JOSM). Overture conflation can pick up OSM changes in a future monthly release.");
             }
 
@@ -54,7 +62,7 @@ namespace DuckDBGeoparquet.Services
                 return (
                     "Esri Community Maps",
                     null,
-                    "https://livingatlas.arcgis.com/community-maps/",
+                    EsriCommunityMapsContributionUrl,
                     "Corrections to Esri Community Maps flow through Esri's community contribution programs, then into Overture via bridge files.");
             }
 
@@ -63,7 +71,7 @@ namespace DuckDBGeoparquet.Services
                 return (
                     "Meta",
                     null,
-                    "https://mapwith.ai/",
+                    MetaContributionUrl,
                     "Meta place data is maintained through Meta's mapping programs. Report issues through Map With AI or Overture contribution channels.");
             }
 
@@ -72,7 +80,7 @@ namespace DuckDBGeoparquet.Services
                 return (
                     "Microsoft",
                     null,
-                    "https://www.microsoft.com/en-us/maps",
+                    MicrosoftMapsContributionUrl,
                     "Microsoft-sourced features are conflated into Overture. Use Overture contribution workflows for persistent corrections.");
             }
 
@@ -81,7 +89,7 @@ namespace DuckDBGeoparquet.Services
                 return (
                     "PinMeTo",
                     null,
-                    "https://pinme.to/",
+                    PinMeToContributionUrl,
                     "PinMeTo place records are maintained by the provider. Contact PinMeTo or contribute through Overture for cross-release fixes.");
             }
 
@@ -90,14 +98,14 @@ namespace DuckDBGeoparquet.Services
                 return (
                     "geoBoundaries",
                     null,
-                    "https://www.geoboundaries.org/",
+                    GeoBoundariesContributionUrl,
                     "Administrative boundary updates are managed by the geoBoundaries project.");
             }
 
             return (
                 string.IsNullOrWhiteSpace(normalizedDataset) ? "Unknown source" : normalizedDataset,
                 null,
-                "https://docs.overturemaps.org/gers/bridge-files/",
+                OvertureBridgeDocsUrl,
                 "Use Overture bridge files to identify the upstream provider, then contribute corrections through that provider or Overture Maps Foundation.");
         }
 
@@ -109,15 +117,15 @@ namespace DuckDBGeoparquet.Services
             string trimmed = recordId.Trim();
             Match nodeMatch = OsmNodePattern.Match(trimmed);
             if (nodeMatch.Success)
-                return $"https://www.openstreetmap.org/node/{nodeMatch.Groups[1].Value}";
+                return $"https://www.openstreetmap.org/edit?node={nodeMatch.Groups[1].Value}";
 
             Match wayMatch = OsmWayPattern.Match(trimmed);
             if (wayMatch.Success)
-                return $"https://www.openstreetmap.org/way/{wayMatch.Groups[1].Value}";
+                return $"https://www.openstreetmap.org/edit?way={wayMatch.Groups[1].Value}";
 
             Match relationMatch = OsmRelationPattern.Match(trimmed);
             if (relationMatch.Success)
-                return $"https://www.openstreetmap.org/relation/{relationMatch.Groups[1].Value}";
+                return $"https://www.openstreetmap.org/edit?relation={relationMatch.Groups[1].Value}";
 
             return null;
         }

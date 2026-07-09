@@ -69,11 +69,23 @@ namespace DuckDBGeoparquet.Tests
             string query = S3Ingester.BuildLoadQuery("s3://bucket/*.parquet", actualS3Type: null, columns, extent: null);
 
             Assert.Contains("CREATE OR REPLACE TABLE current_table", query);
-            Assert.Contains("SELECT *", query);
+            Assert.Contains("*", query);
+            Assert.Contains($"AS {GeoParquetSql.InternalGeometryTypeColumn}", query);
             Assert.Contains("read_parquet('s3://bucket/*.parquet', filename=true, hive_partitioning=1, union_by_name=1)", query);
             // No extent → no spatial filter and no clipping.
             Assert.DoesNotContain("WHERE", query);
             Assert.DoesNotContain("ST_Intersection", query);
+        }
+
+        [Fact]
+        public void BuildReadParquetExpression_DefaultsToUnionByNameAndSupportsFastPath()
+        {
+            string fallback = S3Ingester.BuildReadParquetExpression("s3://bucket/*.parquet");
+            string fast = S3Ingester.BuildReadParquetExpression("s3://bucket/*.parquet", S3Ingester.S3FastReadParquetOptions);
+
+            Assert.Contains("union_by_name=1", fallback);
+            Assert.DoesNotContain("union_by_name=1", fast);
+            Assert.Contains("filename=true, hive_partitioning=1", fast);
         }
 
         [Fact]
@@ -82,8 +94,66 @@ namespace DuckDBGeoparquet.Tests
             var columns = new List<string> { "id", "geometry", "bbox", "sources" };
             string query = S3Ingester.BuildLoadQuery("s3://bucket/place/*", "place", columns, extent: null);
 
-            Assert.Contains("SELECT id, geometry, bbox", query);
+            Assert.Contains("id, geometry, bbox", query);
             Assert.DoesNotContain("sources", query);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_WithSourceProvenance_AddsFlattenedSourceFields()
+        {
+            var columns = new List<string> { "id", "geometry", "bbox", "sources" };
+            string query = S3Ingester.BuildLoadQuery(
+                "s3://bucket/building/*",
+                "building",
+                columns,
+                extent: null,
+                includeSourceProvenance: true);
+
+            Assert.Contains("AS source_count", query);
+            Assert.Contains("AS source_datasets", query);
+            Assert.Contains("AS source_primary_dataset", query);
+            Assert.Contains("AS source_primary_record_id", query);
+            Assert.Contains("AS source_primary_update_time", query);
+            Assert.Contains("AS source_url", query);
+            Assert.Contains("AS source_edit_url", query);
+            Assert.Contains("AS source_contribution_url", query);
+            Assert.Contains("AS source_edit_platform", query);
+            Assert.Contains("FROM unnest(sources) AS t(s)", query);
+            Assert.Contains("https://www.openstreetmap.org/edit?way=", query);
+            Assert.Contains("https://livingatlas.arcgis.com/community-maps/", query);
+            Assert.DoesNotContain("SELECT id, geometry, bbox, sources", query);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_WithSourceProvenanceDisabled_DoesNotAddSourceFields()
+        {
+            var columns = new List<string> { "id", "geometry", "bbox", "sources" };
+            string query = S3Ingester.BuildLoadQuery(
+                "s3://bucket/building/*",
+                "building",
+                columns,
+                extent: null,
+                includeSourceProvenance: false);
+
+            Assert.DoesNotContain("source_primary_dataset", query);
+            Assert.DoesNotContain("source_edit_url", query);
+            Assert.DoesNotContain("FROM unnest(sources) AS t(s)", query);
+            Assert.DoesNotContain("SELECT id, geometry, bbox, sources", query);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_WithSourceProvenanceNoSourcesColumn_DoesNotAddSourceFields()
+        {
+            var columns = new List<string> { "id", "geometry", "bbox" };
+            string query = S3Ingester.BuildLoadQuery(
+                "s3://bucket/building/*",
+                "building",
+                columns,
+                extent: null,
+                includeSourceProvenance: true);
+
+            Assert.DoesNotContain("source_primary_dataset", query);
+            Assert.DoesNotContain("FROM unnest(sources) AS t(s)", query);
         }
 
         [Fact]
@@ -116,16 +186,17 @@ namespace DuckDBGeoparquet.Tests
         {
             var extent = new ExtentBounds(1, 2, 3, 4);
             var columns = new List<string> { "id", "geometry", "bbox" };
-            string query = S3Ingester.BuildLoadQuery("s3://bucket/place/*", "place", columns, extent);
+            string query = S3Ingester.BuildLoadQuery("s3://bucket/building/*", "building", columns, extent);
 
             // bbox present → repack via struct_pack after clipping.
             Assert.Contains("WITH clipped AS", query);
             Assert.Contains("ST_Intersection(geometry,", query);
+            Assert.Equal(1, CountOccurrences(query, "ST_Intersects(geometry,"));
             Assert.Contains("struct_pack", query);
             Assert.Contains("AS bbox", query);
+            Assert.Contains($"AS {GeoParquetSql.InternalGeometryTypeColumn}", query);
             // Pushdown predicate + refinement filter are both present.
             Assert.Contains("bbox.xmin <= 3", query);
-            Assert.Contains("ST_Intersects(geometry,", query);
         }
 
         [Fact]
@@ -136,9 +207,39 @@ namespace DuckDBGeoparquet.Tests
             string query = S3Ingester.BuildLoadQuery("s3://bucket/data/*", actualS3Type: null, columns, extent);
 
             Assert.Contains("ST_Intersection(geometry,", query);
+            Assert.Equal(1, CountOccurrences(query, "ST_Intersects(geometry,"));
             Assert.Contains("* EXCLUDE(geometry)", query);
+            Assert.Contains($"AS {GeoParquetSql.InternalGeometryTypeColumn}", query);
             // No bbox column → no struct_pack repack.
             Assert.DoesNotContain("struct_pack", query);
+        }
+
+        [Theory]
+        [InlineData("address")]
+        [InlineData("place")]
+        [InlineData("connector")]
+        public void BuildLoadQuery_WithExtentForPointOnlyTypes_PreservesOriginalGeometry(string actualType)
+        {
+            var extent = new ExtentBounds(1, 2, 3, 4);
+            var columns = new List<string> { "id", "geometry", "bbox", "sources" };
+            string query = S3Ingester.BuildLoadQuery("s3://bucket/data/*", actualType, columns, extent);
+
+            Assert.DoesNotContain("ST_Intersection", query);
+            Assert.Contains("ST_Intersects(geometry,", query);
+            Assert.Contains("ST_GeometryType(geometry)", query);
+            Assert.Contains($"AS {GeoParquetSql.InternalGeometryTypeColumn}", query);
+        }
+
+        private static int CountOccurrences(string value, string pattern)
+        {
+            int count = 0;
+            int index = 0;
+            while ((index = value.IndexOf(pattern, index, System.StringComparison.Ordinal)) >= 0)
+            {
+                count++;
+                index += pattern.Length;
+            }
+            return count;
         }
     }
 }

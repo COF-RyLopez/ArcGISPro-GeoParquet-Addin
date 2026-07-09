@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -92,7 +93,13 @@ namespace DuckDBGeoparquet.Services
         public Task ExportPreviewSampleAsync(string s3Path, string outputGeoJsonPath, ExtentBounds extent = null, int maxFeatures = 2000, CancellationToken cancellationToken = default)
             => ParquetExporter.ExportPreviewSampleAsync(s3Path, outputGeoJsonPath, extent, maxFeatures, cancellationToken);
 
-        public async Task<bool> IngestFileAsync(string s3Path, ExtentBounds extent = null, string actualS3Type = null, IProgress<string> progress = null, CancellationToken cancellationToken = default)
+        public async Task<bool> IngestFileAsync(
+            string s3Path,
+            ExtentBounds extent = null,
+            string actualS3Type = null,
+            IProgress<string> progress = null,
+            CancellationToken cancellationToken = default,
+            bool includeSourceProvenance = false)
         {
             try
             {
@@ -114,46 +121,34 @@ namespace DuckDBGeoparquet.Services
 
                 progress?.Report($"Reading schema from S3...");
 
+                string typeLabel = actualS3Type ?? "data";
+                string readParquetOptions = ShouldUseFastS3Read(s3Path)
+                    ? S3Ingester.S3FastReadParquetOptions
+                    : S3Ingester.S3ReadParquetOptions;
+
                 // Create a fresh command for this operation to ensure clean state
                 using var command = _connection.CreateCommand();
-                
-                // Ensure command text is empty before setting new query
-                command.CommandText = string.Empty;
-                
-                string schemaQuery = $@"
-                    CREATE OR REPLACE TABLE temp AS 
-                    SELECT * FROM read_parquet('{s3Path}', {S3Ingester.S3ReadParquetOptions}) LIMIT 0;
-                ";
-                command.CommandText = schemaQuery;
-                System.Diagnostics.Debug.WriteLine($"Executing schema query for {actualS3Type ?? "data"}...");
+                var schemaStopwatch = Stopwatch.StartNew();
+                List<string> columnNames;
                 try
                 {
-                    await command.ExecuteNonQueryAsync(cancellationToken);
+                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!UsesUnionByName(readParquetOptions))
                 {
-                    System.Diagnostics.Debug.WriteLine($"Error executing schema query: {ex.Message}");
-                    System.Diagnostics.Debug.WriteLine($"Query that failed: {schemaQuery.Substring(0, Math.Min(300, schemaQuery.Length))}");
-                    System.Diagnostics.Debug.WriteLine($"Connection state: {_connection.State}");
-                    throw;
+                    System.Diagnostics.Debug.WriteLine($"[{typeLabel}] Fast schema read failed, retrying with union_by_name: {ex.Message}");
+                    readParquetOptions = S3Ingester.S3ReadParquetOptions;
+                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken);
                 }
-
-                command.CommandText = "DESCRIBE temp";
-                var columnNames = new List<string>();
-                using var reader = await command.ExecuteReaderAsync(cancellationToken);
-                // Collect column names for projection and count for validation
-                while (await reader.ReadAsync())
-                {
-                    var colName = reader.GetString(0);
-                    columnNames.Add(colName);
-                }
-                System.Diagnostics.Debug.WriteLine($"Schema validated: {columnNames.Count} columns found");
+                schemaStopwatch.Stop();
+                System.Diagnostics.Debug.WriteLine(
+                    $"[perf][ingest:{typeLabel}] schema columns={columnNames.Count} read={DescribeReadOptions(readParquetOptions)} provenance={includeSourceProvenance} elapsed={FormatElapsed(schemaStopwatch.Elapsed)}");
 
                 progress?.Report($"Loading data from S3 (this may take a moment)...");
 
                 if (extent != null)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[{actualS3Type}] Spatial filter: requested extent=({GeoParquetSql.FormatCoordinate(extent.XMin)}, {GeoParquetSql.FormatCoordinate(extent.YMin)}) to ({GeoParquetSql.FormatCoordinate(extent.XMax)}, {GeoParquetSql.FormatCoordinate(extent.YMax)}), bbox overlap + ST_Intersects");
+                    System.Diagnostics.Debug.WriteLine($"[{typeLabel}] Spatial filter: requested extent=({GeoParquetSql.FormatCoordinate(extent.XMin)}, {GeoParquetSql.FormatCoordinate(extent.YMin)}) to ({GeoParquetSql.FormatCoordinate(extent.XMax)}, {GeoParquetSql.FormatCoordinate(extent.YMax)}), bbox overlap + ST_Intersects");
                     progress?.Report($"Applying spatial filter for current map extent...");
                 }
                 else
@@ -164,29 +159,39 @@ namespace DuckDBGeoparquet.Services
                 // Build query with optional column projection and geometry clipping.
                 // The pure builder trims heavy structs/arrays when safe and applies
                 // the bbox pushdown + ST_Intersects filter and clipping (see S3Ingester).
-                string query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent);
+                string query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions);
 
                 // Clear command text before setting new query to ensure clean state
                 command.CommandText = string.Empty;
                 command.CommandText = query;
                 
-                System.Diagnostics.Debug.WriteLine($"Executing data load query for {actualS3Type ?? "data"}...");
+                System.Diagnostics.Debug.WriteLine($"Executing data load query for {typeLabel}...");
+                var loadStopwatch = Stopwatch.StartNew();
                 try
                 {
                     await command.ExecuteNonQueryAsync(cancellationToken);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!UsesUnionByName(readParquetOptions))
                 {
-                    System.Diagnostics.Debug.WriteLine($"Error executing data load query: {ex.Message}");
-                    System.Diagnostics.Debug.WriteLine($"Query that failed: {query.Substring(0, Math.Min(300, query.Length))}");
-                    System.Diagnostics.Debug.WriteLine($"Connection state: {_connection.State}");
-                    throw;
+                    System.Diagnostics.Debug.WriteLine($"[{typeLabel}] Fast data load failed, retrying with union_by_name: {ex.Message}");
+                    readParquetOptions = S3Ingester.S3ReadParquetOptions;
+                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken);
+                    query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions);
+                    command.CommandText = query;
+                    await command.ExecuteNonQueryAsync(cancellationToken);
                 }
+                loadStopwatch.Stop();
+                System.Diagnostics.Debug.WriteLine(
+                    $"[perf][ingest:{typeLabel}] s3-load read={DescribeReadOptions(readParquetOptions)} provenance={includeSourceProvenance} elapsed={FormatElapsed(loadStopwatch.Elapsed)}");
 
+                var rowCountStopwatch = Stopwatch.StartNew();
                 command.CommandText = "SELECT COUNT(*) FROM current_table";
                 var count = await command.ExecuteScalarAsync(cancellationToken);
+                rowCountStopwatch.Stop();
                 progress?.Report($"Successfully loaded {count:N0} rows from S3");
-                System.Diagnostics.Debug.WriteLine($"[{actualS3Type}] Loaded {count} rows");
+                System.Diagnostics.Debug.WriteLine($"[{typeLabel}] Loaded {count} rows");
+                System.Diagnostics.Debug.WriteLine(
+                    $"[perf][ingest:{typeLabel}] row-count rows={count} provenance={includeSourceProvenance} elapsed={FormatElapsed(rowCountStopwatch.Elapsed)}");
 
                 // Early exit for empty datasets to avoid unnecessary processing
                 if (Convert.ToInt64(count) == 0)
@@ -203,6 +208,66 @@ namespace DuckDBGeoparquet.Services
                 System.Diagnostics.Debug.WriteLine($"Query error: {ex.Message}");
                 return false;
             }
+        }
+
+        private static bool ShouldUseFastS3Read(string s3Path)
+        {
+            return !string.IsNullOrWhiteSpace(s3Path) &&
+                   s3Path.Contains("s3://overturemaps", StringComparison.OrdinalIgnoreCase) &&
+                   s3Path.Contains("/release/", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool UsesUnionByName(string readParquetOptions)
+        {
+            return !string.IsNullOrWhiteSpace(readParquetOptions) &&
+                   readParquetOptions.Contains("union_by_name", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string DescribeReadOptions(string readParquetOptions)
+        {
+            return UsesUnionByName(readParquetOptions) ? "union_by_name" : "fast";
+        }
+
+        private static string FormatElapsed(TimeSpan elapsed)
+        {
+            return elapsed.TotalSeconds >= 1
+                ? $"{elapsed.TotalSeconds:F2}s"
+                : $"{elapsed.TotalMilliseconds:F0}ms";
+        }
+
+        private static async Task<List<string>> LoadS3SchemaAsync(
+            DuckDBCommand command,
+            string s3Path,
+            string typeLabel,
+            string readParquetOptions,
+            CancellationToken cancellationToken)
+        {
+            string schemaQuery = $@"
+                    CREATE OR REPLACE TABLE temp AS 
+                    SELECT * FROM {S3Ingester.BuildReadParquetExpression(s3Path, readParquetOptions)} LIMIT 0;
+                ";
+            command.CommandText = schemaQuery;
+            System.Diagnostics.Debug.WriteLine($"Executing schema query for {typeLabel} ({DescribeReadOptions(readParquetOptions)})...");
+            try
+            {
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error executing schema query: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Query that failed: {schemaQuery.Substring(0, Math.Min(300, schemaQuery.Length))}");
+                throw;
+            }
+
+            command.CommandText = "DESCRIBE temp";
+            var columnNames = new List<string>();
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync())
+            {
+                columnNames.Add(reader.GetString(0));
+            }
+            System.Diagnostics.Debug.WriteLine($"Schema validated: {columnNames.Count} columns found");
+            return columnNames;
         }
 
         /// <summary>

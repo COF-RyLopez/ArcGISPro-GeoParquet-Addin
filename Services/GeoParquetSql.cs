@@ -14,6 +14,8 @@ namespace DuckDBGeoparquet.Services
     /// </summary>
     public static class GeoParquetSql
     {
+        public const string InternalGeometryTypeColumn = "__overture_geom_type";
+
         /// <summary>Row group size for GeoParquet COPY output. 100k rows is a
         /// good balance of compression, read performance, and memory.</summary>
         public const int RowGroupSize = 100000;
@@ -81,6 +83,42 @@ namespace DuckDBGeoparquet.Services
                    $" AND bbox.xmax >= {FormatCoordinate(extent.XMin)}" +
                    $" AND bbox.ymin <= {FormatCoordinate(extent.YMax)}" +
                    $" AND bbox.ymax >= {FormatCoordinate(extent.YMin)}";
+        }
+
+        public static string BuildGeometryExportSelect(string geometryType, bool currentTableHasBbox, bool hasCachedGeometryType)
+        {
+            string escapedGeomType = EscapeSqlLiteral(geometryType);
+            string geometryTypeFilter = hasCachedGeometryType
+                ? $"{InternalGeometryTypeColumn} = '{escapedGeomType}'"
+                : $"ST_GeometryType(geometry) = '{escapedGeomType}'";
+            string excludedColumns = currentTableHasBbox
+                ? hasCachedGeometryType ? $"geometry, bbox, {InternalGeometryTypeColumn}" : "geometry, bbox"
+                : hasCachedGeometryType ? $"geometry, {InternalGeometryTypeColumn}" : "geometry";
+
+            if (currentTableHasBbox)
+            {
+                return $@"
+                            SELECT
+                                * EXCLUDE({excludedColumns}),
+                                geometry,
+                                struct_pack(
+                                    xmin := ST_XMin(geometry),
+                                    ymin := ST_YMin(geometry),
+                                    xmax := ST_XMax(geometry),
+                                    ymax := ST_YMax(geometry)
+                                ) AS bbox
+                            FROM current_table
+                            WHERE geometry IS NOT NULL
+                              AND {geometryTypeFilter}";
+            }
+
+            return $@"
+                            SELECT
+                                * EXCLUDE({excludedColumns}),
+                                geometry
+                            FROM current_table
+                            WHERE geometry IS NOT NULL
+                              AND {geometryTypeFilter}";
         }
     }
 }

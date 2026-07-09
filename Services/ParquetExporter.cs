@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -63,6 +64,7 @@ namespace DuckDBGeoparquet.Services
         {
             System.Diagnostics.Debug.WriteLine($"CreateFeatureLayersAsync called for: {layerNameBase}, ParentS3Theme: {parentS3Theme}, ActualS3Type: {actualS3Type}, DataOutputPathRoot: {dataOutputPathRoot}");
             progress?.Report($"Starting layer creation for {layerNameBase}");
+            var exportStopwatch = Stopwatch.StartNew();
 
             if (string.IsNullOrEmpty(parentS3Theme) || string.IsNullOrEmpty(actualS3Type))
             {
@@ -89,6 +91,9 @@ namespace DuckDBGeoparquet.Services
             try
             {
                 await ExportByGeometryType(layerNameBase, themeTypeSpecificFolder, parentS3Theme, actualS3Type, outputSessionSuffix, progress, compression, cancellationToken);
+                exportStopwatch.Stop();
+                System.Diagnostics.Debug.WriteLine(
+                    $"[perf][export:{actualS3Type}] geometry-export output={DescribeOutputPathKind(dataOutputPathRoot)} elapsed={FormatElapsed(exportStopwatch.Elapsed)}");
                 progress?.Report($"Feature layer creation process completed for {layerNameBase}.");
             }
             catch (Exception ex)
@@ -103,7 +108,11 @@ namespace DuckDBGeoparquet.Services
             progress?.Report($"Processing geometry types for {layerNameBase} with optimal layer stacking");
 
             using var command = _connection.CreateCommand();
-            command.CommandText = "SELECT DISTINCT ST_GeometryType(geometry) as geom_type FROM current_table WHERE geometry IS NOT NULL";
+            var discoveryStopwatch = Stopwatch.StartNew();
+            bool hasCachedGeometryType = await CurrentTableHasColumn(command, GeoParquetSql.InternalGeometryTypeColumn, cancellationToken);
+            command.CommandText = hasCachedGeometryType
+                ? $"SELECT DISTINCT {GeoParquetSql.InternalGeometryTypeColumn} as geom_type FROM current_table WHERE geometry IS NOT NULL AND {GeoParquetSql.InternalGeometryTypeColumn} IS NOT NULL"
+                : "SELECT DISTINCT ST_GeometryType(geometry) as geom_type FROM current_table WHERE geometry IS NOT NULL";
 
             var geometryTypes = new List<string>();
             try
@@ -117,6 +126,9 @@ namespace DuckDBGeoparquet.Services
                         geometryTypes.Add(geomType);
                     }
                 }
+                discoveryStopwatch.Stop();
+                System.Diagnostics.Debug.WriteLine(
+                    $"[perf][export:{actualS3Type}] geometry-discovery cached={hasCachedGeometryType} types={geometryTypes.Count} elapsed={FormatElapsed(discoveryStopwatch.Elapsed)}");
             }
             catch (Exception ex)
             {
@@ -141,9 +153,7 @@ namespace DuckDBGeoparquet.Services
                 return;
             }
 
-            command.CommandText = "SELECT COUNT(*) FROM pragma_table_info('current_table') WHERE lower(name) = 'bbox'";
-            var bboxColCount = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
-            bool currentTableHasBbox = bboxColCount > 0;
+            bool currentTableHasBbox = await CurrentTableHasColumn(command, "bbox", cancellationToken);
 
             int typeIndex = 0;
             foreach (var geomType in geometryTypes)
@@ -161,28 +171,7 @@ namespace DuckDBGeoparquet.Services
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(finalOutputPath));
 
-                    string escapedGeomType = geomType.Replace("'", "''");
-                    string exportSelect = currentTableHasBbox
-                        ? $@"
-                            SELECT
-                                * EXCLUDE(geometry, bbox),
-                                geometry,
-                                struct_pack(
-                                    xmin := ST_XMin(geometry),
-                                    ymin := ST_YMin(geometry),
-                                    xmax := ST_XMax(geometry),
-                                    ymax := ST_YMax(geometry)
-                                ) AS bbox
-                            FROM current_table
-                            WHERE geometry IS NOT NULL
-                              AND ST_GeometryType(geometry) = '{escapedGeomType}'"
-                        : $@"
-                            SELECT
-                                * EXCLUDE(geometry),
-                                geometry
-                            FROM current_table
-                            WHERE geometry IS NOT NULL
-                              AND ST_GeometryType(geometry) = '{escapedGeomType}'";
+                    string exportSelect = GeoParquetSql.BuildGeometryExportSelect(geomType, currentTableHasBbox, hasCachedGeometryType);
 
                     string targetPath = await ExportToGeoParquet(exportSelect, finalOutputPath, finalLayerName, progress, compression, cancellationToken);
 
@@ -252,7 +241,11 @@ namespace DuckDBGeoparquet.Services
                 }
                 
                 command.CommandText = GeoParquetSql.BuildCopyCommand(query, actualOutputPath, compression);
+                var copyStopwatch = Stopwatch.StartNew();
                 await command.ExecuteNonQueryAsync(cancellationToken);
+                copyStopwatch.Stop();
+                System.Diagnostics.Debug.WriteLine(
+                    $"[perf][export] copy layer=\"{layerName}\" output={DescribeOutputPathKind(actualOutputPath)} compression={GeoParquetSql.ValidateCompression(compression)} elapsed={FormatElapsed(copyStopwatch.Elapsed)}");
                 
                 if (useTempFile && File.Exists(actualOutputPath))
                 {
@@ -297,5 +290,32 @@ namespace DuckDBGeoparquet.Services
             "MULTIPOLYGON" => "multipolygons",
             _ => geomType.ToLowerInvariant()
         };
+
+        private static async Task<bool> CurrentTableHasColumn(DuckDBCommand command, string columnName, CancellationToken cancellationToken)
+        {
+            command.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('current_table') WHERE lower(name) = lower('{GeoParquetSql.EscapeSqlLiteral(columnName)}')";
+            var count = await command.ExecuteScalarAsync(cancellationToken);
+            return Convert.ToInt32(count) > 0;
+        }
+
+        private static string DescribeOutputPathKind(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return "unknown";
+
+            string normalized = path.Replace('/', '\\');
+            if (normalized.Contains("\\OneDrive", StringComparison.OrdinalIgnoreCase))
+                return "onedrive";
+            if (normalized.StartsWith(@"\\", StringComparison.OrdinalIgnoreCase))
+                return "network";
+            return Path.IsPathRooted(path) ? "local" : "relative";
+        }
+
+        private static string FormatElapsed(TimeSpan elapsed)
+        {
+            return elapsed.TotalSeconds >= 1
+                ? $"{elapsed.TotalSeconds:F2}s"
+                : $"{elapsed.TotalMilliseconds:F0}ms";
+        }
     }
 }

@@ -319,6 +319,13 @@ namespace DuckDBGeoparquet.Views
             set => SetProperty(ref _selectedCompression, value);
         }
 
+        private bool _addSourceProvenanceFields;
+        public bool AddSourceProvenanceFields
+        {
+            get => _addSourceProvenanceFields;
+            set => SetProperty(ref _addSourceProvenanceFields, value);
+        }
+
         // Available compression options for binding
         public List<string> CompressionOptions => new List<string> { "ZSTD", "SNAPPY", "GZIP" };
 

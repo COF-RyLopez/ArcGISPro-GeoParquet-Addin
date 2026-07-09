@@ -46,7 +46,7 @@ namespace DuckDBGeoparquet.Tests
                 string[] lines = File.ReadAllLines(csvPath);
                 Assert.Contains("edit_platform", lines[0]);
                 Assert.Contains("OpenStreetMap", lines[1]);
-                Assert.Contains("https://www.openstreetmap.org/way/42", lines[1]);
+                Assert.Contains("https://www.openstreetmap.org/edit?way=42", lines[1]);
             }
             finally
             {

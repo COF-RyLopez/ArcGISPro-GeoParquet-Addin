@@ -866,6 +866,9 @@ namespace DuckDBGeoparquet.Views
             StatusText = $"Processing {itemIndex + 1} of {totalCount}: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}";
             AddToLog($"Processing: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}");
             AddToLog($"Data type for S3: theme='{parentS3Theme}', type='{actualS3Type}'");
+            AddToLog(AddSourceProvenanceFields
+                ? "Source provenance fields will be added when Overture source metadata is available."
+                : "Source provenance fields are disabled for this download.");
             System.Diagnostics.Debug.WriteLine($"Data type for S3: theme='{parentS3Theme}', type='{actualS3Type}'");
 
             string trimmedRelease = LatestRelease?.Trim() ?? "";
@@ -893,7 +896,13 @@ namespace DuckDBGeoparquet.Views
             StatusText = $"Loading {itemDisplayName} from S3 (this may take 30-60 seconds)...";
             AddToLog($"⏳ Starting S3 data load for {itemDisplayName} - please wait, this operation may take time...");
 
-            bool ingestSuccess = await _dataProcessor.IngestFileAsync(s3Path, extent == null ? null : new ExtentBounds(extent.XMin, extent.YMin, extent.XMax, extent.YMax), actualS3Type, ingestProgressReporter, ct);
+            bool ingestSuccess = await _dataProcessor.IngestFileAsync(
+                s3Path,
+                extent == null ? null : new ExtentBounds(extent.XMin, extent.YMin, extent.XMax, extent.YMax),
+                actualS3Type,
+                ingestProgressReporter,
+                ct,
+                AddSourceProvenanceFields);
 
             heartbeatCts.Cancel();
             try { await heartbeatTask; } catch (OperationCanceledException) { }
@@ -1154,6 +1163,7 @@ namespace DuckDBGeoparquet.Views
                 "Data",
                 LatestRelease ?? "latest"
             );
+            AddSourceProvenanceFields = false;
 
             // Reset MFC options
             IsSharedMfc = true;

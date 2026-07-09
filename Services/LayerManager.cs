@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -81,6 +82,7 @@ namespace DuckDBGeoparquet.Services
         /// </summary>
         public async Task AddAllLayersToMapAsync(MapStyleDefinition selectedMapStyle, CartographicProfile selectedProfile, IProgress<string> progress = null)
         {
+            var addAllStopwatch = Stopwatch.StartNew();
             if (!_pendingLayers.Any())
             {
                 LastAddedLayerCount = 0;
@@ -89,7 +91,11 @@ namespace DuckDBGeoparquet.Services
             }
 
             var effectiveStyle = GetEffectiveSelectedStyle(selectedProfile, selectedMapStyle);
+            var sortStopwatch = Stopwatch.StartNew();
             var sortedLayers = SortLayersByGeometryPriority(_pendingLayers, effectiveStyle);
+            sortStopwatch.Stop();
+            System.Diagnostics.Debug.WriteLine(
+                $"[perf][layer-add] sort layers={sortedLayers.Count} elapsed={FormatElapsed(sortStopwatch.Elapsed)}");
 
             progress?.Report($"Preparing to add {sortedLayers.Count} layers with optimal stacking order...");
             string styleName = (selectedProfile != null || selectedMapStyle != null)
@@ -131,6 +137,7 @@ namespace DuckDBGeoparquet.Services
                 {
                     progress?.Report("Starting bulk layer creation process...");
 
+                    var queuedBulkStopwatch = Stopwatch.StartNew();
                     await QueuedTask.Run(() =>
                     {
                         var map = MapView.Active?.Map;
@@ -143,6 +150,9 @@ namespace DuckDBGeoparquet.Services
 
                         missingLayersForIndividualCreation = AddLayerBatch(map, sortedLayers, selectedMapStyle, selectedProfile, progress);
                     });
+                    queuedBulkStopwatch.Stop();
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[perf][layer-add] queued-bulk layers={sortedLayers.Count} elapsed={FormatElapsed(queuedBulkStopwatch.Elapsed)}");
 
                     if (missingLayersForIndividualCreation?.Any() == true)
                     {
@@ -159,6 +169,7 @@ namespace DuckDBGeoparquet.Services
                 }
             }
 
+            var drawOrderStopwatch = Stopwatch.StartNew();
             await QueuedTask.Run(() =>
             {
                 var map = MapView.Active?.Map;
@@ -167,6 +178,12 @@ namespace DuckDBGeoparquet.Services
                     EnforceLayerDrawOrder(map, sortedLayers, progress);
                 }
             });
+            drawOrderStopwatch.Stop();
+            addAllStopwatch.Stop();
+            System.Diagnostics.Debug.WriteLine(
+                $"[perf][layer-add] draw-order layers={sortedLayers.Count} elapsed={FormatElapsed(drawOrderStopwatch.Elapsed)}");
+            System.Diagnostics.Debug.WriteLine(
+                $"[perf][layer-add] total layers={sortedLayers.Count} elapsed={FormatElapsed(addAllStopwatch.Elapsed)}");
 
             _pendingLayers.Clear();
         }
@@ -273,6 +290,7 @@ namespace DuckDBGeoparquet.Services
 
         private List<LayerCreationInfo> AddLayerBatch(Map map, List<LayerCreationInfo> sortedLayers, MapStyleDefinition selectedMapStyle, CartographicProfile selectedProfile, IProgress<string> progress)
         {
+            var batchStopwatch = Stopwatch.StartNew();
             progress?.Report("Validating layer files...");
 
             var uris = new List<Uri>();
@@ -305,19 +323,28 @@ namespace DuckDBGeoparquet.Services
             if (!uris.Any())
                 return null;
 
+            var removeStopwatch = Stopwatch.StartNew();
             int removedExisting = RemoveExistingMembersForTargetParquetFiles(map, validLayerInfos);
+            removeStopwatch.Stop();
+            System.Diagnostics.Debug.WriteLine(
+                $"[perf][layer-add] remove-existing removed={removedExisting} layers={validLayerInfos.Count} elapsed={FormatElapsed(removeStopwatch.Elapsed)}");
             if (removedExisting > 0)
             {
                 progress?.Report($"Removed {removedExisting} existing map member(s) that used the same output files.");
             }
 
             progress?.Report("Executing bulk layer creation (this may take a moment)...");
+            var createStopwatch = Stopwatch.StartNew();
             var layers = LayerFactory.Instance.CreateLayers(uris, map);
+            createStopwatch.Stop();
+            System.Diagnostics.Debug.WriteLine(
+                $"[perf][layer-add] bulk-create requested={uris.Count} created={layers.Count} elapsed={FormatElapsed(createStopwatch.Elapsed)}");
 
             progress?.Report($"Bulk creation completed. Applying settings to {layers.Count} layers...");
             MapStyleDefinition effectiveStyle = GetEffectiveSelectedStyle(selectedProfile, selectedMapStyle);
             string effectiveCartographyName = CartographicProfileRules.GetDisplayName(selectedProfile, effectiveStyle);
 
+            var settingsStopwatch = Stopwatch.StartNew();
             for (int i = 0; i < layers.Count && i < layerNames.Count; i++)
             {
                 if (layers[i] != null)
@@ -341,8 +368,14 @@ namespace DuckDBGeoparquet.Services
                     }
                 }
             }
+            settingsStopwatch.Stop();
+            System.Diagnostics.Debug.WriteLine(
+                $"[perf][layer-add] apply-settings layers={layers.Count} style=\"{effectiveCartographyName}\" elapsed={FormatElapsed(settingsStopwatch.Elapsed)}");
 
             progress?.Report($"✅ Successfully added {layers.Count} layers with optimal stacking order!");
+            batchStopwatch.Stop();
+            System.Diagnostics.Debug.WriteLine(
+                $"[perf][layer-add] batch-total requested={uris.Count} created={layers.Count} elapsed={FormatElapsed(batchStopwatch.Elapsed)}");
 
             if (layers.Count < uris.Count)
             {
@@ -358,6 +391,7 @@ namespace DuckDBGeoparquet.Services
 
         private static void EnforceLayerDrawOrder(Map map, List<LayerCreationInfo> desiredOrder, IProgress<string> progress)
         {
+            var stopwatch = Stopwatch.StartNew();
             if (map == null || desiredOrder == null || desiredOrder.Count == 0)
                 return;
 
@@ -388,6 +422,7 @@ namespace DuckDBGeoparquet.Services
                 .DefaultIfEmpty(0)
                 .Min();
 
+            int movedCount = 0;
             for (int i = desiredNames.Count - 1; i >= 0; i--)
             {
                 string layerName = desiredNames[i];
@@ -395,8 +430,12 @@ namespace DuckDBGeoparquet.Services
                     continue;
 
                 map.MoveLayer(layerToMove, targetStartIndex);
+                movedCount++;
             }
 
+            stopwatch.Stop();
+            System.Diagnostics.Debug.WriteLine(
+                $"[perf][layer-add] enforce-draw-order desired={desiredNames.Count} present={presentLayers.Count} moved={movedCount} elapsed={FormatElapsed(stopwatch.Elapsed)}");
             progress?.Report("Applied deterministic layer draw order");
         }
 
@@ -741,6 +780,13 @@ namespace DuckDBGeoparquet.Services
                     }
                 }
             });
+        }
+
+        private static string FormatElapsed(TimeSpan elapsed)
+        {
+            return elapsed.TotalSeconds >= 1
+                ? $"{elapsed.TotalSeconds:F2}s"
+                : $"{elapsed.TotalMilliseconds:F0}ms";
         }
     }
 }

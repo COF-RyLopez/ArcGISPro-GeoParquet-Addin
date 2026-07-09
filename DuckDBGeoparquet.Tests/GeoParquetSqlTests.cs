@@ -93,5 +93,27 @@ namespace DuckDBGeoparquet.Tests
             // First and last vertex must match for a valid ring.
             Assert.Contains("10 20, 30 20, 30 40, 10 40, 10 20", polygon);
         }
+
+        [Fact]
+        public void BuildGeometryExportSelect_UsesCachedGeometryTypeAndExcludesInternalColumn()
+        {
+            string sql = GeoParquetSql.BuildGeometryExportSelect("MULTIPOLYGON", currentTableHasBbox: true, hasCachedGeometryType: true);
+
+            Assert.Contains($"* EXCLUDE(geometry, bbox, {GeoParquetSql.InternalGeometryTypeColumn})", sql);
+            Assert.Contains($"{GeoParquetSql.InternalGeometryTypeColumn} = 'MULTIPOLYGON'", sql);
+            Assert.DoesNotContain("ST_GeometryType(geometry) = 'MULTIPOLYGON'", sql);
+            Assert.Contains("struct_pack", sql);
+        }
+
+        [Fact]
+        public void BuildGeometryExportSelect_FallsBackToGeometryFunctionWhenNoCachedColumn()
+        {
+            string sql = GeoParquetSql.BuildGeometryExportSelect("POINT", currentTableHasBbox: false, hasCachedGeometryType: false);
+
+            Assert.Contains("* EXCLUDE(geometry)", sql);
+            Assert.Contains("ST_GeometryType(geometry) = 'POINT'", sql);
+            Assert.DoesNotContain(GeoParquetSql.InternalGeometryTypeColumn, sql);
+            Assert.DoesNotContain("struct_pack", sql);
+        }
     }
 }
