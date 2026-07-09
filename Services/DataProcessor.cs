@@ -66,6 +66,23 @@ namespace DuckDBGeoparquet.Services
             ParquetExporter = new ParquetExporter(_duckDb, LayerManager);
         }
 
+        private static void SaveDiagnosticLog(string prefix, string content)
+        {
+            try
+            {
+                var root = AppDomain.CurrentDomain.BaseDirectory;
+                var docs = System.IO.Path.Combine(root, "docs", "diagnostics");
+                System.IO.Directory.CreateDirectory(docs);
+                var filename = System.IO.Path.Combine(docs, $"{prefix}_{DateTime.UtcNow:yyyyMMdd_HHmmss_fff}.log");
+                System.IO.File.WriteAllText(filename, content);
+                System.Diagnostics.Debug.WriteLine($"Saved diagnostic log: {filename}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to save diagnostic log: {ex.Message}");
+            }
+        }
+
         /// <summary>
         /// Starts a new output session so exported parquet file paths are unique per load.
         /// This prevents ArcGIS from reusing stale cache metadata tied to a previous file path.
@@ -144,6 +161,10 @@ namespace DuckDBGeoparquet.Services
                 System.Diagnostics.Debug.WriteLine(
                     $"[perf][ingest:{typeLabel}] schema columns={columnNames.Count} read={DescribeReadOptions(readParquetOptions)} provenance={includeSourceProvenance} elapsed={FormatElapsed(schemaStopwatch.Elapsed)}");
 
+                var flattenedFields = S3Ingester.GetFlattenedFieldNames(actualS3Type, columnNames, includeSourceProvenance);
+                var schemaReport = OvertureSchema.BuildCompatibilityReport(actualS3Type, columnNames, flattenedFields);
+                ReportSchemaCompatibility(typeLabel, schemaReport, progress);
+
                 progress?.Report($"Loading data from S3 (this may take a moment)...");
 
                 if (extent != null)
@@ -169,7 +190,7 @@ namespace DuckDBGeoparquet.Services
                 var loadStopwatch = Stopwatch.StartNew();
                 try
                 {
-                    await command.ExecuteNonQueryAsync(cancellationToken);
+                    await ExecuteNonQueryWithRetriesAsync(command, typeLabel, cancellationToken);
                 }
                 catch (Exception ex) when (!UsesUnionByName(readParquetOptions))
                 {
@@ -178,7 +199,7 @@ namespace DuckDBGeoparquet.Services
                     columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken);
                     query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions);
                     command.CommandText = query;
-                    await command.ExecuteNonQueryAsync(cancellationToken);
+                    await ExecuteNonQueryWithRetriesAsync(command, typeLabel, cancellationToken);
                 }
                 loadStopwatch.Stop();
                 System.Diagnostics.Debug.WriteLine(
@@ -186,7 +207,12 @@ namespace DuckDBGeoparquet.Services
 
                 var rowCountStopwatch = Stopwatch.StartNew();
                 command.CommandText = "SELECT COUNT(*) FROM current_table";
-                var count = await command.ExecuteScalarAsync(cancellationToken);
+                if (string.IsNullOrWhiteSpace(command.CommandText))
+                {
+                    System.Diagnostics.Debug.WriteLine("Count query was not set before execution");
+                    return false;
+                }
+                var count = await ExecuteScalarWithRetriesAsync(command, cancellationToken);
                 rowCountStopwatch.Stop();
                 progress?.Report($"Successfully loaded {count:N0} rows from S3");
                 System.Diagnostics.Debug.WriteLine($"[{typeLabel}] Loaded {count} rows");
@@ -203,10 +229,93 @@ namespace DuckDBGeoparquet.Services
 
                 return true;
             }
+            catch (OperationCanceledException ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Ingest cancelled for {s3Path}: {ex.Message}");
+                progress?.Report("Ingest operation cancelled");
+                return false;
+            }
+            catch (TaskCanceledException ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Ingest task cancelled for {s3Path}: {ex.Message}");
+                progress?.Report("Ingest operation cancelled (task)");
+                return false;
+            }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Query error: {ex.Message}");
                 return false;
+            }
+        }
+
+        private static async Task ExecuteNonQueryWithRetriesAsync(DuckDB.NET.Data.DuckDBCommand command, string label, CancellationToken cancellationToken)
+        {
+            if (command == null) throw new ArgumentNullException(nameof(command));
+            if (string.IsNullOrWhiteSpace(command.CommandText))
+                throw new InvalidOperationException("Command text is empty before ExecuteNonQueryWithRetriesAsync");
+
+            int maxAttempts = 3;
+            int attempt = 0;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (true)
+            {
+                attempt++;
+                try
+                {
+                    System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery attempt {attempt}");
+                    await command.ExecuteNonQueryAsync(cancellationToken);
+                    sw.Stop();
+                    System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery succeeded in {sw.ElapsedMilliseconds}ms on attempt {attempt}");
+                    return;
+                }
+                catch (OperationCanceledException)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery cancelled on attempt {attempt}");
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery attempt {attempt} failed: {ex.Message}");
+                    if (attempt >= maxAttempts || cancellationToken.IsCancellationRequested)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[{label}] ExecuteNonQuery giving up after {attempt} attempts");
+                        throw;
+                    }
+                    // Backoff
+                    int delayMs = 250 * attempt; // 250ms, 500ms, ...
+                    try { await Task.Delay(delayMs, cancellationToken); } catch { throw; }
+                }
+            }
+        }
+
+        private static async Task<object> ExecuteScalarWithRetriesAsync(DuckDB.NET.Data.DuckDBCommand command, CancellationToken cancellationToken)
+        {
+            if (command == null) throw new ArgumentNullException(nameof(command));
+            if (string.IsNullOrWhiteSpace(command.CommandText))
+                throw new InvalidOperationException("Command text is empty before ExecuteScalarWithRetriesAsync");
+
+            int maxAttempts = 3;
+            int attempt = 0;
+            while (true)
+            {
+                attempt++;
+                try
+                {
+                    return await command.ExecuteScalarAsync(cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    System.Diagnostics.Debug.WriteLine($"ExecuteScalar cancelled on attempt {attempt}");
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"ExecuteScalar attempt {attempt} failed: {ex.Message}");
+                    if (attempt >= maxAttempts || cancellationToken.IsCancellationRequested)
+                        throw;
+                    int delayMs = 250 * attempt;
+                    try { await Task.Delay(delayMs, cancellationToken); } catch { throw; }
+                }
             }
         }
 
@@ -250,7 +359,13 @@ namespace DuckDBGeoparquet.Services
             System.Diagnostics.Debug.WriteLine($"Executing schema query for {typeLabel} ({DescribeReadOptions(readParquetOptions)})...");
             try
             {
-                await command.ExecuteNonQueryAsync(cancellationToken);
+                command.CommandText = schemaQuery;
+                await ExecuteNonQueryWithRetriesAsync(command, typeLabel + "-schema", cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                System.Diagnostics.Debug.WriteLine($"Schema query cancelled for {typeLabel}");
+                throw;
             }
             catch (Exception ex)
             {
@@ -268,6 +383,43 @@ namespace DuckDBGeoparquet.Services
             }
             System.Diagnostics.Debug.WriteLine($"Schema validated: {columnNames.Count} columns found");
             return columnNames;
+        }
+
+        private static void ReportSchemaCompatibility(
+            string typeLabel,
+            OvertureSchema.SchemaCompatibilityReport report,
+            IProgress<string> progress)
+        {
+            if (report == null)
+                return;
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[{typeLabel}] Overture schema reference={report.ReferenceSchemaVersion} missing={report.MissingExpectedColumns.Count} unknown={report.UnknownColumns.Count} flattened={report.FlattenedFields.Count}");
+
+            if (report.FlattenedFields.Count > 0)
+            {
+                progress?.Report($"Schema-aware fields: flattened {report.FlattenedFields.Count} Overture nested field(s): {FormatList(report.FlattenedFields, 8)}");
+            }
+
+            if (report.MissingExpectedColumns.Count > 0)
+            {
+                progress?.Report($"Schema note: {report.MissingExpectedColumns.Count} expected {report.ReferenceSchemaVersion} column(s) were not present for {typeLabel}: {FormatList(report.MissingExpectedColumns, 6)}");
+            }
+
+            if (report.UnknownColumns.Count > 0)
+            {
+                progress?.Report($"Schema note: found {report.UnknownColumns.Count} column(s) not in the {report.ReferenceSchemaVersion} {typeLabel} baseline: {FormatList(report.UnknownColumns, 6)}");
+            }
+        }
+
+        private static string FormatList(IReadOnlyList<string> values, int maxItems)
+        {
+            if (values == null || values.Count == 0)
+                return "none";
+
+            var shown = values.Take(maxItems).ToList();
+            string suffix = values.Count > shown.Count ? $" (+{values.Count - shown.Count} more)" : string.Empty;
+            return string.Join(", ", shown) + suffix;
         }
 
         /// <summary>

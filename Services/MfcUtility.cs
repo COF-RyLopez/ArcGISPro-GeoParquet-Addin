@@ -185,8 +185,9 @@ namespace DuckDBGeoparquet.Services
                 "division", new List<string> {
                     "id", "bbox_xmin", "bbox_xmax", "bbox_ymin", "bbox_ymax",
                     "country", "version", "cartography_prominence", "cartography_min_zoom",
-                    "cartography_max_zoom", "cartography_sort_key", "subtype", "class",
-                    "names_primary", "wikidata", "region", "perspectives_mode",
+                    "cartography_max_zoom", "cartography_sort_key", "cartography_min_scale",
+                    "cartography_max_scale", "subtype", "class",
+                    "names_primary", "names_common", "display_name", "wikidata", "region", "admin_level", "perspectives_mode",
                     "parent_division_id", "norms_driving_side", "population",
                     "filename", "theme", "type", "geometry"
                 }
@@ -217,7 +218,8 @@ namespace DuckDBGeoparquet.Services
                 "land_cover", new List<string> {
                     "id", "bbox_xmin", "bbox_xmax", "bbox_ymin", "bbox_ymax",
                     "version", "cartography_prominence", "cartography_min_zoom",
-                    "cartography_max_zoom", "cartography_sort_key", "subtype",
+                    "cartography_max_zoom", "cartography_sort_key", "cartography_min_scale",
+                    "cartography_max_scale", "subtype",
                     "filename", "theme", "type", "geometry"
                 }
             },
@@ -231,14 +233,18 @@ namespace DuckDBGeoparquet.Services
             {
                 "place", new List<string> {
                     "id", "bbox_xmin", "bbox_xmax", "bbox_ymin", "bbox_ymax",
-                    "version", "names_primary", "categories_primary", "confidence",
+                    "version", "names_primary", "names_common", "display_name", "categories_primary",
+                    "categories_alternate", "taxonomy_summary", "place_basic_category",
+                    "place_operating_status", "confidence",
                     "brand_wikidata", "brand_names_primary", "filename", "theme", "type", "geometry"
                 }
             },
             {
                 "segment", new List<string> {
                     "id", "bbox_xmin", "bbox_xmax", "bbox_ymin", "bbox_ymax",
-                    "version", "subtype", "class", "names_primary", "subclass",
+                    "version", "subtype", "class", "names_primary", "names_common", "display_name", "subclass",
+                    "connector_count", "road_surface_values", "speed_limit_rule_count",
+                    "access_restriction_count", "route_count",
                     "filename", "theme", "type", "geometry"
                 }
             },

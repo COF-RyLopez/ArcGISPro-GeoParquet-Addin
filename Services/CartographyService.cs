@@ -20,7 +20,8 @@ namespace DuckDBGeoparquet.Services
         // Shared Arcade expression used for all segment labeling to prefer primary names
         // and fall back to common names when primary is absent.
         private const string SegmentNameArcadeExpression =
-            "var n = Trim(Text(DefaultValue($feature['names_primary'], ''))); " +
+            "var n = IIf(HasKey($feature, 'display_name'), Trim(Text(DefaultValue($feature['display_name'], ''))), ''); " +
+            "if (IsEmpty(n)) { n = Trim(Text(DefaultValue($feature['names_primary'], ''))); } " +
             "if (IsEmpty(n)) { var c = Trim(Text(DefaultValue($feature['names_common_key_value_value'], ''))); if (!IsEmpty(c)) n = c; } " +
             "return IIf(IsEmpty(n), '', n);";
 
@@ -884,11 +885,11 @@ namespace DuckDBGeoparquet.Services
                     return SegmentNameArcadeExpression;
                 case "division":
                     if (!isPoint) return null;
-                    return "var n = $feature['names_primary']; return DefaultValue(n, '');";
+                    return "var n = IIf(HasKey($feature, 'display_name'), Trim(Text(DefaultValue($feature['display_name'], ''))), ''); if (IsEmpty(n)) { n = Trim(Text(DefaultValue($feature['names_primary'], ''))); } return n;";
                 case "infrastructure":
                 case "land":
                     if (!isPoint) return null;
-                    return "var n = $feature['names_primary']; return DefaultValue(n, '');";
+                    return "var n = IIf(HasKey($feature, 'display_name'), Trim(Text(DefaultValue($feature['display_name'], ''))), ''); if (IsEmpty(n)) { n = Trim(Text(DefaultValue($feature['names_primary'], ''))); } return n;";
                 default:
                     return null; // connector and others: no labels
             }

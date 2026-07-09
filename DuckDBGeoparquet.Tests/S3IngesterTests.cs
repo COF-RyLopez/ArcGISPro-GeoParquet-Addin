@@ -162,6 +162,9 @@ namespace DuckDBGeoparquet.Tests
             var columns = new List<string> { "id", "names", "addresses", "geometry", "bbox", "sources" };
             string query = S3Ingester.BuildLoadQuery("s3://bucket/place/*", "place", columns, extent: null);
 
+            Assert.Contains("AS names_primary", query);
+            Assert.Contains("AS names_common", query);
+            Assert.Contains("AS display_name", query);
             Assert.Contains("string_agg(CAST(a.freeform AS VARCHAR), ' | ')", query);
             Assert.Contains("AS address_freeform", query);
             Assert.Contains("AS address_locality", query);
@@ -169,6 +172,71 @@ namespace DuckDBGeoparquet.Tests
             Assert.Contains("AS address_postcode", query);
             Assert.Contains("AS address_country", query);
             Assert.DoesNotContain("SELECT id, names, addresses", query);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_FlattensCartographyHintsToZoomAndScaleFields()
+        {
+            var columns = new List<string> { "id", "cartography", "geometry", "bbox" };
+            string query = S3Ingester.BuildLoadQuery("s3://bucket/division/*", "division", columns, extent: null);
+
+            Assert.Contains("AS cartography_prominence", query);
+            Assert.Contains("AS cartography_min_zoom", query);
+            Assert.Contains("AS cartography_max_zoom", query);
+            Assert.Contains("AS cartography_sort_key", query);
+            Assert.Contains("AS cartography_min_scale", query);
+            Assert.Contains("AS cartography_max_scale", query);
+            Assert.Contains("591657527.591555 / power(2", query);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_ForPlaces_FlattensTaxonomyCategoryStatusAndBrandFields()
+        {
+            var columns = new List<string>
+            {
+                "id", "names", "categories", "taxonomy", "basic_category",
+                "operating_status", "brand", "confidence", "geometry", "bbox"
+            };
+            string query = S3Ingester.BuildLoadQuery("s3://bucket/place/*", "place", columns, extent: null);
+
+            Assert.Contains("AS categories_primary", query);
+            Assert.Contains("AS categories_alternate", query);
+            Assert.Contains("AS taxonomy_summary", query);
+            Assert.Contains("AS place_basic_category", query);
+            Assert.Contains("AS place_operating_status", query);
+            Assert.Contains("AS brand_wikidata", query);
+            Assert.Contains("AS brand_names_primary", query);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_ForSegments_FlattensTransportationQaFields()
+        {
+            var columns = new List<string>
+            {
+                "id", "names", "connectors", "road_surface", "speed_limits",
+                "access_restrictions", "routes", "geometry", "bbox"
+            };
+            string query = S3Ingester.BuildLoadQuery("s3://bucket/segment/*", "segment", columns, extent: null);
+
+            Assert.Contains("AS connector_count", query);
+            Assert.Contains("AS road_surface_values", query);
+            Assert.Contains("AS speed_limit_rule_count", query);
+            Assert.Contains("AS access_restriction_count", query);
+            Assert.Contains("AS route_count", query);
+        }
+
+        [Fact]
+        public void GetFlattenedFieldNames_ReportsOnlyNewFlattenedFields()
+        {
+            var columns = new List<string> { "id", "names", "display_name", "cartography", "sources", "geometry" };
+            var fields = S3Ingester.GetFlattenedFieldNames("division", columns, includeSourceProvenance: true);
+
+            Assert.Contains("names_primary", fields);
+            Assert.Contains("names_common", fields);
+            Assert.DoesNotContain("display_name", fields);
+            Assert.Contains("cartography_min_zoom", fields);
+            Assert.Contains("cartography_min_scale", fields);
+            Assert.Contains("source_primary_dataset", fields);
         }
 
         [Fact]

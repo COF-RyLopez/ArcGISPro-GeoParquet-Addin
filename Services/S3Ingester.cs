@@ -181,34 +181,134 @@ namespace DuckDBGeoparquet.Services
                    string.Equals(actualS3Type, "connector", StringComparison.OrdinalIgnoreCase);
         }
 
+        public static IReadOnlyList<string> GetFlattenedFieldNames(
+            string actualS3Type,
+            IReadOnlyList<string> columnNames,
+            bool includeSourceProvenance = false)
+        {
+            var flattened = new List<string>();
+            AddSharedFlattenedFieldNames(flattened, columnNames);
+
+            if (string.Equals(actualS3Type, "place", StringComparison.OrdinalIgnoreCase))
+                AddPlaceFlattenedFieldNames(flattened, columnNames);
+
+            if (string.Equals(actualS3Type, "segment", StringComparison.OrdinalIgnoreCase))
+                AddSegmentFlattenedFieldNames(flattened, columnNames);
+
+            if (includeSourceProvenance)
+                AddSourceFlattenedFieldNames(flattened, columnNames);
+
+            return flattened;
+        }
+
         private static string AppendDownloadDerivedColumns(string projection, string actualS3Type, IReadOnlyList<string> columnNames, bool includeSourceProvenance)
         {
+            projection = AppendSharedDerivedColumns(projection, columnNames);
             projection = AppendPlaceDerivedColumns(projection, actualS3Type, columnNames);
+            projection = AppendSegmentDerivedColumns(projection, actualS3Type, columnNames);
             return includeSourceProvenance
                 ? AppendSourceProvenanceColumns(projection, columnNames)
                 : projection;
         }
 
+        private static string AppendSharedDerivedColumns(string projection, IReadOnlyList<string> columnNames)
+        {
+            var derivedColumns = new List<string>();
+
+            if (HasColumn(columnNames, "names"))
+            {
+                AddDerivedColumn(derivedColumns, columnNames, "names_primary", "TRY_CAST(names.primary AS VARCHAR)");
+                AddDerivedColumn(derivedColumns, columnNames, "names_common", "TRY_CAST(names.common AS VARCHAR)");
+                AddDerivedColumn(derivedColumns, columnNames, "display_name",
+                    "COALESCE(NULLIF(trim(TRY_CAST(names.primary AS VARCHAR)), ''), NULLIF(trim(TRY_CAST(names.common AS VARCHAR)), ''))");
+            }
+
+            if (HasColumn(columnNames, "cartography"))
+            {
+                AddDerivedColumn(derivedColumns, columnNames, "cartography_prominence", "TRY_CAST(cartography.prominence AS INTEGER)");
+                AddDerivedColumn(derivedColumns, columnNames, "cartography_min_zoom", "TRY_CAST(cartography.min_zoom AS INTEGER)");
+                AddDerivedColumn(derivedColumns, columnNames, "cartography_max_zoom", "TRY_CAST(cartography.max_zoom AS INTEGER)");
+                AddDerivedColumn(derivedColumns, columnNames, "cartography_sort_key", "TRY_CAST(cartography.sort_key AS INTEGER)");
+                AddDerivedColumn(derivedColumns, columnNames, "cartography_min_scale", "CAST(ROUND(591657527.591555 / power(2, TRY_CAST(cartography.min_zoom AS DOUBLE))) AS BIGINT)");
+                AddDerivedColumn(derivedColumns, columnNames, "cartography_max_scale", "CAST(ROUND(591657527.591555 / power(2, TRY_CAST(cartography.max_zoom AS DOUBLE))) AS BIGINT)");
+            }
+
+            return derivedColumns.Count == 0
+                ? projection
+                : $"{projection}, {string.Join(", ", derivedColumns)}";
+        }
+
         private static string AppendPlaceDerivedColumns(string projection, string actualS3Type, IReadOnlyList<string> columnNames)
         {
-            if (!string.Equals(actualS3Type, "place", StringComparison.OrdinalIgnoreCase) ||
-                columnNames == null ||
-                !columnNames.Any(c => c.Equals("addresses", StringComparison.OrdinalIgnoreCase)))
+            if (!string.Equals(actualS3Type, "place", StringComparison.OrdinalIgnoreCase) || columnNames == null)
             {
                 return projection;
             }
 
             var derivedColumns = new List<string>();
-            AddDerivedAddressColumn(derivedColumns, columnNames, "address_freeform",
-                "(SELECT string_agg(CAST(a.freeform AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.freeform IS NOT NULL AND trim(CAST(a.freeform AS VARCHAR)) <> '')");
-            AddDerivedAddressColumn(derivedColumns, columnNames, "address_locality",
-                "(SELECT string_agg(DISTINCT CAST(a.locality AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.locality IS NOT NULL AND trim(CAST(a.locality AS VARCHAR)) <> '')");
-            AddDerivedAddressColumn(derivedColumns, columnNames, "address_region",
-                "(SELECT string_agg(DISTINCT CAST(a.region AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.region IS NOT NULL AND trim(CAST(a.region AS VARCHAR)) <> '')");
-            AddDerivedAddressColumn(derivedColumns, columnNames, "address_postcode",
-                "(SELECT string_agg(DISTINCT left(CAST(a.postcode AS VARCHAR), 5), ' | ') FROM unnest(addresses) AS t(a) WHERE a.postcode IS NOT NULL AND trim(CAST(a.postcode AS VARCHAR)) <> '')");
-            AddDerivedAddressColumn(derivedColumns, columnNames, "address_country",
-                "(SELECT string_agg(DISTINCT CAST(a.country AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.country IS NOT NULL AND trim(CAST(a.country AS VARCHAR)) <> '')");
+
+            if (HasColumn(columnNames, "categories"))
+            {
+                AddDerivedColumn(derivedColumns, columnNames, "categories_primary", "TRY_CAST(categories.primary AS VARCHAR)");
+                AddDerivedColumn(derivedColumns, columnNames, "categories_alternate", "TRY_CAST(categories.alternate AS VARCHAR)");
+            }
+
+            if (HasColumn(columnNames, "basic_category"))
+                AddDerivedColumn(derivedColumns, columnNames, "place_basic_category", "TRY_CAST(basic_category AS VARCHAR)");
+
+            if (HasColumn(columnNames, "taxonomy"))
+                AddDerivedColumn(derivedColumns, columnNames, "taxonomy_summary", "TRY_CAST(taxonomy AS VARCHAR)");
+
+            if (HasColumn(columnNames, "operating_status"))
+                AddDerivedColumn(derivedColumns, columnNames, "place_operating_status", "TRY_CAST(operating_status AS VARCHAR)");
+
+            if (HasColumn(columnNames, "brand"))
+            {
+                AddDerivedColumn(derivedColumns, columnNames, "brand_wikidata", "TRY_CAST(brand.wikidata AS VARCHAR)");
+                AddDerivedColumn(derivedColumns, columnNames, "brand_names_primary", "TRY_CAST(brand.names.primary AS VARCHAR)");
+            }
+
+            if (HasColumn(columnNames, "addresses"))
+            {
+                AddDerivedColumn(derivedColumns, columnNames, "address_freeform",
+                    "(SELECT string_agg(CAST(a.freeform AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.freeform IS NOT NULL AND trim(CAST(a.freeform AS VARCHAR)) <> '')");
+                AddDerivedColumn(derivedColumns, columnNames, "address_locality",
+                    "(SELECT string_agg(DISTINCT CAST(a.locality AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.locality IS NOT NULL AND trim(CAST(a.locality AS VARCHAR)) <> '')");
+                AddDerivedColumn(derivedColumns, columnNames, "address_region",
+                    "(SELECT string_agg(DISTINCT CAST(a.region AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.region IS NOT NULL AND trim(CAST(a.region AS VARCHAR)) <> '')");
+                AddDerivedColumn(derivedColumns, columnNames, "address_postcode",
+                    "(SELECT string_agg(DISTINCT left(CAST(a.postcode AS VARCHAR), 5), ' | ') FROM unnest(addresses) AS t(a) WHERE a.postcode IS NOT NULL AND trim(CAST(a.postcode AS VARCHAR)) <> '')");
+                AddDerivedColumn(derivedColumns, columnNames, "address_country",
+                    "(SELECT string_agg(DISTINCT CAST(a.country AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.country IS NOT NULL AND trim(CAST(a.country AS VARCHAR)) <> '')");
+            }
+
+            return derivedColumns.Count == 0
+                ? projection
+                : $"{projection}, {string.Join(", ", derivedColumns)}";
+        }
+
+        private static string AppendSegmentDerivedColumns(string projection, string actualS3Type, IReadOnlyList<string> columnNames)
+        {
+            if (!string.Equals(actualS3Type, "segment", StringComparison.OrdinalIgnoreCase) || columnNames == null)
+                return projection;
+
+            var derivedColumns = new List<string>();
+
+            if (HasColumn(columnNames, "connectors"))
+                AddDerivedColumn(derivedColumns, columnNames, "connector_count", "(SELECT COUNT(*) FROM unnest(connectors) AS t(c))");
+
+            if (HasColumn(columnNames, "road_surface"))
+                AddDerivedColumn(derivedColumns, columnNames, "road_surface_values",
+                    "(SELECT string_agg(DISTINCT TRY_CAST(r.value AS VARCHAR), ' | ') FROM unnest(road_surface) AS t(r) WHERE r.value IS NOT NULL)");
+
+            if (HasColumn(columnNames, "speed_limits"))
+                AddDerivedColumn(derivedColumns, columnNames, "speed_limit_rule_count", "(SELECT COUNT(*) FROM unnest(speed_limits) AS t(s))");
+
+            if (HasColumn(columnNames, "access_restrictions"))
+                AddDerivedColumn(derivedColumns, columnNames, "access_restriction_count", "(SELECT COUNT(*) FROM unnest(access_restrictions) AS t(a))");
+
+            if (HasColumn(columnNames, "routes"))
+                AddDerivedColumn(derivedColumns, columnNames, "route_count", "(SELECT COUNT(*) FROM unnest(routes) AS t(r))");
 
             return derivedColumns.Count == 0
                 ? projection
@@ -287,28 +387,125 @@ namespace DuckDBGeoparquet.Services
                     ELSE {datasetExpression}
                 END";
 
-        private static void AddDerivedAddressColumn(
-            ICollection<string> derivedColumns,
-            IReadOnlyList<string> columnNames,
-            string columnName,
-            string expression)
-        {
-            if (columnNames.Any(c => c.Equals(columnName, StringComparison.OrdinalIgnoreCase)))
-                return;
-
-            derivedColumns.Add($"{expression} AS {columnName}");
-        }
-
         private static void AddSourceColumn(
             ICollection<string> derivedColumns,
             IReadOnlyList<string> columnNames,
             string columnName,
             string expression)
         {
-            if (columnNames.Any(c => c.Equals(columnName, StringComparison.OrdinalIgnoreCase)))
+            AddDerivedColumn(derivedColumns, columnNames, columnName, expression);
+        }
+
+        private static void AddDerivedColumn(
+            ICollection<string> derivedColumns,
+            IReadOnlyList<string> columnNames,
+            string columnName,
+            string expression)
+        {
+            if (HasColumn(columnNames, columnName))
                 return;
 
             derivedColumns.Add($"{expression} AS {columnName}");
+        }
+
+        private static bool HasColumn(IReadOnlyList<string> columnNames, string columnName)
+        {
+            return columnNames != null &&
+                   columnNames.Any(c => c.Equals(columnName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static void AddSharedFlattenedFieldNames(ICollection<string> flattened, IReadOnlyList<string> columnNames)
+        {
+            if (HasColumn(columnNames, "names"))
+            {
+                AddFlattenedFieldName(flattened, columnNames, "names_primary");
+                AddFlattenedFieldName(flattened, columnNames, "names_common");
+                AddFlattenedFieldName(flattened, columnNames, "display_name");
+            }
+
+            if (HasColumn(columnNames, "cartography"))
+            {
+                AddFlattenedFieldName(flattened, columnNames, "cartography_prominence");
+                AddFlattenedFieldName(flattened, columnNames, "cartography_min_zoom");
+                AddFlattenedFieldName(flattened, columnNames, "cartography_max_zoom");
+                AddFlattenedFieldName(flattened, columnNames, "cartography_sort_key");
+                AddFlattenedFieldName(flattened, columnNames, "cartography_min_scale");
+                AddFlattenedFieldName(flattened, columnNames, "cartography_max_scale");
+            }
+        }
+
+        private static void AddPlaceFlattenedFieldNames(ICollection<string> flattened, IReadOnlyList<string> columnNames)
+        {
+            if (HasColumn(columnNames, "categories"))
+            {
+                AddFlattenedFieldName(flattened, columnNames, "categories_primary");
+                AddFlattenedFieldName(flattened, columnNames, "categories_alternate");
+            }
+
+            if (HasColumn(columnNames, "basic_category"))
+                AddFlattenedFieldName(flattened, columnNames, "place_basic_category");
+
+            if (HasColumn(columnNames, "taxonomy"))
+                AddFlattenedFieldName(flattened, columnNames, "taxonomy_summary");
+
+            if (HasColumn(columnNames, "operating_status"))
+                AddFlattenedFieldName(flattened, columnNames, "place_operating_status");
+
+            if (HasColumn(columnNames, "brand"))
+            {
+                AddFlattenedFieldName(flattened, columnNames, "brand_wikidata");
+                AddFlattenedFieldName(flattened, columnNames, "brand_names_primary");
+            }
+
+            if (HasColumn(columnNames, "addresses"))
+            {
+                AddFlattenedFieldName(flattened, columnNames, "address_freeform");
+                AddFlattenedFieldName(flattened, columnNames, "address_locality");
+                AddFlattenedFieldName(flattened, columnNames, "address_region");
+                AddFlattenedFieldName(flattened, columnNames, "address_postcode");
+                AddFlattenedFieldName(flattened, columnNames, "address_country");
+            }
+        }
+
+        private static void AddSegmentFlattenedFieldNames(ICollection<string> flattened, IReadOnlyList<string> columnNames)
+        {
+            if (HasColumn(columnNames, "connectors"))
+                AddFlattenedFieldName(flattened, columnNames, "connector_count");
+            if (HasColumn(columnNames, "road_surface"))
+                AddFlattenedFieldName(flattened, columnNames, "road_surface_values");
+            if (HasColumn(columnNames, "speed_limits"))
+                AddFlattenedFieldName(flattened, columnNames, "speed_limit_rule_count");
+            if (HasColumn(columnNames, "access_restrictions"))
+                AddFlattenedFieldName(flattened, columnNames, "access_restriction_count");
+            if (HasColumn(columnNames, "routes"))
+                AddFlattenedFieldName(flattened, columnNames, "route_count");
+        }
+
+        private static void AddSourceFlattenedFieldNames(ICollection<string> flattened, IReadOnlyList<string> columnNames)
+        {
+            if (!HasColumn(columnNames, "sources"))
+                return;
+
+            AddFlattenedFieldName(flattened, columnNames, "source_count");
+            AddFlattenedFieldName(flattened, columnNames, "source_datasets");
+            AddFlattenedFieldName(flattened, columnNames, "source_primary_dataset");
+            AddFlattenedFieldName(flattened, columnNames, "source_primary_record_id");
+            AddFlattenedFieldName(flattened, columnNames, "source_primary_update_time");
+            AddFlattenedFieldName(flattened, columnNames, "source_url");
+            AddFlattenedFieldName(flattened, columnNames, "source_edit_url");
+            AddFlattenedFieldName(flattened, columnNames, "source_contribution_url");
+            AddFlattenedFieldName(flattened, columnNames, "source_edit_platform");
+        }
+
+        private static void AddFlattenedFieldName(ICollection<string> flattened, IReadOnlyList<string> columnNames, string columnName)
+        {
+            if (HasColumn(columnNames, columnName) ||
+                flattened.Contains(columnName, StringComparer.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            flattened.Add(columnName);
         }
     }
 }
