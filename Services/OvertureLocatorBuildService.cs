@@ -260,7 +260,7 @@ namespace DuckDBGeoparquet.Services
 
             var metadata = new LocatorBuildMetadata
             {
-                ReleaseFolderName = latestReleaseDir.Name,
+                ReleaseFolderName = DownloadSnapshot.ReadRelease(latestReleaseDir.FullName),
                 LocatorPath = compositeBuilt ? compositeLocatorPath : addressLocatorPath,
                 CompositeLocatorPath = compositeBuilt ? compositeLocatorPath : null,
                 LastBuiltUtc = DateTime.UtcNow
@@ -485,10 +485,8 @@ namespace DuckDBGeoparquet.Services
                 return null;
             }
 
-            return new DirectoryInfo(dataRoot)
-                .GetDirectories()
-                .OrderByDescending(d => d.LastWriteTimeUtc)
-                .FirstOrDefault();
+            string folder = OvertureDataPaths.ResolveNewestReleaseFolder(dataRoot);
+            return folder == null ? null : new DirectoryInfo(folder);
         }
 
         private static string ResolveDataRootPath()

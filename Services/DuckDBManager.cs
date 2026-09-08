@@ -16,6 +16,7 @@ namespace DuckDBGeoparquet.Services
     {
         private readonly DuckDBConnection _connection = new("DataSource=:memory:");
         private bool _isDisposed;
+        private readonly DuckDBJobQueue _jobs = new();
 
         /// <summary>The open connection. Valid after <see cref="InitializeAsync"/> succeeds.</summary>
         public DuckDBConnection Connection => _connection;
@@ -23,13 +24,30 @@ namespace DuckDBGeoparquet.Services
         /// <summary>True once extensions are loaded and the connection is usable.</summary>
         public bool IsInitialized { get; private set; }
 
-        public async Task InitializeAsync(CancellationToken cancellationToken = default)
+        public Task InitializeAsync(CancellationToken cancellationToken = default)
+            => RunAsync(() => InitializeCoreAsync(cancellationToken), cancellationToken);
+
+        public Task RunAsync(Func<Task> work, CancellationToken token = default)
+            => _jobs.RunAsync(async () => { await work().ConfigureAwait(false); return true; }, Interrupt, token);
+
+        public Task<T> RunAsync<T>(Func<Task<T>> work, CancellationToken token = default)
+            => _jobs.RunAsync(work, Interrupt, token);
+
+        private void Interrupt()
+        {
+            if (_connection.State != System.Data.ConnectionState.Open) return;
+            using var command = _connection.CreateCommand();
+            command.Cancel();
+        }
+
+        private async Task InitializeCoreAsync(CancellationToken cancellationToken)
         {
             if (IsInitialized) return;
 
             try
             {
-                await _connection.OpenAsync();
+                if (_connection.State != System.Data.ConnectionState.Open)
+                    await _connection.OpenAsync();
 
                 // Get the various potential paths where extensions might be found
                 string addInFolder = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
@@ -52,8 +70,8 @@ namespace DuckDBGeoparquet.Services
                     if (File.Exists(spatialBundled) && File.Exists(httpfsBundled))
                     {
                         command.CommandText = $@"
-                            LOAD '{spatialBundled.Replace('\\', '/')}';
-                            LOAD '{httpfsBundled.Replace('\\', '/')}';
+                            LOAD '{GeoParquetSql.EscapeSqlLiteral(spatialBundled.Replace('\\', '/'))}';
+                            LOAD '{GeoParquetSql.EscapeSqlLiteral(httpfsBundled.Replace('\\', '/'))}';
                         ";
                         await command.ExecuteNonQueryAsync(cancellationToken);
                         System.Diagnostics.Debug.WriteLine($"Loaded bundled DuckDB extensions from {extensionsPath}");
@@ -80,7 +98,7 @@ namespace DuckDBGeoparquet.Services
                                 installSuccess = true;
                                 break; // Success, exit retry loop
                             }
-                            catch (Exception ex)
+                            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
                             {
                                 System.Diagnostics.Debug.WriteLine($"Direct installation attempt {i + 1} failed: {ex.Message}");
                                 if (i < maxRetries - 1)
@@ -99,7 +117,7 @@ namespace DuckDBGeoparquet.Services
                         }
                     }
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
                 {
                     // If both methods failed, show a more informative error with detailed instructions
                     throw new Exception(
@@ -110,10 +128,6 @@ namespace DuckDBGeoparquet.Services
                         $"3. Current extension search path: {extensionsPath}", ex);
                 }
 
-                // Extensions loaded successfully — mark as initialized so a retry
-                // after a settings failure doesn't re-open the connection.
-                IsInitialized = true;
-
                 // Configure DuckDB settings for optimal performance.
                 // Batched into a single multi-statement execution to reduce round trips.
                 try
@@ -123,23 +137,25 @@ namespace DuckDBGeoparquet.Services
                     command.CommandText = $@"
                         SET s3_region='us-west-2';
                         SET enable_http_metadata_cache=true;
-                        SET enable_object_cache=true;
+
                         SET enable_progress_bar=true;
+
                         SET memory_limit='2GB';
-                        SET max_memory='4GB';
-                        SET temp_directory='{tempDir}';
+                        SET temp_directory='{GeoParquetSql.EscapeSqlLiteral(tempDir)}';
                         SET threads={threads};
                     ";
                     await command.ExecuteNonQueryAsync(cancellationToken);
                     System.Diagnostics.Debug.WriteLine($"DuckDB settings configured successfully (threads={threads})");
                 }
-                catch (Exception settingsEx)
+                catch (Exception settingsEx) when (!cancellationToken.IsCancellationRequested)
                 {
                     System.Diagnostics.Debug.WriteLine($"Warning: Could not set some DuckDB settings: {settingsEx.Message}");
                     // Continue — these are optimizations, not required for functionality
                 }
+                cancellationToken.ThrowIfCancellationRequested();
+                IsInitialized = true;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
                 throw new Exception($"Failed to initialize DuckDB: {ex.Message}", ex);
             }
@@ -148,7 +164,7 @@ namespace DuckDBGeoparquet.Services
         public void Dispose()
         {
             if (_isDisposed) return;
-            _connection?.Dispose();
+            _jobs.DisposeAfterJobs(() => _connection.Dispose());
             _isDisposed = true;
         }
     }

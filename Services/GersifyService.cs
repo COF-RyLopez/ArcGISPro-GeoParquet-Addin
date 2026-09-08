@@ -31,10 +31,13 @@ namespace DuckDBGeoparquet.Services
             return GersifyAsync(options, progress, cancellationToken);
         }
 
-        public async Task<GersifyResult> GersifyAsync(
-            GersifyOptions options,
-            IProgress<string> progress = null,
-            CancellationToken cancellationToken = default)
+        public async Task<GersifyResult> GersifyAsync(GersifyOptions options, IProgress<string> progress = null, CancellationToken cancellationToken = default)
+        {
+            await _duckDb.InitializeAsync(cancellationToken);
+            return await _duckDb.RunAsync(() => GersifyCoreAsync(options, progress, cancellationToken), cancellationToken);
+        }
+
+        private async Task<GersifyResult> GersifyCoreAsync(GersifyOptions options, IProgress<string> progress, CancellationToken cancellationToken)
         {
             if (options == null)
                 throw new ArgumentNullException(nameof(options));
@@ -59,7 +62,6 @@ namespace DuckDBGeoparquet.Services
             string candidatesCsvPath = Path.Combine(options.OutputFolder, $"gersify_candidates_{suffix}.csv");
             string bridgeCsvPath = Path.Combine(options.OutputFolder, $"gers_bridge_{suffix}.csv");
 
-            await _duckDb.InitializeAsync(cancellationToken);
             await ExecuteNonQueryAsync(GersSql.BuildUtilityFunctionsCommand(), cancellationToken);
 
             progress?.Report("Reading input feature export...");
@@ -101,8 +103,7 @@ namespace DuckDBGeoparquet.Services
 
             progress?.Report("Writing GERSify outputs...");
             string datasetName = string.IsNullOrWhiteSpace(options.DatasetName) ? "user_data" : options.DatasetName;
-            string overtureRelease = Path.GetFileName(
-                options.OvertureReleaseFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            string overtureRelease = DownloadSnapshot.ReadRelease(options.OvertureReleaseFolder);
             await ExecuteNonQueryAsync(
                 GersSql.BuildCopyGersifyOutputsCommand(
                     outputCsvPath,

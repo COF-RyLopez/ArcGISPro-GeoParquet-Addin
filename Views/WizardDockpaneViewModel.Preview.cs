@@ -47,7 +47,7 @@ namespace DuckDBGeoparquet.Views
                 () => IsPreviewAvailable);
             PreviewSampleCommand = new RelayCommand(
                 async () => await PreviewSampleFromS3Async(),
-                () => IsPreviewAvailable && !_isPreviewSampling);
+                () => IsPreviewAvailable && !_isPreviewSampling && !IsWorking && !IsLoading);
             PreviewClearCommand = new RelayCommand(
                 () => PreviewBridge?.ClearLayers(),
                 () => IsPreviewAvailable);
@@ -112,27 +112,7 @@ namespace DuckDBGeoparquet.Views
             }
         }
 
-        private async Task<Envelope> GetConfiguredWgs84ExtentAsync()
-        {
-            if (UseCustomExtent && CustomExtent != null)
-            {
-                // CustomExtent is already WGS84 (see GetLoadExtentAsync).
-                return CustomExtent;
-            }
-
-            if (MapView.Active == null)
-                return null;
-
-            return await QueuedTask.Run(() =>
-            {
-                Envelope mapExtent = MapView.Active?.Extent;
-                if (mapExtent == null) return null;
-                if (mapExtent.SpatialReference == null || mapExtent.SpatialReference.Wkid == 4326)
-                    return mapExtent;
-                return GeometryEngine.Instance.Project(mapExtent,
-                    SpatialReferenceBuilder.CreateSpatialReference(4326)) as Envelope;
-            });
-        }
+        private Task<Envelope> GetConfiguredWgs84ExtentAsync() => GetLoadExtentAsync();
 
         /// <summary>
         /// Pulls a capped GeoJSON sample of each selected theme directly from
@@ -141,7 +121,7 @@ namespace DuckDBGeoparquet.Views
         /// </summary>
         private async Task PreviewSampleFromS3Async()
         {
-            if (_isPreviewSampling) return;
+            if (_isPreviewSampling || IsWorking || IsLoading) return;
 
             var selectedLeafItems = GetSelectedLeafItems();
             if (selectedLeafItems.Count == 0)
@@ -156,6 +136,9 @@ namespace DuckDBGeoparquet.Views
             }
 
             _isPreviewSampling = true;
+            _cts = new System.Threading.CancellationTokenSource();
+            var token = _cts.Token;
+            IsWorking = true;
             (PreviewSampleCommand as RelayCommand)?.RaiseCanExecuteChanged();
             try
             {
@@ -178,6 +161,7 @@ namespace DuckDBGeoparquet.Views
                 int rendered = 0;
                 foreach (var item in selectedLeafItems)
                 {
+                    token.ThrowIfCancellationRequested();
                     string s3Path = trimmedRelease.Length > 0
                         ? $"{S3_BASE_PATH}/{trimmedRelease}/theme={item.ParentThemeForS3}/type={item.ActualType}/*.parquet"
                         : $"{S3_BASE_PATH}/theme={item.ParentThemeForS3}/type={item.ActualType}/*.parquet";
@@ -191,13 +175,14 @@ namespace DuckDBGeoparquet.Views
                             s3Path,
                             samplePath,
                             extentBounds,
-                            PreviewSampleMaxFeatures);
+                            PreviewSampleMaxFeatures, token);
                         // Send the GeoJSON text through the bridge; the page
                         // renders it via a blob URL (worker-safe, no fetch).
                         string geoJsonText = await File.ReadAllTextAsync(samplePath);
                         PreviewBridge?.AddGeoJsonLayer($"{item.DisplayName} (sample)", geoJsonText);
                         rendered++;
                     }
+                    catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
                     {
                         AddToLog($"Preview: sample for {item.DisplayName} failed: {ex.Message}");
@@ -208,9 +193,13 @@ namespace DuckDBGeoparquet.Views
                     ? $"Preview: requested {rendered} sample layer(s). Samples are capped at {PreviewSampleMaxFeatures} features per type — the full load may contain more."
                     : "Preview: no sample layers could be produced — see errors above.");
             }
+            catch (OperationCanceledException) { AddToLog("Preview cancelled."); }
             finally
             {
                 _isPreviewSampling = false;
+                _cts.Dispose();
+                _cts = null;
+                IsWorking = false;
                 (PreviewSampleCommand as RelayCommand)?.RaiseCanExecuteChanged();
             }
         }

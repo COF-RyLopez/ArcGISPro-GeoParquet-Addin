@@ -8,6 +8,16 @@
 		     add-in project: a project reference would pull in the ArcGIS Pro
 		     SDK assemblies, which only resolve usefully on a machine with Pro
 		     installed. Anything linked here must stay free of ArcGIS types. -->
+		<Compile Include="..\Services\GeocodeFileParser.cs" Link="Linked\GeocodeFileParser.cs" />
+		<Compile Include="..\Services\SnapshotLayerPlan.cs" Link="Linked\SnapshotLayerPlan.cs" />
+		<Compile Include="..\Services\GeocoderEngine.cs" Link="Linked\GeocoderEngine.cs" />
+		<Compile Include="..\Services\GeocodeAcceptance.cs" Link="Linked\GeocodeAcceptance.cs" />
+		<Compile Include="..\Services\OvertureCatalog.cs" Link="Linked\OvertureCatalog.cs" />
+		<Compile Include="..\Services\GeographicBounds.cs" Link="Linked\GeographicBounds.cs" />
+		<Compile Include="..\Services\DuckDBJobQueue.cs" Link="Linked\DuckDBJobQueue.cs" />
+		<Compile Include="..\Services\DuckDBManager.cs" Link="Linked\DuckDBManager.cs" />
+		<Compile Include="..\Services\DownloadSnapshot.cs" Link="Linked\DownloadSnapshot.cs" />
+		<Compile Include="..\Models\DatasetLoadResult.cs" Link="Linked\DatasetLoadResult.cs" />
 		<Compile Include="..\Models\GeocodeCandidate.cs" Link="Linked\GeocodeCandidate.cs" />
 		<Compile Include="..\Models\ExtentBounds.cs" Link="Linked\ExtentBounds.cs" />
 		<Compile Include="..\Models\GersifyOptions.cs" Link="Linked\GersifyOptions.cs" />
@@ -31,6 +41,7 @@
 		<Compile Include="..\Services\PreviewBridge.cs" Link="Linked\PreviewBridge.cs" />
 	</ItemGroup>
 	<ItemGroup>
+		<PackageReference Include="DuckDB.NET.Data.Full" Version="1.5.3" />
 		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
 		<PackageReference Include="xunit" Version="2.9.2" />
 		<PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />

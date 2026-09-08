@@ -8,6 +8,14 @@ namespace DuckDBGeoparquet.Tests
     public class S3IngesterTests
     {
         [Fact]
+        public void DefaultExtract_PreservesWholeRoadGeometry()
+        {
+            var sql = S3Ingester.BuildLoadQuery("roads.parquet", "segment",
+                new[] { "id", "geometry", "bbox", "connectors", "sources" }, new ExtentBounds(1, 2, 3, 4));
+            Assert.DoesNotContain("ST_Intersection(", sql);
+        }
+
+        [Fact]
         public void BuildColumnProjection_RetainsAllColumns_WhenTypeHasExclusionsButNonePresent()
         {
             // "building" only drops "sources"; a file without it keeps every
@@ -186,7 +194,7 @@ namespace DuckDBGeoparquet.Tests
         {
             var extent = new ExtentBounds(1, 2, 3, 4);
             var columns = new List<string> { "id", "geometry", "bbox" };
-            string query = S3Ingester.BuildLoadQuery("s3://bucket/building/*", "building", columns, extent);
+            string query = S3Ingester.BuildLoadQuery("s3://bucket/building/*", "building", columns, extent, clipGeometry: true);
 
             // bbox present → repack via struct_pack after clipping.
             Assert.Contains("WITH clipped AS", query);
@@ -204,7 +212,7 @@ namespace DuckDBGeoparquet.Tests
         {
             var extent = new ExtentBounds(1, 2, 3, 4);
             var columns = new List<string> { "id", "geometry" };
-            string query = S3Ingester.BuildLoadQuery("s3://bucket/data/*", actualS3Type: null, columns, extent);
+            string query = S3Ingester.BuildLoadQuery("s3://bucket/data/*", actualS3Type: null, columns, extent, clipGeometry: true);
 
             Assert.Contains("ST_Intersection(geometry,", query);
             Assert.Equal(1, CountOccurrences(query, "ST_Intersects(geometry,"));

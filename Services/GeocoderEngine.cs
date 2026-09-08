@@ -94,7 +94,8 @@ namespace DuckDBGeoparquet.Services
 
             string numberExpr = FirstExistingExpression(availableColumns, "number", "housenumber", "house_number");
             string streetExpr = FirstExistingExpression(availableColumns, "street", "street_name", "road", "name");
-            string localityExpr = FirstExistingExpression(availableColumns, "city", "locality", "district", "admin2", "subregion");
+            string unitExpr = FirstExistingExpression(availableColumns, "unit", "address_unit", "suite");
+            string localityExpr = FirstExistingExpression(availableColumns, "postal_city", "city", "locality", "district", "admin2", "subregion");
             string regionExpr = FirstExistingExpression(availableColumns, "region", "state", "province", "admin1");
             string postalExpr = FirstExistingExpression(availableColumns, "postcode", "postal_code", "zip");
             string countryExpr = FirstExistingExpression(availableColumns, "country", "country_code");
@@ -142,7 +143,7 @@ namespace DuckDBGeoparquet.Services
                 WITH prepared AS (
                     SELECT
                         trim(concat_ws(', ',
-                            nullif(trim(concat_ws(' ', nullif({numberExpr}, ''), nullif({streetExpr}, ''), nullif({placeNameExpr}, ''))), ''),
+                            nullif(trim(concat_ws(' ', nullif({numberExpr}, ''), nullif({streetExpr}, ''), nullif({unitExpr}, ''), nullif({placeNameExpr}, ''))), ''),
                             nullif({localityExpr}, ''),
                             nullif({regionExpr}, ''),
                             nullif({postalExpr}, ''),
@@ -153,6 +154,7 @@ namespace DuckDBGeoparquet.Services
                         lower(trim(concat_ws(' ',
                             nullif({numberExpr}, ''),
                             nullif({streetExpr}, ''),
+                            nullif({unitExpr}, ''),
                             nullif({placeNameExpr}, ''),
                             nullif({categoryExpr}, ''),
                             nullif({localityExpr}, ''),

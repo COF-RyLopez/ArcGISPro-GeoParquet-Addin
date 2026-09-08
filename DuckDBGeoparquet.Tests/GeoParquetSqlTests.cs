@@ -22,6 +22,12 @@ namespace DuckDBGeoparquet.Tests
         }
 
         [Fact]
+        public void CopyCommand_EscapesApostrophesInProjectPath()
+        {
+            Assert.Contains("O''Brien", GeoParquetSql.BuildCopyCommand("SELECT 1", "C:/O'Brien/data.parquet"));
+        }
+
+        [Fact]
         public void BuildCopyCommand_UsesForwardSlashesAndValidatedCompression()
         {
             string sql = GeoParquetSql.BuildCopyCommand(

@@ -22,11 +22,23 @@ namespace DuckDBGeoparquet.Services
             if (string.IsNullOrWhiteSpace(dataDirectory) || !Directory.Exists(dataDirectory))
                 return null;
 
-            return new DirectoryInfo(dataDirectory)
-                .GetDirectories()
-                .OrderByDescending(d => d.LastWriteTimeUtc)
-                .Select(d => d.FullName)
+            string current = DownloadSnapshot.ResolveCurrent(dataDirectory);
+            if (current != null) return current;
+
+            // Select only committed snapshots or usable legacy data. Creating a staging
+            // directory for a newer release must not change discovery after a failed job.
+            return new DirectoryInfo(dataDirectory).GetDirectories()
+                .Where(d => !d.Name.StartsWith(".") && !File.Exists(Path.Combine(d.FullName, DownloadSnapshot.ManifestName)))
+                .Select(d => new { Directory = d, Current = DownloadSnapshot.ResolveCurrent(d.FullName) })
+                .Where(d => d.Current != null || HasLegacyData(d.Directory.FullName))
+                .OrderByDescending(d => d.Current == null ? d.Directory.LastWriteTimeUtc
+                    : File.GetLastWriteTimeUtc(Path.Combine(d.Current, DownloadSnapshot.ManifestName)))
+                .Select(d => d.Current ?? d.Directory.FullName)
                 .FirstOrDefault();
         }
+        private static bool HasLegacyData(string folder) => Directory.EnumerateDirectories(folder)
+            .Where(d => !Path.GetFileName(d).StartsWith("."))
+            .Any(d => Directory.EnumerateFiles(d, "*.parquet", SearchOption.TopDirectoryOnly).Any());
+
     }
 }

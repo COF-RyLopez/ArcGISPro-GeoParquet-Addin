@@ -23,12 +23,14 @@ namespace DuckDBGeoparquet.Services
         public const string S3FastReadParquetOptions = "filename=true, hive_partitioning=1";
         public const string S3ReadParquetOptions = $"{S3FastReadParquetOptions}, union_by_name=1";
 
-        public static string BuildReadParquetExpression(string s3Path, string readParquetOptions = null)
+        public static string BuildReadParquetExpression(string s3Path, string readParquetOptions = null, IReadOnlyList<string> files = null)
         {
             string options = string.IsNullOrWhiteSpace(readParquetOptions)
                 ? S3ReadParquetOptions
                 : readParquetOptions;
-            return $"read_parquet('{GeoParquetSql.EscapeSqlLiteral(s3Path)}', {options})";
+            string source = files == null ? $"'{GeoParquetSql.EscapeSqlLiteral(s3Path)}'"
+                : "[" + string.Join(",", files.Select(f => $"'{GeoParquetSql.EscapeSqlLiteral(f)}'")) + "]";
+            return $"read_parquet({source}, {options})";
         }
 
         /// <summary>
@@ -70,10 +72,12 @@ namespace DuckDBGeoparquet.Services
             IReadOnlyList<string> columnNames,
             ExtentBounds extent,
             bool includeSourceProvenance = false,
-            string readParquetOptions = null)
+            string readParquetOptions = null,
+            bool clipGeometry = false,
+            bool preserveSource = false, IReadOnlyList<string> files = null)
         {
-            var projectedColumns = BuildColumnProjection(actualS3Type, columnNames);
-            string readParquet = BuildReadParquetExpression(s3Path, readParquetOptions);
+            var projectedColumns = preserveSource ? null : BuildColumnProjection(actualS3Type, columnNames);
+            string readParquet = BuildReadParquetExpression(s3Path, readParquetOptions, files);
 
             string spatialFilter = "";
             string extentPolygon = "";
@@ -84,14 +88,13 @@ namespace DuckDBGeoparquet.Services
                 // Bbox overlap first (pushdown), then ST_Intersects so only features whose geometry
                 // actually intersects the extent are kept — prevents data extending beyond the frame.
                 spatialFilter = $@"
-                        WHERE {GeoParquetSql.BuildBboxOverlapPredicate(extent)}
-                          AND ST_Intersects(geometry, {extentPolygon})";
+                        WHERE {(columnNames?.Any(c => c.Equals(BboxColumn, StringComparison.OrdinalIgnoreCase)) == true ? GeoParquetSql.BuildBboxOverlapPredicate(extent) + " AND " : "")}ST_Intersects(geometry, {extentPolygon})";
             }
 
             // Determine which columns to project (if any) while always retaining geometry
-            var projectedColumnList = AppendDownloadDerivedColumns(projectedColumns ?? "*", actualS3Type, columnNames, includeSourceProvenance);
+            var projectedColumnList = preserveSource ? "*" : AppendDownloadDerivedColumns(projectedColumns ?? "*", actualS3Type, columnNames, includeSourceProvenance);
             bool hasBboxColumn = columnNames != null && columnNames.Any(c => c.Equals(BboxColumn, StringComparison.OrdinalIgnoreCase));
-            bool preservesOriginalGeometry = IsPointOnlyType(actualS3Type);
+            bool preservesOriginalGeometry = !clipGeometry || preserveSource || IsPointOnlyType(actualS3Type);
             var projectedColumnsWithoutGeometry = projectedColumns != null
                 ? string.Join(", ", projectedColumns.Split(',').Select(c => c.Trim()).Where(c => !c.Equals("geometry", StringComparison.OrdinalIgnoreCase)))
                 : "* EXCLUDE(geometry)";
@@ -172,6 +175,13 @@ namespace DuckDBGeoparquet.Services
                             ST_GeometryType(geometry) AS {GeoParquetSql.InternalGeometryTypeColumn}
                         FROM {readParquet}
                         {spatialFilter}";
+        }
+
+        public static string BuildDisplayTableCommand(string type, IReadOnlyList<string> columns, bool provenance)
+        {
+            string projection = BuildColumnProjection(type, columns) ?? "*";
+            projection = AppendDownloadDerivedColumns(projection, type, columns, provenance);
+            return $"CREATE OR REPLACE TABLE current_table AS SELECT {projection} FROM current_table";
         }
 
         public static bool IsPointOnlyType(string actualS3Type)

@@ -17,7 +17,12 @@ namespace DuckDBGeoparquet.Services
     public class LayerManager
     {
         private readonly List<LayerCreationInfo> _pendingLayers = new();
-        private static readonly bool VerbosePerLayerDebugLogging = false;
+
+        public void RelocatePendingLayers(string oldRoot, string newRoot)
+        {
+            foreach (var layer in _pendingLayers)
+                layer.FilePath = Path.Combine(newRoot, Path.GetRelativePath(oldRoot, layer.FilePath));
+        }
 
         // Default draw order fallback used when a style does not provide explicit draw ranks.
         // Higher rank draws above lower rank.
@@ -77,115 +82,73 @@ namespace DuckDBGeoparquet.Services
 
         public List<LayerCreationInfo> GetPendingLayers() => _pendingLayers.ToList();
 
-        /// <summary>
-        /// Adds all pending layers to the map in optimal stacking order (polygons → lines → points)
-        /// </summary>
-        public async Task AddAllLayersToMapAsync(MapStyleDefinition selectedMapStyle, CartographicProfile selectedProfile, IProgress<string> progress = null)
+        /// <summary>Add a snapshot as a group, then retire matching prior layers only after full success.</summary>
+        public async Task AddAllLayersToMapAsync(MapStyleDefinition selectedMapStyle, CartographicProfile selectedProfile,
+            IProgress<string> progress = null, Map targetMap = null, string snapshotPath = null)
         {
-            var addAllStopwatch = Stopwatch.StartNew();
-            if (!_pendingLayers.Any())
+            var map = targetMap ?? MapView.Active?.Map;
+            if (map == null) throw new InvalidOperationException("The target map is unavailable.");
+            LastAddedLayerCount = 0;
+            var style = GetEffectiveSelectedStyle(selectedProfile, selectedMapStyle);
+            LastAppliedStyleName = (selectedProfile != null || selectedMapStyle != null)
+                ? CartographicProfileRules.GetDisplayName(selectedProfile, selectedMapStyle) : "default";
+            var sorted = SortLayersByGeometryPriority(_pendingLayers, style);
+            var replacedFiles = snapshotPath == null ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                : await Task.Run(() => SnapshotLayerPlan.GetSupersededFiles(snapshotPath));
+            var stopwatch = Stopwatch.StartNew();
+            try
             {
-                LastAddedLayerCount = 0;
-                progress?.Report("No layers to add to map.");
-                return;
-            }
-
-            var effectiveStyle = GetEffectiveSelectedStyle(selectedProfile, selectedMapStyle);
-            var sortStopwatch = Stopwatch.StartNew();
-            var sortedLayers = SortLayersByGeometryPriority(_pendingLayers, effectiveStyle);
-            sortStopwatch.Stop();
-            System.Diagnostics.Debug.WriteLine(
-                $"[perf][layer-add] sort layers={sortedLayers.Count} elapsed={FormatElapsed(sortStopwatch.Elapsed)}");
-
-            progress?.Report($"Preparing to add {sortedLayers.Count} layers with optimal stacking order...");
-            string styleName = (selectedProfile != null || selectedMapStyle != null)
-                ? CartographicProfileRules.GetDisplayName(selectedProfile, selectedMapStyle)
-                : "default";
-            LastAddedLayerCount = sortedLayers.Count;
-            LastAppliedStyleName = styleName;
-            System.Diagnostics.Debug.WriteLine($"Adding {sortedLayers.Count} layers using style-aware stacking order ({styleName}):");
-            System.Diagnostics.Debug.WriteLine(
-                $"Draw order rank source: style map count={effectiveStyle?.DrawOrderRanks?.Count ?? 0}, fallback map count={DefaultDrawOrderRanks.Count}");
-
-            if (VerbosePerLayerDebugLogging)
-            {
-                foreach (var layer in sortedLayers)
+                await QueuedTask.Run(() =>
                 {
-                    int drawRank = GetLayerDrawingRank(layer, effectiveStyle);
-                    string resolvedType = ResolveLayerType(layer);
-                    System.Diagnostics.Debug.WriteLine(
-                        $"  {layer.LayerName} ({layer.GeometryType}, type={resolvedType ?? "unknown"}, draw rank {drawRank}, base priority {layer.StackingPriority})");
-                }
-            }
-
-            int pointCount = sortedLayers.Count(l => l.StackingPriority == 3);
-            int lineCount = sortedLayers.Count(l => l.StackingPriority == 2);
-            int polygonCount = sortedLayers.Count(l => l.StackingPriority == 1);
-            progress?.Report($"Layer summary: {pointCount} point layers, {lineCount} line layers, {polygonCount} polygon layers");
-
-            if (sortedLayers.Count == 1)
-            {
-                progress?.Report("Single layer detected, using individual layer creation...");
-                System.Diagnostics.Debug.WriteLine("Using individual layer creation for single layer (bulk creation may not work reliably with 1 layer)");
-                await FallbackToIndividualLayerCreation(sortedLayers, selectedMapStyle, selectedProfile, progress);
-            }
-            else
-            {
-                List<LayerCreationInfo> missingLayersForIndividualCreation = null;
-
-                try
-                {
-                    progress?.Report("Starting bulk layer creation process...");
-
-                    var queuedBulkStopwatch = Stopwatch.StartNew();
-                    await QueuedTask.Run(() =>
+                    var previousLayers = map.GetLayersAsFlattenedList().OfType<FeatureLayer>().ToList();
+                    GroupLayer group = null;
+                    if (sorted.Count > 0)
                     {
-                        var map = MapView.Active?.Map;
-                        if (map == null)
-                        {
-                            progress?.Report("Error: No active map found to add layers.");
-                            System.Diagnostics.Debug.WriteLine("AddAllLayersToMapAsync: No active map found.");
-                            return;
-                        }
-
-                        missingLayersForIndividualCreation = AddLayerBatch(map, sortedLayers, selectedMapStyle, selectedProfile, progress);
-                    });
-                    queuedBulkStopwatch.Stop();
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[perf][layer-add] queued-bulk layers={sortedLayers.Count} elapsed={FormatElapsed(queuedBulkStopwatch.Elapsed)}");
-
-                    if (missingLayersForIndividualCreation?.Any() == true)
-                    {
-                        await FallbackToIndividualLayerCreation(missingLayersForIndividualCreation, selectedMapStyle, selectedProfile, progress);
+                        string name = snapshotPath == null ? "Overture data" : "Overture " + Path.GetFileName(snapshotPath);
+                        group = LayerFactory.Instance.CreateGroupLayer(map, 0, name);
+                        group.SetVisibility(false);
                     }
-                }
-                catch (Exception ex)
-                {
-                    progress?.Report($"Error during bulk layer creation: {ex.Message}");
-                    System.Diagnostics.Debug.WriteLine($"Error in AddAllLayersToMapAsync: {ex.Message}");
-
-                    progress?.Report("Falling back to individual layer creation...");
-                    await FallbackToIndividualLayerCreation(sortedLayers, selectedMapStyle, selectedProfile, progress);
-                }
+                    foreach (var info in sorted)
+                    {
+                        try
+                        {
+                            if (!File.Exists(info.FilePath)) throw new FileNotFoundException("Saved layer is missing.", info.FilePath);
+                            var layer = LayerFactory.Instance.CreateLayer(new Uri(info.FilePath), group, -1, info.LayerName);
+                            if (layer == null) throw new InvalidOperationException("ArcGIS could not open this GeoParquet file.");
+                            LastAddedLayerCount++;
+                            if (layer is FeatureLayer featureLayer)
+                                ApplyLayerSettings(featureLayer, style == null ? null : CartographyService.CreateRendererForLayer(info, style), info, style, selectedProfile);
+                            progress?.Report($"Prepared layer {LastAddedLayerCount} of {sorted.Count}: {info.LayerName}");
+                        }
+                        catch (Exception ex) { progress?.Report($"Could not add {info.LayerName}: {ex.Message}"); }
+                    }
+                    if (LastAddedLayerCount == sorted.Count)
+                    {
+                        foreach (var layer in previousLayers)
+                        {
+                            try
+                            {
+                                using var featureClass = layer.GetFeatureClass();
+                                var uri = featureClass?.GetPath();
+                                var file = NormalizeToParquetFilePath(uri == null ? null : uri.IsFile ? uri.LocalPath : uri.OriginalString);
+                                if (file != null && replacedFiles.Contains(file)) layer.SetVisibility(false);
+                            }
+                            catch (Exception ex) { progress?.Report($"Could not inspect prior layer {layer.Name}: {ex.Message}"); }
+                        }
+                        group?.SetVisibility(true);
+                    }
+                    else
+                    {
+                        group?.SetName(group.Name + " (incomplete)");
+                        progress?.Report("The incomplete group is hidden. Previous map layers remain visible; use the saved snapshot to recover missing layers.");
+                    }
+                });
             }
-
-            var drawOrderStopwatch = Stopwatch.StartNew();
-            await QueuedTask.Run(() =>
+            finally
             {
-                var map = MapView.Active?.Map;
-                if (map != null)
-                {
-                    EnforceLayerDrawOrder(map, sortedLayers, progress);
-                }
-            });
-            drawOrderStopwatch.Stop();
-            addAllStopwatch.Stop();
-            System.Diagnostics.Debug.WriteLine(
-                $"[perf][layer-add] draw-order layers={sortedLayers.Count} elapsed={FormatElapsed(drawOrderStopwatch.Elapsed)}");
-            System.Diagnostics.Debug.WriteLine(
-                $"[perf][layer-add] total layers={sortedLayers.Count} elapsed={FormatElapsed(addAllStopwatch.Elapsed)}");
-
-            _pendingLayers.Clear();
+                _pendingLayers.Clear();
+                Debug.WriteLine($"[perf][layer-add] requested={sorted.Count} added={LastAddedLayerCount} elapsed={FormatElapsed(stopwatch.Elapsed)}");
+            }
         }
 
         private static MapStyleDefinition GetEffectiveSelectedStyle(CartographicProfile profile, MapStyleDefinition style)
@@ -288,263 +251,6 @@ namespace DuckDBGeoparquet.Services
             return "polygon";
         }
 
-        private List<LayerCreationInfo> AddLayerBatch(Map map, List<LayerCreationInfo> sortedLayers, MapStyleDefinition selectedMapStyle, CartographicProfile selectedProfile, IProgress<string> progress)
-        {
-            var batchStopwatch = Stopwatch.StartNew();
-            progress?.Report("Validating layer files...");
-
-            var uris = new List<Uri>();
-            var layerNames = new List<string>();
-            var validLayerInfos = new List<LayerCreationInfo>();
-            int validFiles = 0;
-
-            foreach (var layerInfo in sortedLayers)
-            {
-                if (File.Exists(layerInfo.FilePath))
-                {
-                    uris.Add(new Uri(layerInfo.FilePath));
-                    layerNames.Add(layerInfo.LayerName);
-                    validLayerInfos.Add(layerInfo);
-                    validFiles++;
-                    if (VerbosePerLayerDebugLogging)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Valid file for {layerInfo.LayerName}: {layerInfo.FilePath}");
-                    }
-                }
-                else
-                {
-                    progress?.Report($"Warning: File not found for {layerInfo.LayerName}");
-                    System.Diagnostics.Debug.WriteLine($"Warning: File not found for layer {layerInfo.LayerName}: {layerInfo.FilePath}");
-                }
-            }
-
-            progress?.Report($"Validated {validFiles} layer files. Creating layers...");
-
-            if (!uris.Any())
-                return null;
-
-            var removeStopwatch = Stopwatch.StartNew();
-            int removedExisting = RemoveExistingMembersForTargetParquetFiles(map, validLayerInfos);
-            removeStopwatch.Stop();
-            System.Diagnostics.Debug.WriteLine(
-                $"[perf][layer-add] remove-existing removed={removedExisting} layers={validLayerInfos.Count} elapsed={FormatElapsed(removeStopwatch.Elapsed)}");
-            if (removedExisting > 0)
-            {
-                progress?.Report($"Removed {removedExisting} existing map member(s) that used the same output files.");
-            }
-
-            progress?.Report("Executing bulk layer creation (this may take a moment)...");
-            var createStopwatch = Stopwatch.StartNew();
-            var layers = LayerFactory.Instance.CreateLayers(uris, map);
-            createStopwatch.Stop();
-            System.Diagnostics.Debug.WriteLine(
-                $"[perf][layer-add] bulk-create requested={uris.Count} created={layers.Count} elapsed={FormatElapsed(createStopwatch.Elapsed)}");
-
-            progress?.Report($"Bulk creation completed. Applying settings to {layers.Count} layers...");
-            MapStyleDefinition effectiveStyle = GetEffectiveSelectedStyle(selectedProfile, selectedMapStyle);
-            string effectiveCartographyName = CartographicProfileRules.GetDisplayName(selectedProfile, effectiveStyle);
-
-            var settingsStopwatch = Stopwatch.StartNew();
-            for (int i = 0; i < layers.Count && i < layerNames.Count; i++)
-            {
-                if (layers[i] != null)
-                {
-                    layers[i].SetName(layerNames[i]);
-
-                    if (layers[i] is FeatureLayer featureLayer)
-                    {
-                        CIMRenderer renderer = null;
-                        var layerInfo = i < validLayerInfos.Count ? validLayerInfos[i] : null;
-                        if (effectiveStyle != null && layerInfo != null)
-                        {
-                            renderer = CartographyService.CreateRendererForLayer(layerInfo, effectiveStyle);
-                        }
-                        ApplyLayerSettings(featureLayer, renderer, layerInfo, effectiveStyle, selectedProfile);
-                    }
-
-                    if (i % 3 == 0 || i == layers.Count - 1)
-                    {
-                        progress?.Report($"Configured layer {i + 1} of {layers.Count}: {layerNames[i]}");
-                    }
-                }
-            }
-            settingsStopwatch.Stop();
-            System.Diagnostics.Debug.WriteLine(
-                $"[perf][layer-add] apply-settings layers={layers.Count} style=\"{effectiveCartographyName}\" elapsed={FormatElapsed(settingsStopwatch.Elapsed)}");
-
-            progress?.Report($"✅ Successfully added {layers.Count} layers with optimal stacking order!");
-            batchStopwatch.Stop();
-            System.Diagnostics.Debug.WriteLine(
-                $"[perf][layer-add] batch-total requested={uris.Count} created={layers.Count} elapsed={FormatElapsed(batchStopwatch.Elapsed)}");
-
-            if (layers.Count < uris.Count)
-            {
-                progress?.Report($"Some layers missing from bulk creation ({layers.Count}/{uris.Count}). Creating missing layers individually...");
-                var createdLayerNames = layers.Select(l => l.Name).ToHashSet();
-                return sortedLayers.Where(layerInfo =>
-                    File.Exists(layerInfo.FilePath) &&
-                    !createdLayerNames.Contains(layerInfo.LayerName)).ToList();
-            }
-
-            return null;
-        }
-
-        private static void EnforceLayerDrawOrder(Map map, List<LayerCreationInfo> desiredOrder, IProgress<string> progress)
-        {
-            var stopwatch = Stopwatch.StartNew();
-            if (map == null || desiredOrder == null || desiredOrder.Count == 0)
-                return;
-
-            var desiredNames = desiredOrder
-                .Select(l => l?.LayerName)
-                .Where(n => !string.IsNullOrWhiteSpace(n))
-                .ToList();
-
-            if (desiredNames.Count == 0)
-                return;
-
-            var liveLayerMap = map.Layers
-                .Where(l => l != null)
-                .GroupBy(l => l.Name, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
-
-            var presentLayers = desiredNames
-                .Where(name => liveLayerMap.ContainsKey(name))
-                .Select(name => liveLayerMap[name])
-                .ToList();
-
-            if (presentLayers.Count <= 1)
-                return;
-
-            int targetStartIndex = presentLayers
-                .Select(l => map.Layers.IndexOf(l))
-                .Where(i => i >= 0)
-                .DefaultIfEmpty(0)
-                .Min();
-
-            int movedCount = 0;
-            for (int i = desiredNames.Count - 1; i >= 0; i--)
-            {
-                string layerName = desiredNames[i];
-                if (!liveLayerMap.TryGetValue(layerName, out Layer layerToMove) || layerToMove == null)
-                    continue;
-
-                map.MoveLayer(layerToMove, targetStartIndex);
-                movedCount++;
-            }
-
-            stopwatch.Stop();
-            System.Diagnostics.Debug.WriteLine(
-                $"[perf][layer-add] enforce-draw-order desired={desiredNames.Count} present={presentLayers.Count} moved={movedCount} elapsed={FormatElapsed(stopwatch.Elapsed)}");
-            progress?.Report("Applied deterministic layer draw order");
-        }
-
-        private static int RemoveExistingMembersForTargetParquetFiles(Map map, IEnumerable<LayerCreationInfo> targetLayers)
-        {
-            if (map == null || targetLayers == null)
-                return 0;
-
-            var targetLayerList = targetLayers.Where(t => t != null).ToList();
-            if (!targetLayerList.Any())
-                return 0;
-
-            var targetFilePaths = new HashSet<string>(
-                targetLayerList
-                    .Select(t => NormalizeToParquetFilePath(t.FilePath))
-                    .Where(p => !string.IsNullOrWhiteSpace(p)),
-                StringComparer.OrdinalIgnoreCase);
-
-            var targetLayerNames = new HashSet<string>(
-                targetLayerList
-                    .Select(t => t.LayerName)
-                    .Where(n => !string.IsNullOrWhiteSpace(n)),
-                StringComparer.OrdinalIgnoreCase);
-
-            var membersToRemove = new List<MapMember>();
-
-            foreach (var layer in map.GetLayersAsFlattenedList().OfType<FeatureLayer>())
-            {
-                bool removeByPath = false;
-                bool pathCheckFailed = false;
-
-                try
-                {
-                    using var fc = layer.GetFeatureClass();
-                    var pathUri = fc?.GetPath();
-                    var normalizedLayerPath = NormalizeToParquetFilePath(pathUri != null
-                        ? (pathUri.IsFile ? pathUri.LocalPath : pathUri.OriginalString)
-                        : null);
-
-                    if (!string.IsNullOrWhiteSpace(normalizedLayerPath) && targetFilePaths.Contains(normalizedLayerPath))
-                        removeByPath = true;
-                }
-                catch (Exception ex)
-                {
-                    pathCheckFailed = true;
-                    System.Diagnostics.Debug.WriteLine($"RemoveExistingMembersForTargetParquetFiles: Failed to inspect layer path for '{layer.Name}': {ex.Message}");
-                }
-
-                if (removeByPath || (pathCheckFailed && targetLayerNames.Contains(layer.Name)))
-                {
-                    membersToRemove.Add(layer);
-                }
-            }
-
-            foreach (var table in map.GetStandaloneTablesAsFlattenedList().OfType<StandaloneTable>())
-            {
-                bool removeByPath = false;
-                bool pathCheckFailed = false;
-
-                try
-                {
-                    using var tbl = table.GetTable();
-                    var pathUri = tbl?.GetPath();
-                    var normalizedTablePath = NormalizeToParquetFilePath(pathUri != null
-                        ? (pathUri.IsFile ? pathUri.LocalPath : pathUri.OriginalString)
-                        : null);
-
-                    if (!string.IsNullOrWhiteSpace(normalizedTablePath) && targetFilePaths.Contains(normalizedTablePath))
-                        removeByPath = true;
-                }
-                catch (Exception ex)
-                {
-                    pathCheckFailed = true;
-                    System.Diagnostics.Debug.WriteLine($"RemoveExistingMembersForTargetParquetFiles: Failed to inspect table path for '{table.Name}': {ex.Message}");
-                }
-
-                if (removeByPath || (pathCheckFailed && targetLayerNames.Contains(table.Name)))
-                {
-                    membersToRemove.Add(table);
-                }
-            }
-
-            int removedCount = 0;
-            foreach (var member in membersToRemove.Distinct())
-            {
-                try
-                {
-                    if (member is Layer layer)
-                    {
-                        map.RemoveLayer(layer);
-                        (layer as IDisposable)?.Dispose();
-                        removedCount++;
-                    }
-                    else if (member is StandaloneTable table)
-                    {
-                        map.RemoveStandaloneTable(table);
-                        (table as IDisposable)?.Dispose();
-                        removedCount++;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"RemoveExistingMembersForTargetParquetFiles: Failed removing '{member.Name}': {ex.Message}");
-                }
-            }
-
-            return removedCount;
-        }
-
         private static string NormalizeToParquetFilePath(string rawPath)
         {
             if (string.IsNullOrWhiteSpace(rawPath))
@@ -568,68 +274,13 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        private async Task FallbackToIndividualLayerCreation(List<LayerCreationInfo> layers, MapStyleDefinition selectedMapStyle, CartographicProfile selectedProfile, IProgress<string> progress)
-        {
-            if (layers == null || layers.Count == 0)
-                return;
-
-            await QueuedTask.Run(() =>
-            {
-                var map = MapView.Active?.Map;
-                if (map == null)
-                {
-                    progress?.Report("Error: No active map found to add layer(s).");
-                    return;
-                }
-
-                MapStyleDefinition effectiveStyle = GetEffectiveSelectedStyle(selectedProfile, selectedMapStyle);
-
-                foreach (var layerInfo in layers)
-                {
-                    if (!File.Exists(layerInfo.FilePath))
-                    {
-                        progress?.Report($"Error: Parquet file not found at {layerInfo.FilePath}");
-                        continue;
-                    }
-
-                    try
-                    {
-                        Uri dataUri = new(layerInfo.FilePath);
-                        Layer newLayer = LayerFactory.Instance.CreateLayer(dataUri, map, layerName: layerInfo.LayerName);
-                        if (newLayer == null)
-                        {
-                            progress?.Report($"Error: Could not create layer for {layerInfo.LayerName}.");
-                            continue;
-                        }
-
-                        if (newLayer is FeatureLayer featureLayer)
-                        {
-                            CIMRenderer renderer = null;
-                            if (effectiveStyle != null)
-                            {
-                                renderer = CartographyService.CreateRendererForLayer(layerInfo, effectiveStyle);
-                            }
-                            ApplyLayerSettings(featureLayer, renderer, layerInfo, effectiveStyle, selectedProfile);
-                        }
-
-                        progress?.Report($"Successfully added layer: {newLayer?.Name ?? layerInfo.LayerName}");
-                    }
-                    catch (Exception ex)
-                    {
-                        progress?.Report($"Error adding layer {layerInfo.LayerName}: {ex.Message}");
-                    }
-                }
-            });
-        }
-
         private static void ApplyLayerSettings(FeatureLayer featureLayer, CIMRenderer renderer = null, LayerCreationInfo layerInfo = null, MapStyleDefinition mapStyle = null, CartographicProfile profile = null)
         {
             try
             {
                 if (featureLayer.GetDefinition() is CIMFeatureLayer layerDef)
                 {
-                    layerDef.DisplayCacheType = ArcGIS.Core.CIM.DisplayCacheType.None;
-                    layerDef.FeatureCacheType = ArcGIS.Core.CIM.FeatureCacheType.None;
+                    // Immutable snapshots can retain the host's display and feature cache defaults.
 
                     if (layerDef.FeatureReduction is CIMBinningFeatureReduction binningReduction && binningReduction.Enabled)
                     {

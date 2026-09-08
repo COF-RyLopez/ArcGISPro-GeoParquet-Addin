@@ -34,12 +34,12 @@ namespace DuckDBGeoparquet.Views
     {
         private const string _dockPaneID = "DuckDBGeoparquet_Views_WizardDockpane_V2";
         private DataProcessor _dataProcessor;
-        private const string RELEASE_URL = "https://labs.overturemaps.org/data/releases.json";
+        private const string RELEASE_URL = "https://stac.overturemaps.org/catalog.json";
         private const string S3_BASE_PATH = "s3://overturemaps-us-west-2/release";
 
         // Add CancellationTokenSource for cancelling operations
         private CancellationTokenSource _cts;
-        private bool _skipExistingData;
+
 
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
         {
@@ -200,7 +200,7 @@ namespace DuckDBGeoparquet.Views
             System.Diagnostics.Debug.WriteLine("InitializeViewModelForRuntime executing...");
             _dataProcessor = new DataProcessor();
 
-            LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => GetSelectedLeafItems().Count > 0);
+            LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => !IsWorking && !_isPreviewSampling && !IsLoading && GetSelectedLeafItems().Count > 0);
             RefreshCacheInfoCommand = new RelayCommand(() => RefreshCacheInfo());
             ClearCacheCommand = new RelayCommand(() => ClearCache(), () => ArcGISProVersionHelper.IsPro36OrLater);
             ShowThemeInfoCommand = new RelayCommand(() => ShowThemeInfo(), () => SelectedItemForPreview != null);
@@ -219,17 +219,21 @@ namespace DuckDBGeoparquet.Views
                     ResetState();
                     SelectedTabIndex = (int)WizardTab.SelectData;
                 }
-            });
+            }, () => !IsWorking && !_isPreviewSampling && !IsLoading);
             BackCommand = new RelayCommand(() => {
                 if (SelectedTabIndex == (int)WizardTab.Preview) {
                     SelectedTabIndex = (int)WizardTab.SelectData;
                 }
-            });
+            }, () => !IsWorking && !_isPreviewSampling);
             CancelCommand = new RelayCommand(() =>
             {
-                if (_cts != null && !_cts.IsCancellationRequested) { _cts.Cancel(); AddToLog("Operation cancelled by user."); }
-                ResetState(); AddToLog("Add-in state has been reset.");
-                SelectedTabIndex = (int)WizardTab.SelectData;
+                if (IsWorking || _isPreviewSampling)
+                {
+                    _cts?.Cancel();
+                    StatusText = "Cancelling; waiting for the data engine to stop...";
+                    return;
+                }
+                ResetState();
             });
             SelectAllCommand = new RelayCommand(
                 () => IsSelectAllChecked = !IsSelectAllChecked,
@@ -441,305 +445,22 @@ namespace DuckDBGeoparquet.Views
         }
 
         /// <summary>
-        /// Performs bulk folder deletion and layer removal asynchronously to prevent UI blocking
+        /// Resolves the chosen area against the captured map view and projects it to WGS84.
         /// </summary>
-        private async Task PerformBulkDataReplacementAsync(List<SelectableThemeItem> selectedItems, string dataPath)
-        {
-            try
-            {
-                StatusText = "Removing existing layers from map...";
-
-                // First, collect all unique actualS3Type folders that need to be deleted
-                var typeFoldersToDelete = selectedItems
-                    .Select(item => Path.Combine(dataPath, item.ActualType))
-                    .Where(Directory.Exists)
-                    .Distinct()
-                    .ToList();
-
-                AddToLog($"Found {typeFoldersToDelete.Count} theme folders to clean up");
-
-                if (typeFoldersToDelete.Count == 0)
-                {
-                    return; // Nothing to delete
-                }
-
-                // Remove layers that use files from these folders asynchronously
-                for (int i = 0; i < typeFoldersToDelete.Count; i++)
-                {
-                    var folderPath = typeFoldersToDelete[i];
-                    var folderName = Path.GetFileName(folderPath);
-
-                    StatusText = $"Removing layers for {folderName} ({i + 1}/{typeFoldersToDelete.Count})...";
-                    AddToLog($"Removing layers using data from folder: {folderName}");
-
-                    // Remove layers asynchronously with proper UI thread handling
-                    await RemoveLayersUsingFolderAsync(folderPath);
-
-                    // Small delay to allow UI updates
-                    await Task.Delay(100);
-                }
-
-                // ArcGIS may still hold file handles briefly after layer removal/disposal.
-                // Force a quick GC cycle and short pause before deleting files/folders.
-                await Task.Run(() =>
-                {
-                    GC.Collect();
-                    GC.WaitForPendingFinalizers();
-                    GC.Collect();
-                });
-                await Task.Delay(1000);
-
-                StatusText = "Deleting existing data folders...";
-                AddToLog("All layers removed. Now deleting data folders...");
-
-                // Best-effort cleanup of old parquet files.
-                // With per-load unique output filenames, full recursive deletion is no longer required.
-                for (int i = 0; i < typeFoldersToDelete.Count; i++)
-                {
-                    var folderPath = typeFoldersToDelete[i];
-                    var folderName = Path.GetFileName(folderPath);
-
-                    StatusText = $"Cleaning old files in {folderName} ({i + 1}/{typeFoldersToDelete.Count})...";
-                    AddToLog($"Cleaning old files in folder: {folderName}");
-
-                    // Delete unlocked files quickly; skip locked files and continue.
-                    await Task.Run(() =>
-                    {
-                        try
-                        {
-                            if (!Directory.Exists(folderPath))
-                                return;
-
-                            int deletedFiles = 0;
-                            int lockedFiles = 0;
-                            int failedFiles = 0;
-
-                            foreach (var file in Directory.EnumerateFiles(folderPath, "*.parquet", SearchOption.AllDirectories))
-                            {
-                                var deleteResult = ParquetFileDeleter.TryDelete(file);
-                                switch (deleteResult)
-                                {
-                                    case FileDeleteResult.Deleted:
-                                        deletedFiles++;
-                                        break;
-                                    case FileDeleteResult.Locked:
-                                        lockedFiles++;
-                                        break;
-                                    default:
-                                        failedFiles++;
-                                        break;
-                                }
-                            }
-
-                            // Remove now-empty subdirectories.
-                            foreach (var dir in Directory.GetDirectories(folderPath, "*", SearchOption.AllDirectories)
-                                .OrderByDescending(d => d.Length))
-                            {
-                                try
-                                {
-                                    if (!Directory.EnumerateFileSystemEntries(dir).Any())
-                                        Directory.Delete(dir);
-                                }
-                                catch
-                                {
-                                    // Best effort only.
-                                }
-                            }
-
-                            System.Diagnostics.Debug.WriteLine($"Cleanup {folderPath}: deleted {deletedFiles} parquet file(s), skipped {lockedFiles} locked file(s), failed {failedFiles} file(s).");
-                            if (lockedFiles > 0)
-                            {
-                                AddToLog($"Skipped {lockedFiles} locked file(s) in {folderName}; they will be cleaned when released.");
-                            }
-                            if (failedFiles > 0)
-                            {
-                                AddToLog($"Could not delete {failedFiles} file(s) in {folderName} due to non-lock errors.");
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"Error cleaning folder {folderPath}: {ex.Message}");
-                        }
-                    });
-
-                    // Small delay to allow UI updates
-                    await Task.Delay(50);
-                }
-
-                // Clear ArcGIS Pro Parquet cache to prevent stale metadata/extents from reused file paths.
-                StatusText = "Clearing ArcGIS Pro Parquet cache...";
-                AddToLog("Clearing ArcGIS Pro Parquet cache to avoid stale layer metadata...");
-                bool cacheCleared = await Task.Run(() => CacheManager.ClearCache());
-                if (cacheCleared)
-                {
-                    AddToLog("ArcGIS Pro Parquet cache cleared.");
-                }
-                else
-                {
-                    AddToLog("Could not fully clear ArcGIS Pro Parquet cache (some files may be in use).");
-                }
-                RefreshCacheInfo();
-
-                StatusText = "Data cleanup completed. Ready to load new data...";
-                AddToLog("Bulk folder deletion completed successfully");
-            }
-            catch (Exception ex)
-            {
-                AddToLog($"Warning during bulk cleanup: {ex.Message}");
-                StatusText = "Cleanup completed with warnings. Continuing with data load...";
-                System.Diagnostics.Debug.WriteLine($"Error in PerformBulkDataReplacementAsync: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Removes all layers that use files from the specified folder
-        /// </summary>
-        private async Task RemoveLayersUsingFolderAsync(string folderPath)
-        {
-            await QueuedTask.Run(() =>
-            {
-                try
-                {
-                    var map = MapView.Active?.Map;
-                    if (map == null) return;
-
-                    var membersToRemove = new List<MapMember>();
-                    var allLayers = map.GetLayersAsFlattenedList().ToList();
-                    var allTables = map.GetStandaloneTablesAsFlattenedList().ToList();
-
-                    string normalizedFolderPath = Path.GetFullPath(folderPath).ToLowerInvariant();
-                    if (!normalizedFolderPath.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
-                    {
-                        normalizedFolderPath += Path.DirectorySeparatorChar;
-                    }
-
-                    // Normalize datasource paths to actual parquet file path when possible.
-                    static string NormalizeToParquetFilePath(string rawPath)
-                    {
-                        if (string.IsNullOrWhiteSpace(rawPath)) return null;
-                        try
-                        {
-                            string fullPath = Path.GetFullPath(rawPath);
-                            string lowerPath = fullPath.ToLowerInvariant();
-                            int parquetIndex = lowerPath.IndexOf(".parquet", StringComparison.OrdinalIgnoreCase);
-                            if (parquetIndex >= 0)
-                            {
-                                return fullPath[..(parquetIndex + ".parquet".Length)].ToLowerInvariant();
-                            }
-                            return fullPath.ToLowerInvariant();
-                        }
-                        catch
-                        {
-                            return null;
-                        }
-                    }
-
-                    // Helper to check if a file path is within the target folder
-                    bool IsFileInTargetFolder(string filePath)
-                    {
-                        if (string.IsNullOrEmpty(filePath)) return false;
-                        string normalizedFilePath = NormalizeToParquetFilePath(filePath);
-                        return !string.IsNullOrEmpty(normalizedFilePath) &&
-                               normalizedFilePath.StartsWith(normalizedFolderPath, StringComparison.OrdinalIgnoreCase);
-                    }
-
-                    // Check layers
-                    foreach (var layer in allLayers)
-                    {
-                        if (layer is FeatureLayer featureLayer)
-                        {
-                            try
-                            {
-                                using var fc = featureLayer.GetFeatureClass();
-                                if (fc != null)
-                                {
-                                    var fcPathUri = fc.GetPath();
-                                    if (fcPathUri != null)
-                                    {
-                                        string rawPath = fcPathUri.IsFile ? fcPathUri.LocalPath : fcPathUri.OriginalString;
-                                        if (IsFileInTargetFolder(rawPath))
-                                        {
-                                            membersToRemove.Add(featureLayer);
-                                        }
-                                    }
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"Error checking layer '{featureLayer.Name}': {ex.Message}");
-                            }
-                        }
-                    }
-
-                    // Check standalone tables
-                    foreach (var tableMember in allTables)
-                    {
-                        if (tableMember is StandaloneTable standaloneTable)
-                        {
-                            try
-                            {
-                                using var tbl = standaloneTable.GetTable();
-                                if (tbl != null)
-                                {
-                                    var tblPathUri = tbl.GetPath();
-                                    if (tblPathUri != null)
-                                    {
-                                        string rawPath = tblPathUri.IsFile ? tblPathUri.LocalPath : tblPathUri.OriginalString;
-                                        if (IsFileInTargetFolder(rawPath))
-                                        {
-                                            membersToRemove.Add(standaloneTable);
-                                        }
-                                    }
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"Error checking table '{standaloneTable.Name}': {ex.Message}");
-                            }
-                        }
-                    }
-
-                    // Remove the identified members
-                    if (membersToRemove.Count > 0)
-                    {
-                        var distinctMembersToRemove = membersToRemove.Distinct().ToList();
-                        System.Diagnostics.Debug.WriteLine($"Removing {distinctMembersToRemove.Count} map members for folder: {folderPath}");
-
-                        foreach (var member in distinctMembersToRemove)
-                        {
-                            if (member is Layer layerToRemove)
-                            {
-                                map.RemoveLayer(layerToRemove);
-                                (layerToRemove as IDisposable)?.Dispose();
-                            }
-                            else if (member is StandaloneTable tableToRemove)
-                            {
-                                map.RemoveStandaloneTable(tableToRemove);
-                                (tableToRemove as IDisposable)?.Dispose();
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Error in RemoveLayersUsingFolderAsync: {ex.Message}");
-                }
-            });
-        }
-
-        private async Task<Envelope> GetLoadExtentAsync()
+        private async Task<Envelope> GetLoadExtentAsync(MapView targetView = null)
         {
             Envelope extent = null;
             _savedViewExtentForRestore = null;
+            var view = targetView ?? MapView.Active;
             await QueuedTask.Run(() =>
             {
                 SpatialReference wgs84 = SpatialReferenceBuilder.CreateSpatialReference(ExtentResolution.Wgs84Wkid);
 
-                switch (ExtentResolution.ChooseSource(UseCurrentMapExtent, MapView.Active != null, UseCustomExtent, CustomExtent != null))
+                switch (ExtentResolution.ChooseSource(UseCurrentMapExtent, view != null, UseCustomExtent, CustomExtent != null))
                 {
                     case ExtentSource.Map:
                     {
-                        Envelope mapExtent = MapView.Active.Extent;
+                        Envelope mapExtent = view.Extent;
                         if (mapExtent != null)
                         {
                             // Save view extent so we can restore it after adding layers (prevents zoom-out)
@@ -753,14 +474,14 @@ namespace DuckDBGeoparquet.Views
                                     if (extent == null)
                                     {
                                         AddToLog("Warning: Map extent projection to WGS84 resulted in null. Original extent might be invalid or projection failed.");
-                                        extent = mapExtent;
+                                        throw new InvalidOperationException("Could not project the map area to WGS84.");
                                     }
                                 }
                                 catch (Exception ex)
                                 {
-                                    AddToLog($"Error projecting map extent: {ex.Message}. Using original extent values, which might be incorrect for filtering.");
+                                    AddToLog($"Error projecting map extent: {ex.Message}. Choose an area with a known coordinate system.");
                                     System.Diagnostics.Debug.WriteLine($"Error projecting map extent: {ex.Message}");
-                                    extent = mapExtent;
+                                    throw new InvalidOperationException("Choose an area with a known coordinate system.", ex);
                                 }
                             }
                             else
@@ -769,7 +490,7 @@ namespace DuckDBGeoparquet.Views
                                 extent = mapExtent;
                             }
                             AddToLog($"Using WGS84 extent from map: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
-                            System.Diagnostics.Debug.WriteLine($"[GetLoadExtentAsync] WGS84 extent from map (MapView.Active.Extent): {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
+                            System.Diagnostics.Debug.WriteLine($"[GetLoadExtentAsync] WGS84 extent from map (view.Extent): {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
                         }
                         else
                         {
@@ -790,292 +511,131 @@ namespace DuckDBGeoparquet.Views
             return extent;
         }
 
-        private async Task<bool> CheckAndReplaceExistingDataAsync(List<SelectableThemeItem> selectedItems, string dataPath)
+        private bool _isWorking;
+        public bool IsWorking
         {
-            _skipExistingData = false;
-            bool existingDataFound = false;
-
-            if (Directory.Exists(dataPath))
+            get => _isWorking;
+            private set
             {
-                foreach (var selectedItem in selectedItems)
-                {
-                    var actualTypeSpecificDataPath = Path.Combine(dataPath, selectedItem.ActualType);
-                    if (Directory.Exists(actualTypeSpecificDataPath) && Directory.EnumerateFiles(actualTypeSpecificDataPath, "*.parquet").Any())
-                    {
-                        existingDataFound = true;
-                        break;
-                    }
-                }
+                _isWorking = value;
+                NotifyPropertyChanged(nameof(IsWorking));
+                (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                (NextCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                (BackCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                RaisePreviewCommandsCanExecuteChanged();
             }
-
-            if (existingDataFound)
-            {
-                var confirmResult = ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
-                    "Existing data found for one or more selected themes.\n\nYes = Replace existing files\nNo = Keep existing files and skip already-downloaded themes\nCancel = Abort",
-                    "Replace or Skip Existing Data?",
-                    System.Windows.MessageBoxButton.YesNoCancel,
-                    System.Windows.MessageBoxImage.Warning);
-
-                if (confirmResult == System.Windows.MessageBoxResult.Cancel)
-                {
-                    StatusText = "Operation cancelled by user";
-                    AddToLog("Operation cancelled - user chose to cancel when existing data was detected");
-                    return false;
-                }
-
-                if (confirmResult == System.Windows.MessageBoxResult.No)
-                {
-                    _skipExistingData = true;
-                    AddToLog("User chose to keep existing data; will skip already-downloaded themes");
-                    StatusText = "Keeping existing data; skipping already-downloaded themes";
-                    return true;
-                }
-
-                // Yes = replace
-                AddToLog("User confirmed replacing existing data");
-
-                StatusText = "Preparing to replace existing data...";
-                AddToLog("Removing existing layers and deleting theme folders...");
-                await PerformBulkDataReplacementAsync(selectedItems, dataPath);
-                AddToLog("Existing data cleanup completed. Beginning new data loading...");
-            }
-
-            return true;
-        }
-
-        private async Task<bool> LoadAndCreateLayersForItemAsync(
-            SelectableThemeItem item, int itemIndex, int totalCount,
-            int processedCount, Envelope extent, CancellationToken ct)
-        {
-            string parentS3Theme = item.ParentThemeForS3;
-            string actualS3Type = item.ActualType;
-            string itemDisplayName = item.DisplayName;
-
-            if (_skipExistingData)
-            {
-                var existingFolder = Path.Combine(DataOutputPath, actualS3Type);
-                if (Directory.Exists(existingFolder) && Directory.EnumerateFiles(existingFolder, "*.parquet").Any())
-                {
-                    AddToLog($"Skipping {itemDisplayName} (existing data kept per user choice)");
-                    StatusText = $"Skipping {itemDisplayName} ({processedCount + 1}/{totalCount})";
-                    ProgressValue = ((processedCount + 1) * 100.0) / totalCount;
-                    return true;
-                }
-            }
-
-            StatusText = $"Processing {itemIndex + 1} of {totalCount}: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}";
-            AddToLog($"Processing: {MakeFriendlyName(parentS3Theme)} / {itemDisplayName}");
-            AddToLog($"Data type for S3: theme='{parentS3Theme}', type='{actualS3Type}'");
-            AddToLog(AddSourceProvenanceFields
-                ? "Source provenance fields will be added when Overture source metadata is available."
-                : "Source provenance fields are disabled for this download.");
-            System.Diagnostics.Debug.WriteLine($"Data type for S3: theme='{parentS3Theme}', type='{actualS3Type}'");
-
-            string trimmedRelease = LatestRelease?.Trim() ?? "";
-            string s3Path = trimmedRelease.Length > 0
-                ? $"{S3_BASE_PATH}/{trimmedRelease}/theme={parentS3Theme}/type={actualS3Type}/*.parquet"
-                : $"{S3_BASE_PATH}/theme={parentS3Theme}/type={actualS3Type}/*.parquet";
-
-            AddToLog($"Loading from S3 path: {s3Path}");
-            System.Diagnostics.Debug.WriteLine($"Loading from S3 path: {s3Path}");
-
-            await Task.Delay(50);
-
-            var ingestProgressReporter = new Progress<string>(status =>
-            {
-                StatusText = status;
-                AddToLog(status);
-                var baseProgress = (processedCount * 100.0) / totalCount;
-                var ingestProgress = 1.5;
-                ProgressValue = Math.Min(baseProgress + ingestProgress, 98.0);
-            });
-
-            using var heartbeatCts = new CancellationTokenSource();
-            var heartbeatTask = StartHeartbeatAsync(itemDisplayName, heartbeatCts.Token);
-
-            StatusText = $"Loading {itemDisplayName} from S3 (this may take 30-60 seconds)...";
-            AddToLog($"⏳ Starting S3 data load for {itemDisplayName} - please wait, this operation may take time...");
-
-            bool ingestSuccess = await _dataProcessor.IngestFileAsync(
-                s3Path,
-                extent == null ? null : new ExtentBounds(extent.XMin, extent.YMin, extent.XMax, extent.YMax),
-                actualS3Type,
-                ingestProgressReporter,
-                ct,
-                AddSourceProvenanceFields);
-
-            heartbeatCts.Cancel();
-            try { await heartbeatTask; } catch (OperationCanceledException) { }
-
-            if (!ingestSuccess)
-            {
-                AddToLog($"❌ Failed to ingest data from {s3Path}");
-                StatusText = $"Error loading data from {s3Path}";
-                return false;
-            }
-
-            AddToLog($"✅ Successfully loaded {itemDisplayName} data from S3");
-
-            if (ct.IsCancellationRequested)
-                return false;
-
-            await Task.Delay(50);
-
-            string featureLayerName = $"{MakeFriendlyName(parentS3Theme)} - {itemDisplayName}";
-            StatusText = $"Creating layers for {itemDisplayName}...";
-            AddToLog($"🔄 Creating feature layers for {itemDisplayName}...");
-
-            var itemProgressReporter = new Progress<string>(status =>
-            {
-                StatusText = status;
-                AddToLog(status);
-                var baseProgress = (processedCount * 100.0) / totalCount;
-                var itemProgress = 3.0;
-                ProgressValue = Math.Min(baseProgress + itemProgress, 99.0);
-            });
-
-            await _dataProcessor.CreateFeatureLayerAsync(featureLayerName, itemProgressReporter, parentS3Theme, actualS3Type, DataOutputPath, SelectedCompression, ct);
-
-            ProgressValue = ((processedCount + 1) * 100.0) / totalCount;
-
-            StatusText = $"✅ Completed {itemDisplayName} ({processedCount + 1}/{totalCount})";
-            AddToLog($"✅ Successfully loaded {itemDisplayName} for {MakeFriendlyName(parentS3Theme)}");
-
-            await Task.Delay(100);
-
-            return true;
         }
 
         private async Task LoadOvertureDataAsync()
         {
+            if (IsWorking || _isPreviewSampling || IsLoading) return;
+            var selected = GetSelectedLeafItems().ToList();
+            if (selected.Count == 0) return;
+            IsWorking = true;
+            _cts = new CancellationTokenSource();
+            var token = _cts.Token;
+            DownloadSnapshot snapshot = null;
             try
             {
-                var selectedLeafItems = GetSelectedLeafItems();
-                if (selectedLeafItems.Count == 0)
-                {
-                    AddToLog("No themes or sub-themes selected.");
-                    return;
-                }
-
-                _cts?.Dispose();
-                _cts = new CancellationTokenSource();
-                var cancellationToken = _cts.Token;
-
-                SelectedTabIndex = (int)WizardTab.Status;
-                StatusText = $"Loading {selectedLeafItems.Count} selected data types...";
-                AddToLog($"Starting to load {selectedLeafItems.Count} data type(s) from release {LatestRelease}");
-                DateTime loadStartUtc = DateTime.UtcNow;
-                Envelope extent = await GetLoadExtentAsync();
-
-                if (cancellationToken.IsCancellationRequested) return;
-
-                string dataPath = DataOutputPath;
-                if (!await CheckAndReplaceExistingDataAsync(selectedLeafItems, dataPath)) return;
-
+                // Capture mutable UI choices once. A release refresh or map switch cannot change this job.
+                string release = LatestRelease?.Trim();
+                string compression = SelectedCompression;
+                bool provenance = AddSourceProvenanceFields;
+                string dataDirectory = Path.GetFullPath(DataOutputPath);
+                var targetView = MapView.Active;
+                var targetMap = targetView?.Map;
+                if (targetMap == null) throw new InvalidOperationException("Open a map before adding data.");
+                var extent = await GetLoadExtentAsync(targetView);
+                if (extent == null) throw new InvalidOperationException("Choose a map or custom area before downloading.");
+                var bounds = new ExtentBounds(extent.XMin, extent.YMin, extent.XMax, extent.YMax);
+                GeographicBounds.Validate(bounds);
+                snapshot = new DownloadSnapshot(dataDirectory, release, bounds, compression);
+                _dataProcessor.ClearPendingLayers();
                 _dataProcessor.BeginNewOutputSession();
                 _dataProcessor.SelectedCartographicProfile = SelectedCartographicProfile;
                 _dataProcessor.SelectedMapStyle = null;
-
-                int totalDataTypesToProcess = selectedLeafItems.Count;
-                int processedDataTypes = 0;
-
-                for (int itemIndex = 0; itemIndex < selectedLeafItems.Count; itemIndex++)
+                SelectedTabIndex = (int)WizardTab.Status;
+                var progress = new Progress<string>(message => { StatusText = message; AddToLog(message); });
+                await _dataProcessor.InitializeDuckDBAsync(token);
+                var version = await _dataProcessor.ExecuteQueryAsync("SELECT version() AS version");
+                snapshot.Manifest.EngineVersion = Convert.ToString(version[0]["version"]);
+                for (int index = 0; index < selected.Count; index++)
                 {
-                    if (cancellationToken.IsCancellationRequested) return;
-
-                    bool success = await LoadAndCreateLayersForItemAsync(
-                        selectedLeafItems[itemIndex], itemIndex, totalDataTypesToProcess,
-                        processedDataTypes, extent, cancellationToken);
-
-                    if (success) processedDataTypes++;
-                }
-
-                if (cancellationToken.IsCancellationRequested) return;
-
-                StatusText = "Adding layers to map in optimal stacking order...";
-                AddToLog("🗺️ All data exported successfully. Now adding layers to map with optimal stacking order...");
-
-                await Task.Delay(100);
-
-                var progressReporter = new Progress<string>(status =>
-                {
-                    StatusText = status;
-                    AddToLog(status);
-                });
-
-                await _dataProcessor.AddAllLayersToMapAsync(progressReporter);
-
-                if (_savedViewExtentForRestore != null)
-                {
-                    await QueuedTask.Run(() =>
+                    token.ThrowIfCancellationRequested();
+                    var item = selected[index];
+                    string uri = $"{S3_BASE_PATH}/{release}/theme={item.ParentThemeForS3}/type={item.ActualType}/*.parquet";
+                    try
                     {
-                        if (MapView.Active != null)
+                        IReadOnlyList<string> files = null;
+                        StatusText = $"Finding {item.DisplayName} files for this area...";
+                        try
                         {
-                            MapView.Active.ZoomTo(_savedViewExtentForRestore);
+                            files = await new OvertureCatalog().FindFilesAsync(release, item.ParentThemeForS3,
+                                item.ActualType, bounds, Path.Combine(dataDirectory, ".catalog"), token);
+                            AddToLog($"Catalog selected {files.Count} files for {item.DisplayName}.");
                         }
-                        _savedViewExtentForRestore = null;
-                    });
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception ex)
+                        {
+                            AddToLog($"Catalog unavailable ({ex.Message}); using the full file listing with spatial filtering.");
+                        }
+                        var result = await _dataProcessor.PrepareDatasetAsync(uri, item.ParentThemeForS3,
+                            item.ActualType, $"{MakeFriendlyName(item.ParentThemeForS3)} - {item.DisplayName}",
+                            snapshot.StagingPath, bounds, compression, provenance, progress, token, files);
+                        snapshot.Manifest.Datasets.Add(result);
+                        AddToLog(result.Status == DatasetLoadStatus.Empty
+                            ? $"{item.DisplayName}: no features in this area."
+                            : $"{item.DisplayName}: {result.RowCount:N0} features prepared.");
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        snapshot.Manifest.Datasets.Add(new DatasetLoadResult
+                        {
+                            Theme = item.ParentThemeForS3, Type = item.ActualType,
+                            SourceUri = uri, Status = DatasetLoadStatus.Failed, Error = ex.Message
+                        });
+                        AddToLog($"{item.DisplayName} failed: {ex.Message}");
+                    }
+                    ProgressValue = (index + 1) * 90.0 / selected.Count;
                 }
-
-                _lastLoadedDataPath = DataOutputPath;
-
-                var loadElapsed = DateTime.UtcNow - loadStartUtc;
-                string summaryStyle = SelectedCartographicProfile?.DisplayName ?? "Default";
-                string summaryExtent = extent != null
-                    ? $"{extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}"
-                    : "none";
-                AddToLog($"Load summary: layers={_dataProcessor.LastAddedLayerCount}, map purpose={summaryStyle}, elapsed={loadElapsed:hh\\:mm\\:ss}, extent={summaryExtent}");
-
-                StatusText = $"Successfully loaded all selected themes from release {LatestRelease}";
-                AddToLog("All selected themes loaded successfully");
-                AddToLog("🚀 Data loaded successfully");
-                AddToLog("----------------");
-                if (extent != null)
-                {
-                    AddToLog($"Data was loaded for this extent only: {extent.XMin:F2}, {extent.YMin:F2}, {extent.XMax:F2}, {extent.YMax:F2}");
-                    AddToLog("When you load data for a different extent, the existing data will be replaced.");
-                    AddToLog("This ensures a clean folder structure for MFC creation.");
-                }
-                AddToLog("----------------");
+                token.ThrowIfCancellationRequested();
+                int failed = snapshot.Manifest.Datasets.Count(d => d.Status == DatasetLoadStatus.Failed);
+                int empty = snapshot.Manifest.Datasets.Count(d => d.Status == DatasetLoadStatus.Empty);
+                if (failed > 0)
+                    throw new InvalidOperationException($"{failed} of {selected.Count} datasets failed. Previous data is preserved; retry the download.");
+                // Commit is a short, non-cancellable publish boundary after all files validate.
+                string adoptedPath = await Task.Run(() => snapshot.Commit());
+                _dataProcessor.LayerManager.RelocatePendingLayers(snapshot.StagingPath, adoptedPath);
+                _lastLoadedDataPath = adoptedPath;
+                StatusText = "Preparing ArcGIS layers...";
+                int expectedLayers = _dataProcessor.LayerManager.GetPendingLayers().Count;
+                await _dataProcessor.AddAllLayersToMapAsync(progress, targetMap, adoptedPath);
+                int added = _dataProcessor.LastAddedLayerCount;
+                StatusText = added == expectedLayers
+                    ? $"Added {added} layers from {release}; {empty} empty datasets."
+                    : $"Saved data from {release}; added {added} of {expectedLayers} layers. See details to recover missing layers.";
+                AddToLog(StatusText);
+                AddToLog($"Snapshot: {adoptedPath}. Original data is in _source; previous snapshots remain available.");
                 ProgressValue = 100;
             }
-
+            catch (OperationCanceledException)
+            {
+                StatusText = "Download cancelled. Previous data is preserved.";
+                AddToLog(StatusText);
+            }
             catch (Exception ex)
             {
-                // Determine if this is a file access issue
-                bool isFileAccessError = ex.Message.Contains("because it is being used by another process") ||
-                                         ex.Message.Contains("access") ||
-                                         ex.Message.Contains("denied") ||
-                                         ex.Message.Contains("locked");
-
-                if (isFileAccessError)
-                {
-                    StatusText = "File access error";
-                    AddToLog($"ERROR: File access error. One or more files are locked by another process.");
-                    AddToLog($"Try the following:");
-                    AddToLog($"1. Close any other ArcGIS Pro projects that might be using this data");
-                    AddToLog($"2. Remove any layers from your current map that use Overture data");
-                    AddToLog($"3. In extreme cases, restart ArcGIS Pro and try again");
-                    AddToLog($"Detailed error: {ex.Message}");
-                }
-                else
-                {
-                    StatusText = $"Error loading data: {ex.Message}";
-                    AddToLog($"ERROR: {ex.Message}");
-                    AddToLog($"Stack trace: {ex.StackTrace}");
-                }
-
-                ProgressValue = 0;
-                System.Diagnostics.Debug.WriteLine($"Load error: {ex}");
+                StatusText = $"Download incomplete: {ex.Message}";
+                AddToLog(StatusText);
             }
             finally
             {
-                // Clean up the cancellation token source
-                if (_cts != null)
-                {
-                    _cts.Dispose();
-                    _cts = null;
-                }
+                _dataProcessor.ClearPendingLayers();
+                snapshot?.Dispose();
+                _cts.Dispose();
+                _cts = null;
+                IsWorking = false;
             }
         }
 
@@ -1094,8 +654,8 @@ namespace DuckDBGeoparquet.Views
             if (pane == null)
                 return;
 
-            pane.ResetState();
-            pane.SelectedTabIndex = (int)WizardTab.SelectData;
+            if (!pane.IsWorking && !pane._isPreviewSampling) pane.ResetState();
+            if (!pane.IsWorking) pane.SelectedTabIndex = (int)WizardTab.SelectData;
             pane.Activate();
         }
 
@@ -1126,6 +686,7 @@ namespace DuckDBGeoparquet.Views
 
         private void ResetState()
         {
+            if (IsWorking || _isPreviewSampling) return;
             // Clear theme selections
             foreach (var themeItem in Themes)
             {

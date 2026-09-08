@@ -46,6 +46,11 @@ namespace DuckDBGeoparquet.Tests
                 string newer = Directory.CreateDirectory(Path.Combine(dataDir, "2026-06-17.0")).FullName;
                 string oldest = Directory.CreateDirectory(Path.Combine(dataDir, "2026-04-01.0")).FullName;
 
+                foreach (var folder in new[] { older, newer, oldest })
+                {
+                    Directory.CreateDirectory(Path.Combine(folder, "address"));
+                    File.WriteAllText(Path.Combine(folder, "address", "data.parquet"), "legacy");
+                }
                 // Set explicit write times so the assertion doesn't depend on creation order.
                 var baseTime = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
                 Directory.SetLastWriteTimeUtc(oldest, baseTime);

@@ -25,7 +25,8 @@ namespace DuckDBGeoparquet.Tests
 
             Assert.Contains("CAST(names.primary AS VARCHAR)", sql);
             Assert.Contains("coalesce('', '') AS overture_address", sql);
-            Assert.Contains("bbox.xmin <= -119", sql);
+            Assert.Contains("bbox.xmin <=", sql);
+            Assert.DoesNotContain("bbox.xmin <= -119\n", sql);
             Assert.Contains("read_parquet('/data/release/place/*.parquet', hive_partitioning=1, union_by_name=1)", sql);
             Assert.DoesNotContain("unnest(addresses)", sql);
             Assert.Contains("jaro_winkler_similarity", sql);

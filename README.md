@@ -2,6 +2,8 @@
 
 A powerful ArcGIS Pro add-in that simplifies working with cloud-native geospatial data formats, especially GeoParquet files. This tool uses [DuckDB](https://duckdb.org/) to deliver high-performance data processing directly within ArcGIS Pro, making it ideal for both GIS professionals and newcomers alike.
 
+See [Cloud-native foundation](docs/CLOUD_NATIVE_FOUNDATION.md) for the new snapshot workflow, validation status, and staged contribution, routing, and NG911 work.
+
 ![ArcGIS Pro GeoParquet Add-in](https://cofgisonline.maps.arcgis.com/home/item.html?id=8293d1220b7848848ce316b4fa3263b5)
 
 ## 🎥 See It In Action
@@ -15,7 +17,7 @@ Watch the add-in in action loading Overture Maps data with incredible performanc
 ## Features
 
 - **Native GeoParquet Support**: Fully leverages ArcGIS Pro's native GeoParquet capabilities for optimal performance
-- **High-Performance Processing**: Optimized data pipeline with 5-15% performance improvements and smart empty dataset handling
+- **High-Performance Processing**: Background DuckDB jobs, catalog file pruning, and explicit empty/failure results
 - **Complex Data Preservation**: Maintains original data structure including nested types
 - **Cloud-Native Integration**: Direct access to data in S3, Azure, and other cloud storage
 - **Wizard-Driven Interface**: Simple step-by-step process with clean, focused progress reporting
@@ -94,13 +96,13 @@ Watch the add-in in action loading Overture Maps data with incredible performanc
 2. Alternatively, use "Custom Extent" to define a specific area
 
 #### Step 3: Load and Transform
-1. Click "Load Data" to begin the download process
+1. Click **Add to map** to download directly, or use **Preview** first
 2. Monitor the progress through the clean, focused status reporting
 3. The add-in handles all processing automatically with optimized performance:
    - Skips empty datasets for faster processing
-   - Preserves complex data types
-   - Maintains spatial relationships
-   - Ensures proper georeferencing
+   - Preserves complete source attributes and whole geometry in a separate source archive
+   - Publishes versioned snapshots while retaining previous data
+   - Adds display layers with WGS84 geometry and records the source release
 
 #### Step 4: Visualization
 1. Data is automatically added to your map once processed
@@ -154,7 +156,7 @@ Watch the add-in in action loading Overture Maps data with incredible performanc
   - Close other resource-intensive applications
   - Ensure you have at least 8GB of available RAM
 - **Large Files**: 
-  - Recent optimizations provide 5-15% performance improvements
+  - Catalog file pruning reduces unnecessary file reads when metadata is available; measure cold and warm runs for your area
   - Consider using a machine with more RAM for very large areas
   - Process data in smaller geographic chunks
 - **Improved Logging**: 
@@ -196,7 +198,7 @@ Release notes are automatically generated from git commits, ensuring you always 
 - **Cache Management**: View and manage Parquet cache for Pro 3.6+ users
 - **Automated Releases**: Fully automated CI/CD pipeline for seamless version management
 - **ArcGIS Online Publishing**: Automatic publishing to ArcGIS Marketplace with each release
-- **Performance Optimizations**: 5-15% faster processing through optimized file operations
+- **Performance Work**: Catalog pruning and background execution; benchmark results depend on area, network, and cache state
 - **Smart Dataset Handling**: Automatically skips empty datasets for faster processing
 - **Native GeoParquet**: Fully utilizes ArcGIS Pro's built-in GeoParquet support
 
