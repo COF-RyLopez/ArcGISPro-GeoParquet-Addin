@@ -17,10 +17,9 @@ namespace DuckDBGeoparquet.Services
     /// <summary>Cache a complete release/type manifest, then prune files before opening Parquet footers.</summary>
     public sealed class OvertureCatalog
     {
-        private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(30) };
         private readonly Func<Uri, CancellationToken, Task<string>> _fetch;
         public OvertureCatalog(Func<Uri, CancellationToken, Task<string>> fetch = null)
-            => _fetch = fetch ?? ((uri, token) => Client.GetStringAsync(uri, token));
+            => _fetch = fetch ?? OvertureHttp.GetStringAsync;
 
         public async Task<IReadOnlyList<string>> FindFilesAsync(string release, string theme, string type,
             ExtentBounds area, string cacheDirectory, CancellationToken token = default)

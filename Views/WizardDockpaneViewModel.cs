@@ -34,7 +34,6 @@ namespace DuckDBGeoparquet.Views
     {
         private const string _dockPaneID = "DuckDBGeoparquet_Views_WizardDockpane_V2";
         private DataProcessor _dataProcessor;
-        private const string RELEASE_URL = "https://stac.overturemaps.org/catalog.json";
         private const string S3_BASE_PATH = "s3://overturemaps-us-west-2/release";
 
         // Add CancellationTokenSource for cancelling operations
@@ -201,6 +200,12 @@ namespace DuckDBGeoparquet.Views
             _dataProcessor = new DataProcessor();
 
             LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => !IsWorking && !_isPreviewSampling && !IsLoading && GetSelectedLeafItems().Count > 0);
+            RefreshReleaseCommand = new RelayCommand(async () =>
+            {
+                IsLoading = true;
+                try { await RefreshLatestReleaseAsync(); StatusText = ReleaseStatusText; }
+                finally { IsLoading = false; }
+            }, () => !IsLoading && !IsWorking);
             RefreshCacheInfoCommand = new RelayCommand(() => RefreshCacheInfo());
             ClearCacheCommand = new RelayCommand(() => ClearCache(), () => ArcGISProVersionHelper.IsPro36OrLater);
             ShowThemeInfoCommand = new RelayCommand(() => ShowThemeInfo(), () => SelectedItemForPreview != null);
@@ -297,10 +302,10 @@ namespace DuckDBGeoparquet.Views
                 AddToLog("Async Initialization: Initializing DuckDB");
                 await _dataProcessor.InitializeDuckDBAsync();
 
-                // Refresh latest release in background without blocking UI
-                _ = RefreshLatestReleaseAsync();
+                // Complete discovery before enabling downloads of a cached release.
+                await RefreshLatestReleaseAsync();
 
-                StatusText = "Ready to load Overture Maps data";
+                StatusText = ReleaseStatusText;
                 AddToLog("Async Initialization: Ready to load Overture Maps data");
             }
             catch (Exception ex)
@@ -367,39 +372,24 @@ namespace DuckDBGeoparquet.Views
             AddToLog($"DataOutputPath updated to: {DataOutputPath}");
         }
 
-        // Shared client for release checks: system proxy, default credentials, short timeout.
-        private static readonly HttpClient _releaseHttpClient = new(new HttpClientHandler
-        {
-            UseProxy = true,
-            Proxy = WebRequest.DefaultWebProxy,
-            DefaultProxyCredentials = CredentialCache.DefaultCredentials
-        })
-        {
-            Timeout = TimeSpan.FromSeconds(3)
-        };
-
         private async Task RefreshLatestReleaseAsync()
         {
             try
             {
-                var url = Environment.GetEnvironmentVariable("OVERTURE_RELEASE_URL") ?? RELEASE_URL;
-                var response = await _releaseHttpClient.GetStringAsync(url);
-                var releaseInfo = JsonSerializer.Deserialize<ReleaseInfo>(response, _jsonOptions);
-                var latest = releaseInfo?.Latest;
-                if (!string.IsNullOrWhiteSpace(latest) && latest != LatestRelease)
-                {
-                    LatestRelease = latest;
-                    NotifyPropertyChanged(nameof(LatestRelease));
-                    AddToLog($"Latest release refreshed: {LatestRelease}");
-                    UpdatePathsFromRelease();
-                    SaveCachedLatestRelease(LatestRelease);
-                    IsManualReleaseEntryVisible = false; // hide if previously shown
-                }
+                ReleaseStatusText = "Checking published releases...";
+                var selection = await new OvertureReleaseDiscovery().GetLatestAsync(Environment.GetEnvironmentVariable("OVERTURE_RELEASE_URL"));
+                LatestRelease = selection.Release;
+                NotifyPropertyChanged(nameof(LatestRelease));
+                AddToLog($"Release discovered from {selection.Source}: {LatestRelease}");
+                ReleaseStatusText = $"Selected {LatestRelease} from {selection.Source}.";
+                UpdatePathsFromRelease();
+                SaveCachedLatestRelease(LatestRelease);
+                IsManualReleaseEntryVisible = false;
             }
             catch (Exception ex)
             {
-                // Non-blocking: log and continue
-                AddToLog($"Failed to refresh latest release (non-blocking): {ex.Message}");
+                ReleaseStatusText = "Release discovery unavailable. The displayed cached date is unverified; enter a published release and apply it.";
+                AddToLog($"Failed to refresh release: {ex.Message}");
                 System.Diagnostics.Debug.WriteLine($"RefreshLatestReleaseAsync error: {ex}");
                 // Offer manual entry when fetch fails
                 if (string.IsNullOrWhiteSpace(ManualReleaseText))
@@ -412,7 +402,10 @@ namespace DuckDBGeoparquet.Views
         {
             var input = ManualReleaseText?.Trim();
             if (string.IsNullOrWhiteSpace(input)) return;
+            try { OvertureReleaseDiscovery.ValidateRelease(input); }
+            catch (ArgumentException ex) { ReleaseStatusText = ex.Message; return; }
             LatestRelease = input;
+            ReleaseStatusText = $"Manually selected {input}. Availability will be checked before reading data.";
             NotifyPropertyChanged(nameof(LatestRelease));
             UpdatePathsFromRelease();
             AddToLog($"Manual release applied: {LatestRelease}");
@@ -522,6 +515,7 @@ namespace DuckDBGeoparquet.Views
                 (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 (NextCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 (BackCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                (RefreshReleaseCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 RaisePreviewCommandsCanExecuteChanged();
             }
         }
@@ -549,6 +543,8 @@ namespace DuckDBGeoparquet.Views
                 if (extent == null) throw new InvalidOperationException("Choose a map or custom area before downloading.");
                 var bounds = new ExtentBounds(extent.XMin, extent.YMin, extent.XMax, extent.YMax);
                 GeographicBounds.Validate(bounds);
+                StatusText = $"Checking availability of release {release}...";
+                await new OvertureReleaseDiscovery().EnsureAvailableAsync(release, token);
                 snapshot = new DownloadSnapshot(dataDirectory, release, bounds, compression);
                 _dataProcessor.ClearPendingLayers();
                 _dataProcessor.BeginNewOutputSession();

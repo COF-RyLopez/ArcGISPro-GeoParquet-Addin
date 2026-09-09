@@ -8,6 +8,8 @@
 		     add-in project: a project reference would pull in the ArcGIS Pro
 		     SDK assemblies, which only resolve usefully on a machine with Pro
 		     installed. Anything linked here must stay free of ArcGIS types. -->
+		<Compile Include="..\Services\OvertureHttp.cs" Link="Linked\OvertureHttp.cs" />
+		<Compile Include="..\Services\OvertureReleaseDiscovery.cs" Link="Linked\OvertureReleaseDiscovery.cs" />
 		<Compile Include="..\Services\GeocodeFileParser.cs" Link="Linked\GeocodeFileParser.cs" />
 		<Compile Include="..\Services\SnapshotLayerPlan.cs" Link="Linked\SnapshotLayerPlan.cs" />
 		<Compile Include="..\Services\GeocoderEngine.cs" Link="Linked\GeocoderEngine.cs" />

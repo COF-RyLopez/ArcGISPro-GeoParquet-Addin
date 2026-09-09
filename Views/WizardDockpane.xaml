@@ -31,6 +31,8 @@
         <!-- Header with title and version info -->
         <StackPanel Grid.Row="0" Margin="16,12,16,0">
             <TextBlock Text="{Binding LatestRelease, StringFormat='Overture Release: {0}'}" Style="{DynamicResource Esri_TextBlockH2}" Foreground="{DynamicResource Esri_TextCaptionActiveBrush}"/>
+            <TextBlock Text="{Binding ReleaseStatusText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+            <Button Content="Refresh releases" Command="{Binding RefreshReleaseCommand}" Style="{DynamicResource Esri_Button}" HorizontalAlignment="Left" Margin="0,4,0,0"/>
             <!-- Manual release entry shown only if online fetch fails -->
             <Border Visibility="{Binding IsManualReleaseEntryVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                     BorderBrush="{DynamicResource Esri_BorderBrush}"
@@ -44,7 +46,7 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Manual release (offline):" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBlock Grid.Column="0" Text="Release date:" VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <TextBox Grid.Column="1" Text="{Binding ManualReleaseText, UpdateSourceTrigger=PropertyChanged}" />
                     <Button Grid.Column="2" Content="Apply" Command="{Binding ApplyManualReleaseCommand}" Style="{DynamicResource Esri_Button}" Margin="8,0,0,0"/>
                 </Grid>

@@ -158,6 +158,7 @@ namespace DuckDBGeoparquet.Views
                     PreviewBridge?.ShowExtent(extent.XMin, extent.YMin, extent.XMax, extent.YMax);
 
                 string trimmedRelease = LatestRelease?.Trim() ?? "";
+                await new OvertureReleaseDiscovery().EnsureAvailableAsync(trimmedRelease, token);
                 int rendered = 0;
                 foreach (var item in selectedLeafItems)
                 {
