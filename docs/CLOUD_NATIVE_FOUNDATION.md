@@ -6,6 +6,8 @@ The broader product remains a staged build. This branch does **not** implement a
 
 Windows testing exposed a catalog HTTP 403 followed by use of a retired cached release. The [September 8 fix](RELEASE_DISCOVERY_FIX_2026-09-08.md) adds S3 discovery fallback, release preflight, and an explicit retry/status UI; its expanded suite passes 182 tests.
 
+A second Windows finding exposed out-of-range land-cover catalog bounds. The [catalog bounds fix](CATALOG_BOUNDS_FIX_2026-09-08.md) separates file-pruning hints from user-area validation; 194 tests pass and the reported Fresno area selects four live land-cover assets successfully.
+
 ## User workflow
 
 1. Open a map, select themes, and choose the map extent or a custom area.

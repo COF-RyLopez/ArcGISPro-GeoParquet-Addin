@@ -62,29 +62,57 @@ namespace DuckDBGeoparquet.Services
                 }
                 finally { if (File.Exists(temp)) File.Delete(temp); }
             }
-            foreach (var asset in assets) ValidateAsset(asset);
+            // Reapply normalization to older cached inventories as well as freshly fetched items.
+            assets = assets.Select(NormalizeAsset).ToList();
             return assets.Where(a => Overlaps(a.Bounds, area)).Select(a => a.Url).Distinct().ToList();
         }
 
         public static CatalogAsset ParseAsset(JsonElement item)
         {
-            var bounds = item.GetProperty("bbox").EnumerateArray().Select(v => v.GetDouble()).ToArray();
-            if (bounds.Length != 4) throw new InvalidDataException("Unsupported catalog bounds; use the full source scan.");
+            var bounds = ReadBounds(item);
             string url = item.GetProperty("assets").GetProperty("aws").GetProperty("href").GetString();
-            var asset = new CatalogAsset(url, new ExtentBounds(bounds[0], bounds[1], bounds[2], bounds[3]));
-            ValidateAsset(asset);
-            return asset;
+            return NormalizeAsset(new CatalogAsset(url, bounds));
         }
 
-        private static void ValidateAsset(CatalogAsset asset)
+        private static ExtentBounds ReadBounds(JsonElement item)
         {
-            GeographicBounds.Validate(asset.Bounds);
-            if (!Uri.TryCreate(asset.Url, UriKind.Absolute, out var uri) || uri.Scheme != "https" ||
+            if (!item.TryGetProperty("bbox", out var bbox) || bbox.ValueKind != JsonValueKind.Array) return null;
+            var values = bbox.EnumerateArray().ToArray();
+            if (values.Length != 4 && values.Length != 6) return null;
+            var coordinates = new double[values.Length];
+            for (int i = 0; i < values.Length; i++)
+                if (values[i].ValueKind != JsonValueKind.Number || !values[i].TryGetDouble(out coordinates[i])) return null;
+            int upper = values.Length / 2;
+            return new ExtentBounds(coordinates[0], coordinates[1], coordinates[upper], coordinates[upper + 1]);
+        }
+
+        private static CatalogAsset NormalizeAsset(CatalogAsset asset)
+        {
+            if (!Uri.TryCreate(asset?.Url, UriKind.Absolute, out var uri) || uri.Scheme != "https" ||
                 uri.Host != "overturemaps-us-west-2.s3.us-west-2.amazonaws.com")
                 throw new InvalidDataException("Unexpected Overture asset URL.");
+
+            // File bounds are pruning hints, not the user's requested area. In particular,
+            // some land-cover items extend slightly beyond +/-180. Do not discard the file
+            // or blame the user's extent: cover the entire uncertain axis and let DuckDB
+            // apply the row-level spatial filter. Never clamp or rewrite source geometry.
+            var bounds = asset.Bounds;
+            bool longitudeKnown = bounds != null && double.IsFinite(bounds.XMin) && double.IsFinite(bounds.XMax)
+                && Math.Abs(bounds.XMin) <= 180 && Math.Abs(bounds.XMax) <= 180;
+            bool latitudeKnown = bounds != null && double.IsFinite(bounds.YMin) && double.IsFinite(bounds.YMax)
+                && Math.Abs(bounds.YMin) <= 90 && Math.Abs(bounds.YMax) <= 90 && bounds.YMin <= bounds.YMax;
+            return asset with { Bounds = new ExtentBounds(
+                longitudeKnown ? bounds.XMin : -180, latitudeKnown ? bounds.YMin : -90,
+                longitudeKnown ? bounds.XMax : 180, latitudeKnown ? bounds.YMax : 90) };
         }
 
-        private static bool Overlaps(ExtentBounds file, ExtentBounds area) =>
-            file.XMin <= area.XMax && file.XMax >= area.XMin && file.YMin <= area.YMax && file.YMax >= area.YMin;
+        private static bool Overlaps(ExtentBounds file, ExtentBounds area)
+        {
+            if (file.YMin > area.YMax || file.YMax < area.YMin) return false;
+            // RFC 7946 permits west > east for a bounding box crossing the antimeridian.
+            return file.XMin <= file.XMax
+                ? file.XMin <= area.XMax && file.XMax >= area.XMin
+                : area.XMax >= file.XMin || area.XMin <= file.XMax;
+        }
     }
 }
