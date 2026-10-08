@@ -34,8 +34,8 @@ namespace DuckDBGeoparquet.Tests
         [Fact]
         public void BuildColumnProjection_DropsExcludedColumns()
         {
-            // "place" excludes addresses, brand, emails, phones, socials, sources, websites.
-            var columns = new List<string> { "id", "geometry", "bbox", "names", "sources", "websites", "brand" };
+            // "place" excludes addresses, brand, emails, phones, socials, sources, taxonomy, websites.
+            var columns = new List<string> { "id", "geometry", "bbox", "names", "sources", "websites", "brand", "taxonomy" };
             string projection = S3Ingester.BuildColumnProjection("place", columns);
 
             Assert.NotNull(projection);
@@ -44,6 +44,7 @@ namespace DuckDBGeoparquet.Tests
             Assert.DoesNotContain("sources", projection);
             Assert.DoesNotContain("websites", projection);
             Assert.DoesNotContain("brand", projection);
+            Assert.DoesNotContain("taxonomy", projection); // v2: taxonomy struct excluded, derived as taxonomy_primary instead
         }
 
         [Fact]
@@ -96,6 +97,35 @@ namespace DuckDBGeoparquet.Tests
 
             Assert.Contains("id, geometry, bbox", query);
             Assert.DoesNotContain("sources", query);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_PlaceWithTaxonomy_DerivesTaxonomyPrimary()
+        {
+            // Schema v2: taxonomy struct excluded, taxonomy_primary derived during load
+            var columns = new List<string> { "id", "geometry", "taxonomy", "basic_category" };
+            string query = S3Ingester.BuildLoadQuery("s3://bucket/place/*", "place", columns, extent: null);
+
+            // taxonomy excluded from projection
+            Assert.DoesNotContain(", taxonomy,", query);
+            Assert.DoesNotContain(", taxonomy ", query);
+            // taxonomy_primary derived as CAST(taxonomy.primary AS VARCHAR)
+            Assert.Contains("taxonomy.primary", query);
+            Assert.Contains("taxonomy_primary", query);
+            // basic_category kept as-is (scalar field)
+            Assert.Contains("basic_category", query);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_PlaceWithCategories_DeriveCategoriesPrimary()
+        {
+            // Schema v1: categories struct excluded, categories_primary derived during load
+            var columns = new List<string> { "id", "geometry", "categories" };
+            string query = S3Ingester.BuildLoadQuery("s3://bucket/place/*", "place", columns, extent: null);
+
+            // categories not in v2 exclusions (only taxonomy is), so it's kept but we derive categories_primary
+            Assert.Contains("categories.primary", query);
+            Assert.Contains("categories_primary", query);
         }
 
         [Fact]

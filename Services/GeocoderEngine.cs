@@ -102,14 +102,11 @@ namespace DuckDBGeoparquet.Services
             string placeNameExpr = availableColumns.Contains("names")
                 ? "CAST(names.primary AS VARCHAR)"
                 : FirstExistingExpression(availableColumns, "name", "name_primary", "brand");
-            // Schema v2 (2026-09-23+): 'categories' renamed to 'taxonomy' with primary/hierarchy/alternates.
-            // Schema v1: 'categories' with primary.
-            // Try taxonomy first (v2), fall back to categories (v1), then scalar fallbacks.
-            string categoryExpr = availableColumns.Contains("taxonomy")
-                ? "CAST(taxonomy.primary AS VARCHAR)"
-                : (availableColumns.Contains("categories")
-                    ? "CAST(categories.primary AS VARCHAR)"
-                    : FirstExistingExpression(availableColumns, "category", "class", "subtype", "kind"));
+            // Schema v2 (2026-09-23+): 'categories' renamed to 'taxonomy'. S3Ingester derives scalar taxonomy_primary
+            // from the taxonomy struct during load. For v1, categories struct is also derived as categories_primary.
+            // Try derived columns first, then fall back to scalar fields.
+            string categoryExpr = FirstExistingExpression(availableColumns,
+                "taxonomy_primary", "categories_primary", "basic_category", "category", "class", "subtype", "kind");
 
             string tokenCondition = string.Join(" AND ", normalizedQuery
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

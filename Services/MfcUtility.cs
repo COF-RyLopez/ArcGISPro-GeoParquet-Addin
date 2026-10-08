@@ -523,9 +523,9 @@ namespace DuckDBGeoparquet.Services
                     continue;
                 }
 
-                // Flatten nested structs: names (v1/v2), categories (v1), taxonomy (v2).
-                // Schema v2 (2026-09-23+) renamed 'categories' to 'taxonomy' with primary/hierarchy/alternates.
-                if ((columnName.ToLower() == "names" || columnName.ToLower() == "categories" || columnName.ToLower() == "taxonomy") && duckDbType.StartsWith("STRUCT"))
+                // Flatten nested structs: names (v1/v2), categories (v1).
+                // Schema v2 taxonomy is derived as taxonomy_primary by S3Ingester, not flattened here.
+                if ((columnName.ToLower() == "names" || columnName.ToLower() == "categories") && duckDbType.StartsWith("STRUCT"))
                 {
                     string primaryFieldName = $"{columnName}_primary";
                     if (addedFieldNames.Add(primaryFieldName))
