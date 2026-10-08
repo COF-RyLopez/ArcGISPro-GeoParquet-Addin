@@ -98,14 +98,18 @@ namespace DuckDBGeoparquet.Services
             string regionExpr = FirstExistingExpression(availableColumns, "region", "state", "province", "admin1");
             string postalExpr = FirstExistingExpression(availableColumns, "postcode", "postal_code", "zip");
             string countryExpr = FirstExistingExpression(availableColumns, "country", "country_code");
-            // Overture 'names'/'categories' are structs; casting the whole
-            // struct produced JSON-ish display labels — use the primary member.
+            // Overture 'names' struct: casting the whole struct produced JSON-ish display labels — use the primary member.
             string placeNameExpr = availableColumns.Contains("names")
                 ? "CAST(names.primary AS VARCHAR)"
                 : FirstExistingExpression(availableColumns, "name", "name_primary", "brand");
-            string categoryExpr = availableColumns.Contains("categories")
-                ? "CAST(categories.primary AS VARCHAR)"
-                : FirstExistingExpression(availableColumns, "category", "class", "subtype", "kind");
+            // Schema v2 (2026-09-23+): 'categories' renamed to 'taxonomy' with primary/hierarchy/alternates.
+            // Schema v1: 'categories' with primary.
+            // Try taxonomy first (v2), fall back to categories (v1), then scalar fallbacks.
+            string categoryExpr = availableColumns.Contains("taxonomy")
+                ? "CAST(taxonomy.primary AS VARCHAR)"
+                : (availableColumns.Contains("categories")
+                    ? "CAST(categories.primary AS VARCHAR)"
+                    : FirstExistingExpression(availableColumns, "category", "class", "subtype", "kind"));
 
             string tokenCondition = string.Join(" AND ", normalizedQuery
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

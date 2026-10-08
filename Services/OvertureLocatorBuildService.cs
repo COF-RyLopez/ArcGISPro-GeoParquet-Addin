@@ -222,11 +222,13 @@ namespace DuckDBGeoparquet.Services
 
             if (!placeBuilt)
             {
-                // Overture 'names'/'categories' are nested structs that the
-                // parquet→GDB conversion flattens (e.g. names_primary).
+                // Overture 'names' struct and Place category fields (v1: 'categories', v2: 'taxonomy') are nested structs
+                // that the parquet→GDB conversion flattens (e.g. names_primary, taxonomy_primary).
+                // Schema v2 (2026-09-23+) renamed 'categories' to 'taxonomy' and added 'basic_category'.
                 string fallbackPlaceField = SelectFieldName(placeFields,
                     "name", "name_primary", "names_primary", "primary_name", "names",
-                    "brand", "category", "categories_primary", "category_primary", "categories");
+                    "basic_category", "taxonomy_primary", "brand", "category", 
+                    "categories_primary", "category_primary", "categories", "taxonomy");
                 if (string.IsNullOrWhiteSpace(fallbackPlaceField))
                 {
                     return new LocatorBuildResult

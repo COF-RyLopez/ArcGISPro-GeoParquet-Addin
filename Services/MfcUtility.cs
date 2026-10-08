@@ -231,7 +231,7 @@ namespace DuckDBGeoparquet.Services
             {
                 "place", new List<string> {
                     "id", "bbox_xmin", "bbox_xmax", "bbox_ymin", "bbox_ymax",
-                    "version", "names_primary", "categories_primary", "confidence",
+                    "version", "names_primary", "taxonomy_primary", "basic_category", "confidence",
                     "brand_wikidata", "brand_names_primary", "filename", "theme", "type", "geometry"
                 }
             },
@@ -523,7 +523,9 @@ namespace DuckDBGeoparquet.Services
                     continue;
                 }
 
-                if ((columnName.ToLower() == "names" || columnName.ToLower() == "categories") && duckDbType.StartsWith("STRUCT"))
+                // Flatten nested structs: names (v1/v2), categories (v1), taxonomy (v2).
+                // Schema v2 (2026-09-23+) renamed 'categories' to 'taxonomy' with primary/hierarchy/alternates.
+                if ((columnName.ToLower() == "names" || columnName.ToLower() == "categories" || columnName.ToLower() == "taxonomy") && duckDbType.StartsWith("STRUCT"))
                 {
                     string primaryFieldName = $"{columnName}_primary";
                     if (addedFieldNames.Add(primaryFieldName))
