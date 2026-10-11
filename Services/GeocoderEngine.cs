@@ -98,14 +98,15 @@ namespace DuckDBGeoparquet.Services
             string regionExpr = FirstExistingExpression(availableColumns, "region", "state", "province", "admin1");
             string postalExpr = FirstExistingExpression(availableColumns, "postcode", "postal_code", "zip");
             string countryExpr = FirstExistingExpression(availableColumns, "country", "country_code");
-            // Overture 'names'/'categories' are structs; casting the whole
-            // struct produced JSON-ish display labels — use the primary member.
+            // Overture 'names' struct: casting the whole struct produced JSON-ish display labels — use the primary member.
             string placeNameExpr = availableColumns.Contains("names")
                 ? "CAST(names.primary AS VARCHAR)"
                 : FirstExistingExpression(availableColumns, "name", "name_primary", "brand");
-            string categoryExpr = availableColumns.Contains("categories")
-                ? "CAST(categories.primary AS VARCHAR)"
-                : FirstExistingExpression(availableColumns, "category", "class", "subtype", "kind");
+            // Schema v2 (2026-09-23+): 'categories' renamed to 'taxonomy'. S3Ingester derives scalar taxonomy_primary
+            // from the taxonomy struct during load. For v1, categories struct is also derived as categories_primary.
+            // Try derived columns first, then fall back to scalar fields.
+            string categoryExpr = FirstExistingExpression(availableColumns,
+                "taxonomy_primary", "categories_primary", "basic_category", "category", "class", "subtype", "kind");
 
             string tokenCondition = string.Join(" AND ", normalizedQuery
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

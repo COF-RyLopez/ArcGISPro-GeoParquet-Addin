@@ -191,24 +191,41 @@ namespace DuckDBGeoparquet.Services
 
         private static string AppendPlaceDerivedColumns(string projection, string actualS3Type, IReadOnlyList<string> columnNames)
         {
-            if (!string.Equals(actualS3Type, "place", StringComparison.OrdinalIgnoreCase) ||
-                columnNames == null ||
-                !columnNames.Any(c => c.Equals("addresses", StringComparison.OrdinalIgnoreCase)))
+            if (!string.Equals(actualS3Type, "place", StringComparison.OrdinalIgnoreCase) || columnNames == null)
             {
                 return projection;
             }
 
             var derivedColumns = new List<string>();
-            AddDerivedAddressColumn(derivedColumns, columnNames, "address_freeform",
-                "(SELECT string_agg(CAST(a.freeform AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.freeform IS NOT NULL AND trim(CAST(a.freeform AS VARCHAR)) <> '')");
-            AddDerivedAddressColumn(derivedColumns, columnNames, "address_locality",
-                "(SELECT string_agg(DISTINCT CAST(a.locality AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.locality IS NOT NULL AND trim(CAST(a.locality AS VARCHAR)) <> '')");
-            AddDerivedAddressColumn(derivedColumns, columnNames, "address_region",
-                "(SELECT string_agg(DISTINCT CAST(a.region AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.region IS NOT NULL AND trim(CAST(a.region AS VARCHAR)) <> '')");
-            AddDerivedAddressColumn(derivedColumns, columnNames, "address_postcode",
-                "(SELECT string_agg(DISTINCT left(CAST(a.postcode AS VARCHAR), 5), ' | ') FROM unnest(addresses) AS t(a) WHERE a.postcode IS NOT NULL AND trim(CAST(a.postcode AS VARCHAR)) <> '')");
-            AddDerivedAddressColumn(derivedColumns, columnNames, "address_country",
-                "(SELECT string_agg(DISTINCT CAST(a.country AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.country IS NOT NULL AND trim(CAST(a.country AS VARCHAR)) <> '')");
+
+            // Derive flattened address fields from addresses array
+            if (columnNames.Any(c => c.Equals("addresses", StringComparison.OrdinalIgnoreCase)))
+            {
+                AddDerivedAddressColumn(derivedColumns, columnNames, "address_freeform",
+                    "(SELECT string_agg(CAST(a.freeform AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.freeform IS NOT NULL AND trim(CAST(a.freeform AS VARCHAR)) <> '')");
+                AddDerivedAddressColumn(derivedColumns, columnNames, "address_locality",
+                    "(SELECT string_agg(DISTINCT CAST(a.locality AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.locality IS NOT NULL AND trim(CAST(a.locality AS VARCHAR)) <> '')");
+                AddDerivedAddressColumn(derivedColumns, columnNames, "address_region",
+                    "(SELECT string_agg(DISTINCT CAST(a.region AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.region IS NOT NULL AND trim(CAST(a.region AS VARCHAR)) <> '')");
+                AddDerivedAddressColumn(derivedColumns, columnNames, "address_postcode",
+                    "(SELECT string_agg(DISTINCT left(CAST(a.postcode AS VARCHAR), 5), ' | ') FROM unnest(addresses) AS t(a) WHERE a.postcode IS NOT NULL AND trim(CAST(a.postcode AS VARCHAR)) <> '')");
+                AddDerivedAddressColumn(derivedColumns, columnNames, "address_country",
+                    "(SELECT string_agg(DISTINCT CAST(a.country AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.country IS NOT NULL AND trim(CAST(a.country AS VARCHAR)) <> '')");
+            }
+
+            // Schema v2 (2026-09-23+): Derive taxonomy_primary from taxonomy struct (v2) or categories struct (v1).
+            // Taxonomy contains primary/hierarchy/alternates arrays; extract just the primary scalar for ArcGIS.
+            if (columnNames.Any(c => c.Equals("taxonomy", StringComparison.OrdinalIgnoreCase)))
+            {
+                AddDerivedAddressColumn(derivedColumns, columnNames, "taxonomy_primary",
+                    "CAST(taxonomy.primary AS VARCHAR)");
+            }
+            else if (columnNames.Any(c => c.Equals("categories", StringComparison.OrdinalIgnoreCase)))
+            {
+                // v1 fallback: categories struct also has .primary
+                AddDerivedAddressColumn(derivedColumns, columnNames, "categories_primary",
+                    "CAST(categories.primary AS VARCHAR)");
+            }
 
             return derivedColumns.Count == 0
                 ? projection

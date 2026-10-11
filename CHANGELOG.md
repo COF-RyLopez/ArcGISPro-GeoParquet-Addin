@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Changed
+- **Overture Maps Schema v2 Support**: Updated to support Overture Maps schema v2 (releases 2026-09-23 and later)
+  - Place `categories` field renamed to `taxonomy` with structured `primary`, `hierarchy`, and `alternates` fields
+  - Added support for new `basic_category` field in Places
+  - Geocoder, MFC generation, and locator services now detect and use either `taxonomy` (v2) or `categories` (v1) at runtime
+  - Maintains backward compatibility with pre-v2 releases through dynamic column detection
+
 ## [0.3.0] - 2026-03-01
 
 ### Added

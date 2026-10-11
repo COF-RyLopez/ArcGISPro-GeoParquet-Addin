@@ -231,7 +231,7 @@ namespace DuckDBGeoparquet.Services
             {
                 "place", new List<string> {
                     "id", "bbox_xmin", "bbox_xmax", "bbox_ymin", "bbox_ymax",
-                    "version", "names_primary", "categories_primary", "confidence",
+                    "version", "names_primary", "taxonomy_primary", "basic_category", "confidence",
                     "brand_wikidata", "brand_names_primary", "filename", "theme", "type", "geometry"
                 }
             },
@@ -523,6 +523,8 @@ namespace DuckDBGeoparquet.Services
                     continue;
                 }
 
+                // Flatten nested structs: names (v1/v2), categories (v1).
+                // Schema v2 taxonomy is derived as taxonomy_primary by S3Ingester, not flattened here.
                 if ((columnName.ToLower() == "names" || columnName.ToLower() == "categories") && duckDbType.StartsWith("STRUCT"))
                 {
                     string primaryFieldName = $"{columnName}_primary";

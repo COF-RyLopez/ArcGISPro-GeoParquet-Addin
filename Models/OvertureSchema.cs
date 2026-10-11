@@ -26,7 +26,9 @@ namespace DuckDBGeoparquet.Models
             { "land", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } },
             { "land_cover", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources" } },
             { "land_use", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "sources", "source_tags" } },
-            { "place", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "addresses", "brand", "emails", "phones", "socials", "sources", "websites" } },
+            // Schema v2 (2026-09-23+) renamed 'categories' to 'taxonomy' (struct with primary/hierarchy/alternates arrays).
+            // Exclude the full taxonomy struct; derive taxonomy_primary via S3Ingester for ArcGIS compatibility.
+            { "place", new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "addresses", "brand", "emails", "phones", "socials", "sources", "taxonomy", "websites" } },
             { "segment", new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
                 "access_restrictions", "connectors", "destinations", "level_rules",
                 "prohibited_transitions", "road_flags", "road_surface", "routes", "sources",
