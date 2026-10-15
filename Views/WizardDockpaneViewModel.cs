@@ -34,7 +34,6 @@ namespace DuckDBGeoparquet.Views
     {
         private const string _dockPaneID = "DuckDBGeoparquet_Views_WizardDockpane_V2";
         private DataProcessor _dataProcessor;
-        private const string RELEASE_URL = "https://labs.overturemaps.org/data/releases.json";
         private const string S3_BASE_PATH = "s3://overturemaps-us-west-2/release";
 
         // Add CancellationTokenSource for cancelling operations
@@ -322,7 +321,10 @@ namespace DuckDBGeoparquet.Views
                 if (File.Exists(cacheFile))
                 {
                     var value = File.ReadAllText(cacheFile).Trim();
-                    if (!string.IsNullOrWhiteSpace(value)) return value;
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        return value;
+                    }
                 }
             }
             catch (Exception ex)
@@ -363,55 +365,109 @@ namespace DuckDBGeoparquet.Views
             AddToLog($"DataOutputPath updated to: {DataOutputPath}");
         }
 
-        // Shared client for release checks: system proxy, default credentials, short timeout.
-        private static readonly HttpClient _releaseHttpClient = new(new HttpClientHandler
-        {
-            UseProxy = true,
-            Proxy = WebRequest.DefaultWebProxy,
-            DefaultProxyCredentials = CredentialCache.DefaultCredentials
-        })
-        {
-            Timeout = TimeSpan.FromSeconds(3)
-        };
-
         private async Task RefreshLatestReleaseAsync()
         {
             try
             {
-                var url = Environment.GetEnvironmentVariable("OVERTURE_RELEASE_URL") ?? RELEASE_URL;
-                var response = await _releaseHttpClient.GetStringAsync(url);
-                var releaseInfo = JsonSerializer.Deserialize<ReleaseInfo>(response, _jsonOptions);
+                var releaseInfo = await ReleaseValidator.FetchReleaseInfoAsync();
                 var latest = releaseInfo?.Latest;
                 if (!string.IsNullOrWhiteSpace(latest) && latest != LatestRelease)
                 {
+                    var currentRelease = LatestRelease;
                     LatestRelease = latest;
                     NotifyPropertyChanged(nameof(LatestRelease));
-                    AddToLog($"Latest release refreshed: {LatestRelease}");
+                    
+                    if (!string.IsNullOrWhiteSpace(currentRelease) && 
+                        releaseInfo?.Releases != null && 
+                        !releaseInfo.Releases.Contains(currentRelease, StringComparer.OrdinalIgnoreCase))
+                    {
+                        AddToLog($"⚠️ Previously cached release {currentRelease} is no longer available");
+                        AddToLog($"Latest release updated to: {LatestRelease}");
+                    }
+                    else
+                    {
+                        AddToLog($"Latest release refreshed: {LatestRelease}");
+                    }
+                    
                     UpdatePathsFromRelease();
                     SaveCachedLatestRelease(LatestRelease);
-                    IsManualReleaseEntryVisible = false; // hide if previously shown
+                    IsManualReleaseEntryVisible = false;
                 }
             }
             catch (Exception ex)
             {
-                // Non-blocking: log and continue
                 AddToLog($"Failed to refresh latest release (non-blocking): {ex.Message}");
                 System.Diagnostics.Debug.WriteLine($"RefreshLatestReleaseAsync error: {ex}");
-                // Offer manual entry when fetch fails
+                
                 if (string.IsNullOrWhiteSpace(ManualReleaseText))
                     ManualReleaseText = LatestRelease ?? string.Empty;
                 IsManualReleaseEntryVisible = true;
             }
         }
 
-        private void ApplyManualRelease()
+        private async void ApplyManualRelease()
         {
             var input = ManualReleaseText?.Trim();
             if (string.IsNullOrWhiteSpace(input)) return;
-            LatestRelease = input;
-            NotifyPropertyChanged(nameof(LatestRelease));
-            UpdatePathsFromRelease();
-            AddToLog($"Manual release applied: {LatestRelease}");
+            
+            AddToLog($"Validating manually entered release: {input}");
+            StatusText = $"Validating release {input}...";
+            
+            try
+            {
+                var validation = await ReleaseValidator.ValidateReleaseAsync(input);
+                
+                if (validation.IsValid)
+                {
+                    LatestRelease = input;
+                    NotifyPropertyChanged(nameof(LatestRelease));
+                    UpdatePathsFromRelease();
+                    SaveCachedLatestRelease(LatestRelease);
+                    AddToLog($"Manual release applied: {LatestRelease}");
+                    StatusText = $"Release {LatestRelease} validated successfully";
+                }
+                else
+                {
+                    AddToLog($"⚠️ Warning: {validation.Message}");
+                    if (!string.IsNullOrWhiteSpace(validation.LatestAvailable))
+                    {
+                        AddToLog($"Latest available release is: {validation.LatestAvailable}");
+                        var switchResult = ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                            $"{validation.Message}\n\nWould you like to switch to {validation.LatestAvailable}?",
+                            "Release Not Available",
+                            System.Windows.MessageBoxButton.YesNo,
+                            System.Windows.MessageBoxImage.Warning);
+                        
+                        if (switchResult == System.Windows.MessageBoxResult.Yes)
+                        {
+                            ManualReleaseText = validation.LatestAvailable;
+                            LatestRelease = validation.LatestAvailable;
+                            NotifyPropertyChanged(nameof(LatestRelease));
+                            UpdatePathsFromRelease();
+                            SaveCachedLatestRelease(LatestRelease);
+                            AddToLog($"Switched to latest release: {LatestRelease}");
+                            StatusText = $"Switched to release {LatestRelease}";
+                            return;
+                        }
+                    }
+                    
+                    LatestRelease = input;
+                    NotifyPropertyChanged(nameof(LatestRelease));
+                    UpdatePathsFromRelease();
+                    AddToLog($"Manual release applied (unvalidated): {LatestRelease}");
+                    StatusText = $"Using unvalidated release {LatestRelease}";
+                }
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"Error validating release: {ex.Message}");
+                
+                LatestRelease = input;
+                NotifyPropertyChanged(nameof(LatestRelease));
+                UpdatePathsFromRelease();
+                AddToLog($"Manual release applied (validation failed): {LatestRelease}");
+                StatusText = $"Using release {LatestRelease} (validation failed)";
+            }
         }
 
 
@@ -910,7 +966,8 @@ namespace DuckDBGeoparquet.Views
             if (!ingestSuccess)
             {
                 AddToLog($"❌ Failed to ingest data from {s3Path}");
-                StatusText = $"Error loading data from {s3Path}";
+                AddToLog($"This may indicate the release has been removed from Overture's S3 bucket.");
+                StatusText = $"Failed to ingest data for {itemDisplayName}";
                 return false;
             }
 
@@ -962,6 +1019,48 @@ namespace DuckDBGeoparquet.Views
                 var cancellationToken = _cts.Token;
 
                 SelectedTabIndex = (int)WizardTab.Status;
+                
+                AddToLog($"Validating release {LatestRelease} before loading...");
+                StatusText = $"Validating release {LatestRelease}...";
+                
+                var validation = await ReleaseValidator.ValidateReleaseAsync(LatestRelease);
+                if (!validation.IsValid)
+                {
+                    AddToLog($"❌ {validation.Message}");
+                    
+                    if (!string.IsNullOrWhiteSpace(validation.LatestAvailable))
+                    {
+                        var switchResult = ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                            $"{validation.Message}\n\nWould you like to switch to {validation.LatestAvailable} and continue?",
+                            "Release Not Available",
+                            System.Windows.MessageBoxButton.YesNo,
+                            System.Windows.MessageBoxImage.Warning);
+                        
+                        if (switchResult == System.Windows.MessageBoxResult.Yes)
+                        {
+                            LatestRelease = validation.LatestAvailable;
+                            NotifyPropertyChanged(nameof(LatestRelease));
+                            UpdatePathsFromRelease();
+                            SaveCachedLatestRelease(LatestRelease);
+                            AddToLog($"Switched to latest release: {LatestRelease}");
+                        }
+                        else
+                        {
+                            StatusText = "Load cancelled - release not available";
+                            AddToLog("Load cancelled by user");
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        AddToLog("⚠️ Proceeding with unvalidated release - data load may fail");
+                    }
+                }
+                else
+                {
+                    AddToLog($"✅ Release {LatestRelease} validated successfully");
+                }
+                
                 StatusText = $"Loading {selectedLeafItems.Count} selected data types...";
                 AddToLog($"Starting to load {selectedLeafItems.Count} data type(s) from release {LatestRelease}");
                 DateTime loadStartUtc = DateTime.UtcNow;
@@ -978,6 +1077,7 @@ namespace DuckDBGeoparquet.Views
 
                 int totalDataTypesToProcess = selectedLeafItems.Count;
                 int processedDataTypes = 0;
+                int failedDataTypes = 0;
 
                 for (int itemIndex = 0; itemIndex < selectedLeafItems.Count; itemIndex++)
                 {
@@ -987,7 +1087,10 @@ namespace DuckDBGeoparquet.Views
                         selectedLeafItems[itemIndex], itemIndex, totalDataTypesToProcess,
                         processedDataTypes, extent, cancellationToken);
 
-                    if (success) processedDataTypes++;
+                    if (success)
+                        processedDataTypes++;
+                    else
+                        failedDataTypes++;
                 }
 
                 if (cancellationToken.IsCancellationRequested) return;
@@ -1026,9 +1129,22 @@ namespace DuckDBGeoparquet.Views
                     : "none";
                 AddToLog($"Load summary: layers={_dataProcessor.LastAddedLayerCount}, map purpose={summaryStyle}, elapsed={loadElapsed:hh\\:mm\\:ss}, extent={summaryExtent}");
 
-                StatusText = $"Successfully loaded all selected themes from release {LatestRelease}";
-                AddToLog("All selected themes loaded successfully");
-                AddToLog("🚀 Data loaded successfully");
+                if (failedDataTypes > 0)
+                {
+                    StatusText = $"Loaded {processedDataTypes} of {totalDataTypesToProcess} data types (failed: {failedDataTypes}) from release {LatestRelease}";
+                    AddToLog($"⚠️ Completed with failures: {processedDataTypes} succeeded, {failedDataTypes} failed");
+                }
+                else if (processedDataTypes == 0)
+                {
+                    StatusText = $"No data types were loaded successfully from release {LatestRelease}";
+                    AddToLog("❌ All data types failed to load");
+                }
+                else
+                {
+                    StatusText = $"Successfully loaded all selected themes from release {LatestRelease}";
+                    AddToLog("All selected themes loaded successfully");
+                    AddToLog("🚀 Data loaded successfully");
+                }
                 AddToLog("----------------");
                 if (extent != null)
                 {
@@ -1077,12 +1193,6 @@ namespace DuckDBGeoparquet.Views
                     _cts = null;
                 }
             }
-        }
-
-        private class ReleaseInfo
-        {
-            public string Latest { get; set; }
-            public List<string> Releases { get; set; }
         }
 
         /// <summary>
