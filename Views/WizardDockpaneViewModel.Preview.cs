@@ -174,13 +174,20 @@ namespace DuckDBGeoparquet.Views
                 if (extent != null)
                     PreviewBridge?.ShowExtent(extent.XMin, extent.YMin, extent.XMax, extent.YMax);
 
-                string trimmedRelease = LatestRelease?.Trim() ?? "";
+                if (!OvertureReleaseId.IsUsable(LatestRelease))
+                {
+                    AddToLog(ReleaseValidator.DiscoveryUnreachableMessage);
+                    return;
+                }
+
                 int rendered = 0;
                 foreach (var item in selectedLeafItems)
                 {
-                    string s3Path = trimmedRelease.Length > 0
-                        ? $"{S3_BASE_PATH}/{trimmedRelease}/theme={item.ParentThemeForS3}/type={item.ActualType}/*.parquet"
-                        : $"{S3_BASE_PATH}/theme={item.ParentThemeForS3}/type={item.ActualType}/*.parquet";
+                    if (!TryBuildThemeS3Path(item.ParentThemeForS3, item.ActualType, out string s3Path))
+                    {
+                        AddToLog(ReleaseValidator.DiscoveryUnreachableMessage);
+                        return;
+                    }
                     string fileName = $"{item.ActualType}.geojson";
 
                     AddToLog($"Preview: sampling {item.DisplayName} from S3 (up to {PreviewSampleMaxFeatures} features)...");
