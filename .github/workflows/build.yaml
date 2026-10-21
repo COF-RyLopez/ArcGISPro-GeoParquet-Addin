@@ -286,6 +286,11 @@ jobs:
         fi
         
         echo "Using add-in file: $ADDIN_FILE"
+
+        # Canonical County of Fresno Marketplace item. Secrets override when set.
+        ITEM_ID="${AGOL_ITEM_ID:-8293d1220b7848848ce316b4fa3263b5}"
+        PORTAL_URL="${AGOL_PORTAL_URL:-https://cofgisonline.maps.arcgis.com}"
+        echo "AGOL target: ${PORTAL_URL}/home/item.html?id=${ITEM_ID}"
         
         # Determine authentication method and build Python command
         # Note: Description updates disabled - just uploading the file
@@ -296,8 +301,8 @@ jobs:
             --client-id "$AGOL_CLIENT_ID" \
             --client-secret "$AGOL_CLIENT_SECRET" \
             --addin-file "$ADDIN_FILE" \
-            --item-id "$AGOL_ITEM_ID" \
-            ${AGOL_PORTAL_URL:+--portal-url "$AGOL_PORTAL_URL"} \
+            --item-id "$ITEM_ID" \
+            --portal-url "$PORTAL_URL" \
             ${AGOL_TITLE:+--title "$AGOL_TITLE"} \
             ${AGOL_TAGS:+--tags "$AGOL_TAGS"}
         elif [ -n "$AGOL_USERNAME" ] && [ -n "$AGOL_PASSWORD" ]; then
@@ -307,8 +312,8 @@ jobs:
             --username "$AGOL_USERNAME" \
             --password "$AGOL_PASSWORD" \
             --addin-file "$ADDIN_FILE" \
-            --item-id "$AGOL_ITEM_ID" \
-            ${AGOL_PORTAL_URL:+--portal-url "$AGOL_PORTAL_URL"} \
+            --item-id "$ITEM_ID" \
+            --portal-url "$PORTAL_URL" \
             ${AGOL_TITLE:+--title "$AGOL_TITLE"} \
             ${AGOL_TAGS:+--tags "$AGOL_TAGS"}
         else

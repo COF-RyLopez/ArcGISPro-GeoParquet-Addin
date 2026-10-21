@@ -82,14 +82,16 @@ If you prefer to use your ArcGIS Online username and password:
 The Item ID is the unique identifier for your add-in in ArcGIS Online:
 
 1. Go to your add-in item page in ArcGIS Online
-2. Look at the URL: `https://www.arcgis.com/home/item.html?id=**8293d1220b7848848ce316b4fa3263b5**`
+2. Look at the URL: `https://cofgisonline.maps.arcgis.com/home/item.html?id=**8293d1220b7848848ce316b4fa3263b5**`
 3. The Item ID is the part after `id=` (e.g., `8293d1220b7848848ce316b4fa3263b5`)
+
+The workflow defaults to that County of Fresno item when `AGOL_ITEM_ID` / `AGOL_PORTAL_URL` are unset.
 
 ## Optional Configuration
 
 You can also set these optional secrets for more control:
 
-- `AGOL_PORTAL_URL` - Custom portal URL (default: `https://www.arcgis.com`)
+- `AGOL_PORTAL_URL` - Custom portal URL (default: `https://cofgisonline.maps.arcgis.com`)
 - `AGOL_TITLE` - Custom title for the add-in item
 - `AGOL_DESCRIPTION` - Custom description for the add-in item
 - `AGOL_TAGS` - Comma-separated tags (default: `ArcGIS Pro,Add-in,GeoParquet`)
