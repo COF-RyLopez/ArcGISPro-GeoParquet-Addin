@@ -29,6 +29,7 @@
 		<Compile Include="..\Services\ExtentResolution.cs" Link="Linked\ExtentResolution.cs" />
 		<Compile Include="..\Services\OvertureDataPaths.cs" Link="Linked\OvertureDataPaths.cs" />
 		<Compile Include="..\Services\PreviewBridge.cs" Link="Linked\PreviewBridge.cs" />
+		<Compile Include="..\Services\OvertureReleaseId.cs" Link="Linked\OvertureReleaseId.cs" />
 		<Compile Include="..\Services\ReleaseValidator.cs" Link="Linked\ReleaseValidator.cs" />
 	</ItemGroup>
 	<ItemGroup>

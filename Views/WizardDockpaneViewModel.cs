@@ -246,9 +246,9 @@ namespace DuckDBGeoparquet.Views
             LogOutput.AppendLine("Initializing WizardDockpaneViewModel...");
             LogOutputText = LogOutput.ToString(); // Initialize LogOutputText
 
-            // Set default paths immediately, they might be updated by InitializeAsync if LatestRelease changes
-            var defaultBasePath = DeterminedDefaultMfcBasePath;
-            DataOutputPath = Path.Combine(defaultBasePath, "Data", LatestRelease ?? "latest");            NotifyPropertyChanged(nameof(DataOutputPath)); // Notify for initial value
+            // Set default paths immediately; they are updated once a real release is resolved.
+            DataOutputPath = ResolveDataOutputFolder();
+            NotifyPropertyChanged(nameof(DataOutputPath)); // Notify for initial value
             IsLoading = true; // Set IsLoading to true before starting async init
             StatusText = "Initializing..."; // Initial status
             NotifyPropertyChanged(nameof(IsLoading));
@@ -267,17 +267,24 @@ namespace DuckDBGeoparquet.Views
             {
                 // Populate UI elements first so themes are always visible,
                 // even if the DuckDB connection fails to initialize.
-                AddToLog("Async Initialization: Establishing release value (cached/default)");
+                AddToLog("Async Initialization: Establishing release value (cached/discovery)");
                 var cachedRelease = LoadCachedLatestRelease();
-                LatestRelease = !string.IsNullOrWhiteSpace(cachedRelease) ? cachedRelease : (LatestRelease ?? "latest");
+                if (OvertureReleaseId.IsUsable(cachedRelease))
+                {
+                    LatestRelease = cachedRelease.Trim();
+                    AddToLog($"Async Initialization: Using cached release {LatestRelease}");
+                }
+                else
+                {
+                    LatestRelease = null;
+                    AddToLog("Async Initialization: No usable cached release; waiting for discovery");
+                }
                 NotifyPropertyChanged(nameof(LatestRelease));
-                AddToLog($"Async Initialization: Latest release set to: {LatestRelease} (cached or default)");
 
                 InitializeThemes();
                 AddToLog("Async Initialization: Themes initialized");
 
-                var defaultBasePath = DeterminedDefaultMfcBasePath;
-                DataOutputPath = Path.Combine(defaultBasePath, "Data", LatestRelease ?? "latest");
+                DataOutputPath = ResolveDataOutputFolder();
                 NotifyPropertyChanged(nameof(DataOutputPath));
                 AddToLog($"Async Initialization: DataOutputPath updated to: {DataOutputPath}");
 
@@ -313,6 +320,8 @@ namespace DuckDBGeoparquet.Views
         }
 
 
+        private string _discoveredLatestRelease;
+
         private string LoadCachedLatestRelease()
         {
             try
@@ -321,9 +330,14 @@ namespace DuckDBGeoparquet.Views
                 if (File.Exists(cacheFile))
                 {
                     var value = File.ReadAllText(cacheFile).Trim();
-                    if (!string.IsNullOrWhiteSpace(value))
+                    if (OvertureReleaseId.IsUsable(value))
                     {
                         return value;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        AddToLog($"Ignoring unusable cached release '{value}'");
                     }
                 }
             }
@@ -338,11 +352,11 @@ namespace DuckDBGeoparquet.Views
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(release)) return;
+                if (!OvertureReleaseId.IsUsable(release)) return;
                 string cacheFile = GetLatestReleaseCacheFilePath();
                 string dir = Path.GetDirectoryName(cacheFile);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                File.WriteAllText(cacheFile, release);
+                File.WriteAllText(cacheFile, release.Trim());
             }
             catch (Exception ex)
             {
@@ -357,51 +371,108 @@ namespace DuckDBGeoparquet.Views
             return Path.Combine(basePath, "config", "latestRelease.txt");
         }
 
-        private void UpdatePathsFromRelease()
+        private string ResolveDataOutputFolder()
         {
             var basePath = DeterminedDefaultMfcBasePath;
-            DataOutputPath = Path.Combine(basePath, "Data", LatestRelease ?? "latest");
+            if (OvertureReleaseId.IsUsable(LatestRelease))
+                return Path.Combine(basePath, "Data", LatestRelease.Trim());
+            return Path.Combine(basePath, "Data");
+        }
+
+        private void UpdatePathsFromRelease()
+        {
+            DataOutputPath = ResolveDataOutputFolder();
             NotifyPropertyChanged(nameof(DataOutputPath));
             AddToLog($"DataOutputPath updated to: {DataOutputPath}");
+        }
+
+        private void ApplyResolvedRelease(string release)
+        {
+            LatestRelease = release;
+            NotifyPropertyChanged(nameof(LatestRelease));
+            UpdatePathsFromRelease();
+            SaveCachedLatestRelease(LatestRelease);
+        }
+
+        private bool TryBuildThemeS3Path(string theme, string type, out string s3Path)
+        {
+            s3Path = null;
+            if (!OvertureReleaseId.IsUsable(LatestRelease))
+                return false;
+            s3Path = $"{S3_BASE_PATH}/{LatestRelease.Trim()}/theme={theme}/type={type}/*.parquet";
+            return true;
+        }
+
+        private void ShowReleaseDiscoveryFailure(string detail = null)
+        {
+            AddToLog(ReleaseValidator.DiscoveryUnreachableMessage);
+            if (!string.IsNullOrWhiteSpace(detail))
+                AddToLog($"Release discovery details: {detail}");
+            StatusText = ReleaseValidator.DiscoveryUnreachableMessage;
+            if (string.IsNullOrWhiteSpace(ManualReleaseText))
+                ManualReleaseText = LatestRelease ?? string.Empty;
+            IsManualReleaseEntryVisible = true;
         }
 
         private async Task RefreshLatestReleaseAsync()
         {
             try
             {
-                var releaseInfo = await ReleaseValidator.FetchReleaseInfoAsync();
-                var latest = releaseInfo?.Latest;
-                if (!string.IsNullOrWhiteSpace(latest) && latest != LatestRelease)
+                var releaseInfo = await ReleaseValidator.DiscoverReleasesAsync();
+                var newest = releaseInfo?.Latest;
+                var available = releaseInfo?.Releases;
+                _discoveredLatestRelease = newest;
+
+                if (!OvertureReleaseId.IsUsable(newest))
                 {
-                    var currentRelease = LatestRelease;
-                    LatestRelease = latest;
-                    NotifyPropertyChanged(nameof(LatestRelease));
-                    
-                    if (!string.IsNullOrWhiteSpace(currentRelease) && 
-                        releaseInfo?.Releases != null && 
-                        !releaseInfo.Releases.Contains(currentRelease, StringComparer.OrdinalIgnoreCase))
-                    {
-                        AddToLog($"⚠️ Previously cached release {currentRelease} is no longer available");
-                        AddToLog($"Latest release updated to: {LatestRelease}");
-                    }
-                    else
-                    {
-                        AddToLog($"Latest release refreshed: {LatestRelease}");
-                    }
-                    
-                    UpdatePathsFromRelease();
-                    SaveCachedLatestRelease(LatestRelease);
-                    IsManualReleaseEntryVisible = false;
+                    if (!OvertureReleaseId.IsUsable(LatestRelease))
+                        ShowReleaseDiscoveryFailure("Discovery returned no release folders.");
+                    return;
                 }
+
+                var currentRelease = LatestRelease;
+                bool currentStillAvailable = OvertureReleaseId.IsUsable(currentRelease) &&
+                    available != null &&
+                    available.Contains(currentRelease.Trim(), StringComparer.OrdinalIgnoreCase);
+
+                if (OvertureReleaseId.IsUsable(currentRelease) && !currentStillAvailable)
+                {
+                    AddToLog($"⚠️ Previously cached release {currentRelease} is no longer available");
+                    AddToLog($"Switching to newest available release: {newest}");
+                    ApplyResolvedRelease(newest);
+                    IsManualReleaseEntryVisible = false;
+                    return;
+                }
+
+                if (!string.Equals(currentRelease, newest, StringComparison.OrdinalIgnoreCase))
+                {
+                    ApplyResolvedRelease(newest);
+                    AddToLog($"Latest release refreshed: {LatestRelease}");
+                    IsManualReleaseEntryVisible = false;
+                    return;
+                }
+
+                AddToLog($"Latest release confirmed: {LatestRelease}");
+                SaveCachedLatestRelease(LatestRelease);
+                IsManualReleaseEntryVisible = false;
             }
             catch (Exception ex)
             {
-                AddToLog($"Failed to refresh latest release (non-blocking): {ex.Message}");
                 System.Diagnostics.Debug.WriteLine($"RefreshLatestReleaseAsync error: {ex}");
-                
-                if (string.IsNullOrWhiteSpace(ManualReleaseText))
-                    ManualReleaseText = LatestRelease ?? string.Empty;
-                IsManualReleaseEntryVisible = true;
+                if (!OvertureReleaseId.IsUsable(LatestRelease))
+                {
+                    LatestRelease = null;
+                    NotifyPropertyChanged(nameof(LatestRelease));
+                    UpdatePathsFromRelease();
+                    ShowReleaseDiscoveryFailure(ex.Message);
+                }
+                else
+                {
+                    AddToLog($"Failed to refresh latest release (keeping cached {LatestRelease}): {ex.Message}");
+                    if (string.IsNullOrWhiteSpace(ManualReleaseText))
+                        ManualReleaseText = LatestRelease;
+                    IsManualReleaseEntryVisible = true;
+                }
             }
         }
 
@@ -409,7 +480,13 @@ namespace DuckDBGeoparquet.Views
         {
             var input = ManualReleaseText?.Trim();
             if (string.IsNullOrWhiteSpace(input)) return;
-            
+            if (!OvertureReleaseId.IsUsable(input))
+            {
+                AddToLog($"'{input}' is not a real Overture release folder. Use a YYYY-MM-DD.N value or wait for discovery.");
+                StatusText = ReleaseValidator.DiscoveryUnreachableMessage;
+                return;
+            }
+
             AddToLog($"Validating manually entered release: {input}");
             StatusText = $"Validating release {input}...";
             
@@ -927,10 +1004,12 @@ namespace DuckDBGeoparquet.Views
                 : "Source provenance fields are disabled for this download.");
             System.Diagnostics.Debug.WriteLine($"Data type for S3: theme='{parentS3Theme}', type='{actualS3Type}'");
 
-            string trimmedRelease = LatestRelease?.Trim() ?? "";
-            string s3Path = trimmedRelease.Length > 0
-                ? $"{S3_BASE_PATH}/{trimmedRelease}/theme={parentS3Theme}/type={actualS3Type}/*.parquet"
-                : $"{S3_BASE_PATH}/theme={parentS3Theme}/type={actualS3Type}/*.parquet";
+            if (!TryBuildThemeS3Path(parentS3Theme, actualS3Type, out string s3Path))
+            {
+                AddToLog(ReleaseValidator.DiscoveryUnreachableMessage);
+                StatusText = ReleaseValidator.DiscoveryUnreachableMessage;
+                return false;
+            }
 
             AddToLog($"Loading from S3 path: {s3Path}");
             System.Diagnostics.Debug.WriteLine($"Loading from S3 path: {s3Path}");
@@ -966,7 +1045,12 @@ namespace DuckDBGeoparquet.Views
             if (!ingestSuccess)
             {
                 AddToLog($"❌ Failed to ingest data from {s3Path}");
-                AddToLog($"This may indicate the release has been removed from Overture's S3 bucket.");
+                var newest = !string.IsNullOrWhiteSpace(_discoveredLatestRelease)
+                    ? _discoveredLatestRelease
+                    : null;
+                AddToLog(newest != null
+                    ? $"This may indicate the release has been removed from Overture's S3 bucket. Newest available is {newest}."
+                    : "This may indicate the release has been removed from Overture's S3 bucket.");
                 StatusText = $"Failed to ingest data for {itemDisplayName}";
                 return false;
             }
@@ -1020,15 +1104,24 @@ namespace DuckDBGeoparquet.Views
 
                 SelectedTabIndex = (int)WizardTab.Status;
                 
+                if (!OvertureReleaseId.IsUsable(LatestRelease))
+                {
+                    ShowReleaseDiscoveryFailure();
+                    return;
+                }
+
                 AddToLog($"Validating release {LatestRelease} before loading...");
                 StatusText = $"Validating release {LatestRelease}...";
                 
                 var validation = await ReleaseValidator.ValidateReleaseAsync(LatestRelease);
+                if (!string.IsNullOrWhiteSpace(validation.LatestAvailable))
+                    _discoveredLatestRelease = validation.LatestAvailable;
+
                 if (!validation.IsValid)
                 {
                     AddToLog($"❌ {validation.Message}");
                     
-                    if (!string.IsNullOrWhiteSpace(validation.LatestAvailable))
+                    if (OvertureReleaseId.IsUsable(validation.LatestAvailable))
                     {
                         var switchResult = ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
                             $"{validation.Message}\n\nWould you like to switch to {validation.LatestAvailable} and continue?",
@@ -1038,10 +1131,7 @@ namespace DuckDBGeoparquet.Views
                         
                         if (switchResult == System.Windows.MessageBoxResult.Yes)
                         {
-                            LatestRelease = validation.LatestAvailable;
-                            NotifyPropertyChanged(nameof(LatestRelease));
-                            UpdatePathsFromRelease();
-                            SaveCachedLatestRelease(LatestRelease);
+                            ApplyResolvedRelease(validation.LatestAvailable);
                             AddToLog($"Switched to latest release: {LatestRelease}");
                         }
                         else
@@ -1053,7 +1143,8 @@ namespace DuckDBGeoparquet.Views
                     }
                     else
                     {
-                        AddToLog("⚠️ Proceeding with unvalidated release - data load may fail");
+                        ShowReleaseDiscoveryFailure(validation.Message);
+                        return;
                     }
                 }
                 else
@@ -1268,11 +1359,7 @@ namespace DuckDBGeoparquet.Views
             var defaultBasePath = DeterminedDefaultMfcBasePath;
 
             // Reset data options
-            DataOutputPath = Path.Combine(
-                defaultBasePath,
-                "Data",
-                LatestRelease ?? "latest"
-            );
+            DataOutputPath = ResolveDataOutputFolder();
             AddSourceProvenanceFields = false;
 
             // Reset MFC options

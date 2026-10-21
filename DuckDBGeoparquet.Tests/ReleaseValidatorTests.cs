@@ -24,5 +24,14 @@ namespace DuckDBGeoparquet.Tests
         {
             Assert.False(ReleaseValidator.IsMissingFileError(errorMessage));
         }
+
+        [Fact]
+        public void RemovedReleaseMessage_IncludesNewestAvailableRelease()
+        {
+            string message = ReleaseValidator.RemovedReleaseMessage("2025-08-20.0", "2026-09-23.1");
+            Assert.Contains("2025-08-20.0", message);
+            Assert.Contains("2026-09-23.1", message);
+            Assert.Contains("no longer available", message);
+        }
     }
 }
