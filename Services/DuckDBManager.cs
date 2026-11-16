@@ -23,6 +23,12 @@ namespace DuckDBGeoparquet.Services
         /// <summary>True once extensions are loaded and the connection is usable.</summary>
         public bool IsInitialized { get; private set; }
 
+        /// <summary>Raw DuckDB <c>version()</c> string, e.g. "v1.5.3", when known.</summary>
+        public string LibraryVersion { get; private set; }
+
+        /// <summary>Parsed DuckDB library version, or null if it could not be read.</summary>
+        public Version ParsedLibraryVersion { get; private set; }
+
         public async Task InitializeAsync(CancellationToken cancellationToken = default)
         {
             if (IsInitialized) return;
@@ -30,6 +36,7 @@ namespace DuckDBGeoparquet.Services
             try
             {
                 await _connection.OpenAsync();
+                await CaptureLibraryVersionAsync(cancellationToken);
 
                 // Get the various potential paths where extensions might be found
                 string addInFolder = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
@@ -142,6 +149,24 @@ namespace DuckDBGeoparquet.Services
             catch (Exception ex)
             {
                 throw new Exception($"Failed to initialize DuckDB: {ex.Message}", ex);
+            }
+        }
+
+        private async Task CaptureLibraryVersionAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                using var command = _connection.CreateCommand();
+                command.CommandText = "SELECT version();";
+                var result = await command.ExecuteScalarAsync(cancellationToken);
+                LibraryVersion = result?.ToString();
+                if (GeoParquetSql.TryParseDuckDbVersion(LibraryVersion, out var parsed))
+                    ParsedLibraryVersion = parsed;
+                System.Diagnostics.Debug.WriteLine($"DuckDB version: {LibraryVersion}");
+            }
+            catch (Exception versionEx)
+            {
+                System.Diagnostics.Debug.WriteLine($"Could not read DuckDB version: {versionEx.Message}");
             }
         }
 

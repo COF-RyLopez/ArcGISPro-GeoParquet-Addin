@@ -1075,7 +1075,7 @@ namespace DuckDBGeoparquet.Views
                 ProgressValue = Math.Min(baseProgress + itemProgress, 99.0);
             });
 
-            await _dataProcessor.CreateFeatureLayerAsync(featureLayerName, itemProgressReporter, parentS3Theme, actualS3Type, DataOutputPath, SelectedCompression, ct);
+            await _dataProcessor.CreateFeatureLayerAsync(featureLayerName, itemProgressReporter, parentS3Theme, actualS3Type, DataOutputPath, SelectedCompression, SelectedGeoParquetCopyVersion, ct);
 
             ProgressValue = ((processedCount + 1) * 100.0) / totalCount;
 
