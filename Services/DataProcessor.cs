@@ -368,8 +368,8 @@ namespace DuckDBGeoparquet.Services
         /// <param name="parentS3Theme">The S3 parent theme key (e.g., 'buildings').</param>
         /// <param name="actualS3Type">The specific S3 data type (e.g., 'building', 'building_part').</param>
         /// <param name="dataOutputPathRoot">The root directory where data for the current release is stored (e.g., C:\...\ProjectHome\OvertureProAddinData\Data\{ReleaseVersion})</param>
-        public Task CreateFeatureLayerAsync(string layerNameBase, IProgress<string> progress, string parentS3Theme, string actualS3Type, string dataOutputPathRoot, string compression = "ZSTD", CancellationToken cancellationToken = default)
-            => ParquetExporter.CreateFeatureLayersAsync(layerNameBase, progress, parentS3Theme, actualS3Type, dataOutputPathRoot, _outputSessionSuffix, compression, cancellationToken);
+        public Task CreateFeatureLayerAsync(string layerNameBase, IProgress<string> progress, string parentS3Theme, string actualS3Type, string dataOutputPathRoot, string compression = "ZSTD", string geoParquetVersion = null, CancellationToken cancellationToken = default)
+            => ParquetExporter.CreateFeatureLayersAsync(layerNameBase, progress, parentS3Theme, actualS3Type, dataOutputPathRoot, _outputSessionSuffix, compression, geoParquetVersion, cancellationToken);
 
 
 

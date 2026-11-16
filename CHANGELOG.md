@@ -6,6 +6,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Added
+- Optional GeoParquet 2.0 export (`GEOPARQUET_VERSION 'V2'`) in Output Settings. GeoParquet 1.x remains the default because ArcGIS Pro support for reading 2.0 is unconfirmed. The 2.0 choice is gated on DuckDB 1.4.1+ (the COPY option this add-in already ships via DuckDB.NET 1.5.3) rather than silently writing 1.x.
+
 ### Fixed
 - Resolve the newest real Overture release folder at runtime via the official STAC catalog (`https://stac.overturemaps.org/catalog.json`), with anonymous S3 ListObjectsV2 (`prefix=release/`) as fallback. The retired `releases.json` endpoint and the literal `latest` S3 folder are no longer used.
 - Production AGOL publishing now defaults to the County of Fresno Marketplace item (`https://cofgisonline.maps.arcgis.com/home/item.html?id=8293d1220b7848848ce316b4fa3263b5`) instead of `www.arcgis.com` when portal/item secrets are unset.
