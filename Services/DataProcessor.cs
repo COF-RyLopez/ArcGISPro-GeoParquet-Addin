@@ -371,8 +371,25 @@ namespace DuckDBGeoparquet.Services
         public Task CreateFeatureLayerAsync(string layerNameBase, IProgress<string> progress, string parentS3Theme, string actualS3Type, string dataOutputPathRoot, string compression = "ZSTD", CancellationToken cancellationToken = default)
             => ParquetExporter.CreateFeatureLayersAsync(layerNameBase, progress, parentS3Theme, actualS3Type, dataOutputPathRoot, _outputSessionSuffix, compression, cancellationToken);
 
-
-
+        /// <summary>
+        /// After GeoParquet files are written, optionally export them into a file
+        /// geodatabase with conversion.ExportFeatures. Failed exports leave the
+        /// pending parquet layers unchanged so they can still be added to the map.
+        /// </summary>
+        public Task<FileGeodatabaseExportResult> ExportPendingLayersToFileGeodatabaseAsync(
+            FileGeodatabaseOutputSettings settings,
+            string dataOutputFolder,
+            IProgress<string> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            var exporter = new FileGeodatabaseExporter(new ArcGisGeoprocessingRunner());
+            return exporter.ExportPendingLayersAsync(
+                LayerManager.GetPendingLayers(),
+                settings,
+                dataOutputFolder,
+                progress,
+                cancellationToken);
+        }
 
         /// <summary>
         /// Adds all pending layers to the map in optimal stacking order (polygons → lines → points)

@@ -10,10 +10,15 @@
 		     installed. Anything linked here must stay free of ArcGIS types. -->
 		<Compile Include="..\Models\GeocodeCandidate.cs" Link="Linked\GeocodeCandidate.cs" />
 		<Compile Include="..\Models\ExtentBounds.cs" Link="Linked\ExtentBounds.cs" />
+		<Compile Include="..\Models\FileGeodatabaseOutputSettings.cs" Link="Linked\FileGeodatabaseOutputSettings.cs" />
 		<Compile Include="..\Models\GersifyOptions.cs" Link="Linked\GersifyOptions.cs" />
+		<Compile Include="..\Models\LayerCreationInfo.cs" Link="Linked\LayerCreationInfo.cs" />
 		<Compile Include="..\Models\OvertureSchema.cs" Link="Linked\OvertureSchema.cs" />
 		<Compile Include="..\Services\GeocodeResultLabels.cs" Link="Linked\GeocodeResultLabels.cs" />
 		<Compile Include="..\Services\ArcGisNameSanitizer.cs" Link="Linked\ArcGisNameSanitizer.cs" />
+		<Compile Include="..\Services\FileGeodatabaseOutput.cs" Link="Linked\FileGeodatabaseOutput.cs" />
+		<Compile Include="..\Services\FileGeodatabaseExporter.cs" Link="Linked\FileGeodatabaseExporter.cs" />
+		<Compile Include="..\Services\IGeoprocessingRunner.cs" Link="Linked\IGeoprocessingRunner.cs" />
 		<Compile Include="..\Services\GeocodeFileQueryBuilder.cs" Link="Linked\GeocodeFileQueryBuilder.cs" />
 		<Compile Include="..\Services\GeocodeTextNormalizer.cs" Link="Linked\GeocodeTextNormalizer.cs" />
 		<Compile Include="..\Services\GersSql.cs" Link="Linked\GersSql.cs" />

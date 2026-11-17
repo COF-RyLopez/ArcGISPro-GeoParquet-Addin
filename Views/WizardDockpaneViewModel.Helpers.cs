@@ -404,6 +404,34 @@ namespace DuckDBGeoparquet.Views
             }
         }
 
+        private void BrowseFileGeodatabase()
+        {
+            var dialog = new System.Windows.Forms.FolderBrowserDialog
+            {
+                Description = "Select a file geodatabase (.gdb) or a folder that should contain Overture.gdb",
+                UseDescriptionForTitle = true,
+                SelectedPath = ResolveFileGeodatabaseBrowseStart()
+            };
+
+            var result = dialog.ShowDialog();
+            if (result == System.Windows.Forms.DialogResult.OK)
+            {
+                FileGeodatabasePath = dialog.SelectedPath;
+                AddToLog($"File geodatabase output set to: {FileGeodatabaseOutput.ResolveGeodatabasePath(DataOutputPath, FileGeodatabasePath)}");
+            }
+        }
+
+        private string ResolveFileGeodatabaseBrowseStart()
+        {
+            if (!string.IsNullOrWhiteSpace(FileGeodatabasePath) && Directory.Exists(FileGeodatabasePath))
+                return FileGeodatabasePath;
+
+            if (!string.IsNullOrWhiteSpace(DataOutputPath) && Directory.Exists(DataOutputPath))
+                return DataOutputPath;
+
+            return Path.Combine(DeterminedDefaultMfcBasePath, "Data");
+        }
+
         private void BrowseCustomDataFolder()
         {
             var dialog = new System.Windows.Forms.FolderBrowserDialog
