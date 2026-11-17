@@ -300,21 +300,21 @@ namespace DuckDBGeoparquet.Services
 
             foreach (var layerInfo in sortedLayers)
             {
-                if (File.Exists(layerInfo.FilePath))
+                if (FileGeodatabaseOutput.LayerSourceExists(layerInfo.FilePath))
                 {
-                    uris.Add(new Uri(layerInfo.FilePath));
+                    uris.Add(new Uri(Path.GetFullPath(layerInfo.FilePath)));
                     layerNames.Add(layerInfo.LayerName);
                     validLayerInfos.Add(layerInfo);
                     validFiles++;
                     if (VerbosePerLayerDebugLogging)
                     {
-                        System.Diagnostics.Debug.WriteLine($"Valid file for {layerInfo.LayerName}: {layerInfo.FilePath}");
+                        System.Diagnostics.Debug.WriteLine($"Valid source for {layerInfo.LayerName}: {layerInfo.FilePath}");
                     }
                 }
                 else
                 {
-                    progress?.Report($"Warning: File not found for {layerInfo.LayerName}");
-                    System.Diagnostics.Debug.WriteLine($"Warning: File not found for layer {layerInfo.LayerName}: {layerInfo.FilePath}");
+                    progress?.Report($"Warning: Data source not found for {layerInfo.LayerName}");
+                    System.Diagnostics.Debug.WriteLine($"Warning: Data source not found for layer {layerInfo.LayerName}: {layerInfo.FilePath}");
                 }
             }
 
@@ -382,7 +382,7 @@ namespace DuckDBGeoparquet.Services
                 progress?.Report($"Some layers missing from bulk creation ({layers.Count}/{uris.Count}). Creating missing layers individually...");
                 var createdLayerNames = layers.Select(l => l.Name).ToHashSet();
                 return sortedLayers.Where(layerInfo =>
-                    File.Exists(layerInfo.FilePath) &&
+                    FileGeodatabaseOutput.LayerSourceExists(layerInfo.FilePath) &&
                     !createdLayerNames.Contains(layerInfo.LayerName)).ToList();
             }
 
@@ -450,7 +450,7 @@ namespace DuckDBGeoparquet.Services
 
             var targetFilePaths = new HashSet<string>(
                 targetLayerList
-                    .Select(t => NormalizeToParquetFilePath(t.FilePath))
+                    .Select(t => NormalizeDataSourcePath(t.FilePath))
                     .Where(p => !string.IsNullOrWhiteSpace(p)),
                 StringComparer.OrdinalIgnoreCase);
 
@@ -471,7 +471,7 @@ namespace DuckDBGeoparquet.Services
                 {
                     using var fc = layer.GetFeatureClass();
                     var pathUri = fc?.GetPath();
-                    var normalizedLayerPath = NormalizeToParquetFilePath(pathUri != null
+                    var normalizedLayerPath = NormalizeDataSourcePath(pathUri != null
                         ? (pathUri.IsFile ? pathUri.LocalPath : pathUri.OriginalString)
                         : null);
 
@@ -499,7 +499,7 @@ namespace DuckDBGeoparquet.Services
                 {
                     using var tbl = table.GetTable();
                     var pathUri = tbl?.GetPath();
-                    var normalizedTablePath = NormalizeToParquetFilePath(pathUri != null
+                    var normalizedTablePath = NormalizeDataSourcePath(pathUri != null
                         ? (pathUri.IsFile ? pathUri.LocalPath : pathUri.OriginalString)
                         : null);
 
@@ -545,7 +545,7 @@ namespace DuckDBGeoparquet.Services
             return removedCount;
         }
 
-        private static string NormalizeToParquetFilePath(string rawPath)
+        private static string NormalizeDataSourcePath(string rawPath)
         {
             if (string.IsNullOrWhiteSpace(rawPath))
                 return null;
@@ -586,15 +586,15 @@ namespace DuckDBGeoparquet.Services
 
                 foreach (var layerInfo in layers)
                 {
-                    if (!File.Exists(layerInfo.FilePath))
+                    if (!FileGeodatabaseOutput.LayerSourceExists(layerInfo.FilePath))
                     {
-                        progress?.Report($"Error: Parquet file not found at {layerInfo.FilePath}");
+                        progress?.Report($"Error: Data source not found at {layerInfo.FilePath}");
                         continue;
                     }
 
                     try
                     {
-                        Uri dataUri = new(layerInfo.FilePath);
+                        Uri dataUri = new(Path.GetFullPath(layerInfo.FilePath));
                         Layer newLayer = LayerFactory.Instance.CreateLayer(dataUri, map, layerName: layerInfo.LayerName);
                         if (newLayer == null)
                         {
@@ -621,6 +621,12 @@ namespace DuckDBGeoparquet.Services
                 }
             });
         }
+
+        private static bool ShouldSkipParquetDomainLimitation(LayerCreationInfo layerInfo, ArgumentException ex)
+            => FileGeodatabaseOutput.ShouldSkipParquetDomainLimitation(
+                layerInfo?.IsFileGeodatabase == true,
+                layerInfo?.FilePath,
+                ex?.Message);
 
         private static void ApplyLayerSettings(FeatureLayer featureLayer, CIMRenderer renderer = null, LayerCreationInfo layerInfo = null, MapStyleDefinition mapStyle = null, CartographicProfile profile = null)
         {
@@ -684,9 +690,9 @@ namespace DuckDBGeoparquet.Services
                     }
                 }
             }
-            catch (ArgumentException ex) when (ex.Message.Contains("domain") || ex.Message.Contains("Domain") || ex.Message.Contains("not supported"))
+            catch (ArgumentException ex) when (ShouldSkipParquetDomainLimitation(layerInfo, ex))
             {
-                System.Diagnostics.Debug.WriteLine($"Info: Skipping layer settings for {featureLayer.Name} (domain access not supported for Parquet in Pro 3.5): {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Info: Skipping layer settings for {featureLayer.Name} (domain access not supported for Parquet): {ex.Message}");
             }
             catch (Exception ex)
             {

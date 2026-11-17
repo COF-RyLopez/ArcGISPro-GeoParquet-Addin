@@ -6,6 +6,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Added
+- Optional **Save to file geodatabase** output setting on the download wizard (GeoParquet remains the default). After local GeoParquet files are written, the add-in runs ArcGIS Pro's Export Features tool (`conversion.ExportFeatures`) into a user-chosen `.gdb` or `Overture.gdb` under the data output folder, names feature classes from theme and type, overwrites or suffixes existing names to match current replace/skip behavior, and adds those feature classes to the map instead of Parquet layers. Geoprocessing failures are reported in the log and the GeoParquet files are kept. Attribute domains are applied for file geodatabase layers (they remain skipped only for Parquet).
+
 ### Fixed
 - Resolve the newest real Overture release folder at runtime via the official STAC catalog (`https://stac.overturemaps.org/catalog.json`), with anonymous S3 ListObjectsV2 (`prefix=release/`) as fallback. The retired `releases.json` endpoint and the literal `latest` S3 folder are no longer used.
 - Production AGOL publishing now defaults to the County of Fresno Marketplace item (`https://cofgisonline.maps.arcgis.com/home/item.html?id=8293d1220b7848848ce316b4fa3263b5`) instead of `www.arcgis.com` when portal/item secrets are unset.

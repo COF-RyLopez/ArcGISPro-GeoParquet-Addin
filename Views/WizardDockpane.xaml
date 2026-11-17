@@ -139,7 +139,7 @@
                                 Margin="0,0,0,12">
                             <StackPanel>
                                 <TextBlock TextWrapping="Wrap" Margin="0,4,0,4">
-                                    Files will be saved as GeoParquet format. After loading data, you can optionally create a Multifile Feature Connection (MFC) from the Create MFC tool.
+                                    Files are saved as GeoParquet by default. Optionally export those files into a file geodatabase after download. After loading data, you can also create a Multifile Feature Connection (MFC) from the Create MFC tool.
                                 </TextBlock>
                                 <Grid Margin="0,4,0,4">
                                     <Grid.ColumnDefinitions>
@@ -163,6 +163,29 @@
                                     <Run Text="ZSTD: Best compression ratio (recommended). "/>
                                     <Run Text="SNAPPY: Fast compression, larger files. "/>
                                     <Run Text="GZIP: Good balance of speed and size."/>
+                                </TextBlock>
+                                <CheckBox Content="Save to file geodatabase"
+                                          IsChecked="{Binding SaveToFileGeodatabase, Mode=TwoWay}"
+                                          Margin="0,8,0,0"
+                                          ToolTip="After writing local GeoParquet files, run ArcGIS Pro's Export Features tool into a file geodatabase and add those feature classes to the map instead of Parquet layers. GeoParquet remains the default when this is off."/>
+                                <TextBlock TextWrapping="Wrap" Margin="18,2,0,0" Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+                                    Optional. GeoParquet files are still written first. Feature classes are named from the theme and type. If Export Features fails, the GeoParquet files are kept.
+                                </TextBlock>
+                                <Grid Margin="18,4,0,0" Visibility="{Binding SaveToFileGeodatabase, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="File geodatabase:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBox Grid.Column="1" Text="{Binding FileGeodatabasePath, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center" Margin="0,0,4,0"
+                                             ToolTip="Choose an existing .gdb, or leave blank to create Overture.gdb under the data output folder."/>
+                                    <Button Grid.Column="2" Content="Browse..." Style="{DynamicResource Esri_Button}" Command="{Binding BrowseFileGeodatabaseCommand}" Width="70"/>
+                                </Grid>
+                                <TextBlock TextWrapping="Wrap" Margin="18,2,0,0"
+                                           Visibility="{Binding SaveToFileGeodatabase, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                           Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+                                    Leave blank to create Overture.gdb under the data output folder.
                                 </TextBlock>
                                 <CheckBox Content="Add source edit fields (slower)"
                                           IsChecked="{Binding AddSourceProvenanceFields, Mode=TwoWay}"
