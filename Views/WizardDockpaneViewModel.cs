@@ -198,6 +198,7 @@ namespace DuckDBGeoparquet.Views
         {
             System.Diagnostics.Debug.WriteLine("InitializeViewModelForRuntime executing...");
             _dataProcessor = new DataProcessor();
+            LoadAddinSettings();
 
             LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => GetSelectedLeafItems().Count > 0);
             RefreshCacheInfoCommand = new RelayCommand(() => RefreshCacheInfo());
@@ -297,6 +298,15 @@ namespace DuckDBGeoparquet.Views
                 // DuckDB init happens after UI is ready so a failure here
                 // does not prevent the user from seeing/selecting themes.
                 AddToLog("Async Initialization: Initializing DuckDB");
+                try
+                {
+                    var proxy = DuckDBManager.ResolveProxy(AddinSettingsStore.Load());
+                    AddToLog($"Async Initialization: {proxy.ToLogSafeDescription()}");
+                }
+                catch (Exception proxyEx)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Proxy description failed: {proxyEx.Message}");
+                }
                 await _dataProcessor.InitializeDuckDBAsync();
 
                 // Refresh latest release in background without blocking UI
@@ -1045,12 +1055,6 @@ namespace DuckDBGeoparquet.Views
             if (!ingestSuccess)
             {
                 AddToLog($"❌ Failed to ingest data from {s3Path}");
-                var newest = !string.IsNullOrWhiteSpace(_discoveredLatestRelease)
-                    ? _discoveredLatestRelease
-                    : null;
-                AddToLog(newest != null
-                    ? $"This may indicate the release has been removed from Overture's S3 bucket. Newest available is {newest}."
-                    : "This may indicate the release has been removed from Overture's S3 bucket.");
                 StatusText = $"Failed to ingest data for {itemDisplayName}";
                 return false;
             }

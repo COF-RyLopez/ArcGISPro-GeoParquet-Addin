@@ -6,18 +6,24 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
-### Fixed
-- Resolve the newest real Overture release folder at runtime via the official STAC catalog (`https://stac.overturemaps.org/catalog.json`), with anonymous S3 ListObjectsV2 (`prefix=release/`) as fallback. The retired `releases.json` endpoint and the literal `latest` S3 folder are no longer used.
-- Production AGOL publishing now defaults to the County of Fresno Marketplace item (`https://cofgisonline.maps.arcgis.com/home/item.html?id=8293d1220b7848848ce316b4fa3263b5`) instead of `www.arcgis.com` when portal/item secrets are unset.
-- Cached `latestRelease.txt` values are validated against the discovered list; a removed cache entry is replaced with the newest available release and logged.
-- Downloads and preview samples now fail with a clear discovery error instead of building `s3://.../release/latest/...` when no release can be resolved. The "release has been removed" message names the newest available folder.
+### Added
+- DuckDB `httpfs` now applies `http_proxy`, `http_proxy_username`, and `http_proxy_password` so S3 and Overture reads work behind corporate proxies. The Windows system proxy is auto-detected for the Overture S3 URL (`WebRequest.GetSystemWebProxy` / WinHTTP); an optional manual proxy can be set under Add-in Settings. Proxy passwords are never written to logs.
+- `memory_limit` and `max_memory` are configurable in Add-in Settings (defaults remain `2GB` / `4GB`).
 
 ### Changed
+- When bundled `spatial` and `httpfs` extensions are present, DuckDB never attempts a network `INSTALL`.
+- Blocked or offline S3/Overture reads show "Can't reach Overture S3. Check the proxy or network." instead of a raw DuckDB error.
 - **Overture Maps Schema v2 Support**: Updated to support Overture Maps schema v2 (releases 2026-09-23 and later)
   - Place `categories` field renamed to `taxonomy` with structured `primary`, `hierarchy`, and `alternates` fields
   - Added support for new `basic_category` field in Places
   - Geocoder, MFC generation, and locator services now detect and use either `taxonomy` (v2) or `categories` (v1) at runtime
   - Maintains backward compatibility with pre-v2 releases through dynamic column detection
+
+### Fixed
+- Resolve the newest real Overture release folder at runtime via the official STAC catalog (`https://stac.overturemaps.org/catalog.json`), with anonymous S3 ListObjectsV2 (`prefix=release/`) as fallback. The retired `releases.json` endpoint and the literal `latest` S3 folder are no longer used.
+- Production AGOL publishing now defaults to the County of Fresno Marketplace item (`https://cofgisonline.maps.arcgis.com/home/item.html?id=8293d1220b7848848ce316b4fa3263b5`) instead of `www.arcgis.com` when portal/item secrets are unset.
+- Cached `latestRelease.txt` values are validated against the discovered list; a removed cache entry is replaced with the newest available release and logged.
+- Downloads and preview samples now fail with a clear discovery error instead of building `s3://.../release/latest/...` when no release can be resolved. The "release has been removed" message names the newest available folder.
 
 ## [0.3.0] - 2026-03-01
 

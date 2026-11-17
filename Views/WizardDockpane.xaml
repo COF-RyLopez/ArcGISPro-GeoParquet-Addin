@@ -171,6 +171,53 @@
                                 <TextBlock TextWrapping="Wrap" Margin="18,2,0,0" Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
                                     Reads nested Overture source records and can significantly extend download time. Use when you need per-feature edit or source links in the downloaded layer.
                                 </TextBlock>
+                                <Expander Header="Add-in Settings (proxy and memory)" IsExpanded="False" Margin="0,12,0,0" Style="{DynamicResource Esri_Expander}">
+                                    <StackPanel Margin="0,8,0,0">
+                                        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+                                            S3 and Overture reads use DuckDB httpfs. Leave the proxy blank to auto-detect the Windows system proxy for Overture S3. Fill it in only when you need a manual corporate proxy.
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding DetectedProxyDisplay}" TextWrapping="Wrap" Margin="0,0,0,8" Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                        <Grid Margin="0,4,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="HTTP proxy:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                            <TextBox Grid.Column="1" Text="{Binding HttpProxy, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center"
+                                                     ToolTip="Optional. Examples: proxy.corp.example:8080 or http://proxy.corp.example:8080"/>
+                                        </Grid>
+                                        <Grid Margin="0,4,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Proxy username:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                            <TextBox Grid.Column="1" Text="{Binding HttpProxyUsername, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center"/>
+                                        </Grid>
+                                        <Grid Margin="0,4,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Proxy password:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                            <PasswordBox Grid.Column="1" x:Name="HttpProxyPasswordBox" PasswordChanged="HttpProxyPasswordBox_PasswordChanged" VerticalAlignment="Center"/>
+                                        </Grid>
+                                        <Grid Margin="0,8,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Memory limit:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                            <TextBox Grid.Column="1" Text="{Binding MemoryLimit, UpdateSourceTrigger=LostFocus}" VerticalAlignment="Center" Margin="0,0,8,0"
+                                                     ToolTip="DuckDB memory_limit. Default 2GB."/>
+                                            <TextBlock Grid.Column="2" Text="Max memory:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                            <TextBox Grid.Column="3" Text="{Binding MaxMemory, UpdateSourceTrigger=LostFocus}" VerticalAlignment="Center"
+                                                     ToolTip="DuckDB max_memory. Default 4GB."/>
+                                        </Grid>
+                                    </StackPanel>
+                                </Expander>
                             </StackPanel>
                         </Border>
                         <!-- 4. Choose Map Purpose -->
