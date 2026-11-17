@@ -27,15 +27,65 @@ namespace DuckDBGeoparquet.Services
 
         private const string S3HttpsBase = "https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com/release/";
 
-        private static readonly HttpClient _httpClient = new(new HttpClientHandler
+        private static readonly object HttpClientLock = new();
+        private static HttpClient _httpClient;
+
+        private static HttpClient Http => GetHttpClient();
+
+        internal static HttpClient GetHttpClient()
         {
-            UseProxy = true,
-            Proxy = WebRequest.DefaultWebProxy,
-            DefaultProxyCredentials = CredentialCache.DefaultCredentials
-        })
+            lock (HttpClientLock)
+            {
+                if (_httpClient == null)
+                    _httpClient = CreateHttpClient();
+                return _httpClient;
+            }
+        }
+
+        /// <summary>
+        /// Recreates the discovery HttpClient after proxy settings change.
+        /// </summary>
+        public static void RefreshHttpClient()
         {
-            Timeout = TimeSpan.FromSeconds(15)
-        };
+            lock (HttpClientLock)
+            {
+                _httpClient?.Dispose();
+                _httpClient = null;
+            }
+        }
+
+        private static HttpClient CreateHttpClient()
+        {
+            var handler = new HttpClientHandler
+            {
+                UseProxy = true,
+                DefaultProxyCredentials = CredentialCache.DefaultCredentials
+            };
+
+            try
+            {
+                var settings = AddinSettingsStore.Load();
+                var proxy = HttpProxySettingsBuilder.Resolve(settings, SystemProxyDetector.DetectForS3());
+                var webProxy = HttpProxySettingsBuilder.ToWebProxy(proxy);
+                if (webProxy != null)
+                {
+                    handler.Proxy = webProxy;
+                    if (webProxy.Credentials != null)
+                        handler.DefaultProxyCredentials = webProxy.Credentials;
+                }
+                else
+                {
+                    handler.Proxy = WebRequest.GetSystemWebProxy() ?? WebRequest.DefaultWebProxy;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"ReleaseValidator proxy setup failed: {ex.Message}");
+                handler.Proxy = WebRequest.DefaultWebProxy;
+            }
+
+            return new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
+        }
 
         public class ReleaseInfo
         {
@@ -206,7 +256,7 @@ namespace DuckDBGeoparquet.Services
         {
             try
             {
-                var body = await _httpClient.GetStringAsync(url);
+                var body = await Http.GetStringAsync(url);
                 var releases = parser(body);
                 if (releases == null || releases.Count == 0)
                 {
@@ -247,7 +297,7 @@ namespace DuckDBGeoparquet.Services
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Head, testUrl);
-                using var response = await _httpClient.SendAsync(request);
+                using var response = await Http.SendAsync(request);
                 return response.IsSuccessStatusCode;
             }
             catch

@@ -207,7 +207,7 @@ namespace DuckDBGeoparquet.Views
                     }
                     catch (Exception ex)
                     {
-                        AddToLog($"Preview: sample for {item.DisplayName} failed: {ex.Message}");
+                        AddToLog($"Preview: sample for {item.DisplayName} failed: {DuckDbNetworkErrors.ToUserFacingMessage(ex.Message)}");
                     }
                 }
 
