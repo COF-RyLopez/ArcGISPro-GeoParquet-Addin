@@ -199,6 +199,9 @@ namespace DuckDBGeoparquet.Services
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Query error: {ex.Message}");
+                progress?.Report(ReleaseValidator.IsMissingFileError(ex.Message)
+                    ? "ERROR: No files found at S3 path. The release may have been removed from Overture's S3 bucket."
+                    : $"ERROR: {ex.Message}");
                 throw;
             }
         }

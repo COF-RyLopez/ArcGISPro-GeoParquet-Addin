@@ -45,8 +45,16 @@ def update_version_line(current_description: str, new_version_line: str) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Publish ArcGIS Pro add-in to ArcGIS Online")
     parser.add_argument("--addin-file", required=True, help="Path to the .esriAddInX file")
-    parser.add_argument("--item-id", required=True, help="Existing AGOL item ID")
-    parser.add_argument("--portal-url", default="https://www.arcgis.com", help="Portal URL")
+    parser.add_argument(
+        "--item-id",
+        default="8293d1220b7848848ce316b4fa3263b5",
+        help="Existing AGOL item ID (County of Fresno Marketplace add-in by default)",
+    )
+    parser.add_argument(
+        "--portal-url",
+        default="https://cofgisonline.maps.arcgis.com",
+        help="Portal URL (County of Fresno org by default)",
+    )
     parser.add_argument("--auth-method", choices=["token", "username"], default="token")
     parser.add_argument("--client-id", help="OAuth2 client ID (for token auth)")
     parser.add_argument("--client-secret", help="OAuth2 client secret (for token auth)")
@@ -125,8 +133,11 @@ def main():
         # Single verification pass
         verified = gis.content.get(args.item_id)
         print()
+        public_url = f"https://cofgisonline.maps.arcgis.com/home/item.html?id={args.item_id}"
         print(f"[DONE] Published successfully")
-        print(f"       URL: {args.portal_url}/home/item.html?id={args.item_id}")
+        print(f"       URL: {public_url}")
+        if args.portal_url.rstrip("/") != "https://cofgisonline.maps.arcgis.com":
+            print(f"       Portal used: {args.portal_url}/home/item.html?id={args.item_id}")
         print(f"       Modified: {verified.modified}")
 
     except Exception as e:
