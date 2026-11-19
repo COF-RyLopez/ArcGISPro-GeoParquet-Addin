@@ -43,6 +43,8 @@
 		<Compile Include="..\Services\PreviewBridge.cs" Link="Linked\PreviewBridge.cs" />
 		<Compile Include="..\Services\OvertureReleaseId.cs" Link="Linked\OvertureReleaseId.cs" />
 		<Compile Include="..\Services\ReleaseValidator.cs" Link="Linked\ReleaseValidator.cs" />
+		<Compile Include="..\Models\UserDataSource.cs" Link="Linked\UserDataSource.cs" />
+		<Compile Include="..\Services\UserSourceStore.cs" Link="Linked\UserSourceStore.cs" />
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Include="DuckDB.NET.Data.Full" Version="1.5.3" />

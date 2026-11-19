@@ -34,6 +34,27 @@ namespace DuckDBGeoparquet.Services
         }
 
         /// <summary>
+        /// Wraps a read expression so a source whose geometry column has a
+        /// different name (or holds WKB bytes) surfaces a GEOMETRY-typed
+        /// column called "geometry", which the rest of the pipeline assumes.
+        /// Returns the expression unchanged for ordinary GeoParquet.
+        /// </summary>
+        public static string WrapGeometryColumn(string readExpression, string geometryColumn, bool geometryIsWkb)
+        {
+            bool rename = !string.IsNullOrWhiteSpace(geometryColumn) &&
+                          !geometryColumn.Equals(GeometryColumn, StringComparison.OrdinalIgnoreCase);
+            if (!rename && !geometryIsWkb) return readExpression;
+
+            string source = rename ? QuoteIdentifier(geometryColumn) : GeometryColumn;
+            string expression = geometryIsWkb ? $"ST_GeomFromWKB({source})" : source;
+            return $"(SELECT * EXCLUDE({source}), {expression} AS {GeometryColumn} FROM {readExpression})";
+        }
+
+        /// <summary>Quotes a SQL identifier (doubling embedded quotes).</summary>
+        public static string QuoteIdentifier(string identifier) =>
+            "\"" + (identifier ?? string.Empty).Replace("\"", "\"\"") + "\"";
+
+        /// <summary>
         /// Build a projection list that drops known heavy optional columns for the given dataset type.
         /// Returns null to indicate "SELECT *" when no drops apply.
         /// </summary>
@@ -74,10 +95,12 @@ namespace DuckDBGeoparquet.Services
             bool includeSourceProvenance = false,
             string readParquetOptions = null,
             bool clipGeometry = false,
-            bool preserveSource = false, IReadOnlyList<string> files = null)
+            bool preserveSource = false, IReadOnlyList<string> files = null,
+            string geometryColumn = null, bool geometryIsWkb = false)
         {
             var projectedColumns = preserveSource ? null : BuildColumnProjection(actualS3Type, columnNames);
-            string readParquet = BuildReadParquetExpression(s3Path, readParquetOptions, files);
+            string readParquet = WrapGeometryColumn(
+                BuildReadParquetExpression(s3Path, readParquetOptions, files), geometryColumn, geometryIsWkb);
 
             string spatialFilter = "";
             string extentPolygon = "";

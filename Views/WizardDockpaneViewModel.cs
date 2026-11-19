@@ -145,6 +145,7 @@ namespace DuckDBGeoparquet.Views
                 }
                 UpdateThemePreview(); // Update description, estimates etc.
                 (ShowThemeInfoCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                (RemoveUserSourceCommand as RelayCommand)?.RaiseCanExecuteChanged();
             }
         }
 
@@ -248,6 +249,7 @@ namespace DuckDBGeoparquet.Views
             ApplyMapStyleCommand = new RelayCommand(async () => await ApplyMapStyleToExistingLayersAsync(), () => SelectedCartographicProfile != null);
             RepairMapSymbologyCommand = new RelayCommand(async () => await RepairMapSymbologyAsync());
             InitializePreviewCommands();
+            InitializeUserSourceCommands();
 
             CustomExtentTool.ExtentCreatedStatic += OnExtentCreated;
 
@@ -543,8 +545,12 @@ namespace DuckDBGeoparquet.Views
                 if (extent == null) throw new InvalidOperationException("Choose a map or custom area before downloading.");
                 var bounds = new ExtentBounds(extent.XMin, extent.YMin, extent.XMax, extent.YMax);
                 GeographicBounds.Validate(bounds);
-                StatusText = $"Checking availability of release {release}...";
-                await new OvertureReleaseDiscovery().EnsureAvailableAsync(release, token);
+                bool anyOverture = selected.Any(i => i.UserSource == null);
+                if (anyOverture)
+                {
+                    StatusText = $"Checking availability of release {release}...";
+                    await new OvertureReleaseDiscovery().EnsureAvailableAsync(release, token);
+                }
                 snapshot = new DownloadSnapshot(dataDirectory, release, bounds, compression);
                 _dataProcessor.ClearPendingLayers();
                 _dataProcessor.BeginNewOutputSession();
@@ -559,25 +565,34 @@ namespace DuckDBGeoparquet.Views
                 {
                     token.ThrowIfCancellationRequested();
                     var item = selected[index];
-                    string uri = $"{S3_BASE_PATH}/{release}/theme={item.ParentThemeForS3}/type={item.ActualType}/*.parquet";
+                    var customSource = item.UserSource;
+                    string uri = customSource?.Url
+                        ?? $"{S3_BASE_PATH}/{release}/theme={item.ParentThemeForS3}/type={item.ActualType}/*.parquet";
                     try
                     {
                         IReadOnlyList<string> files = null;
-                        StatusText = $"Finding {item.DisplayName} files for this area...";
-                        try
+                        if (customSource == null)
                         {
-                            files = await new OvertureCatalog().FindFilesAsync(release, item.ParentThemeForS3,
-                                item.ActualType, bounds, Path.Combine(dataDirectory, ".catalog"), token);
-                            AddToLog($"Catalog selected {files.Count} files for {item.DisplayName}.");
+                            StatusText = $"Finding {item.DisplayName} files for this area...";
+                            try
+                            {
+                                files = await new OvertureCatalog().FindFilesAsync(release, item.ParentThemeForS3,
+                                    item.ActualType, bounds, Path.Combine(dataDirectory, ".catalog"), token);
+                                AddToLog($"Catalog selected {files.Count} files for {item.DisplayName}.");
+                            }
+                            catch (OperationCanceledException) { throw; }
+                            catch (Exception ex)
+                            {
+                                AddToLog($"Catalog unavailable ({ex.Message}); using the full file listing with spatial filtering.");
+                            }
                         }
-                        catch (OperationCanceledException) { throw; }
-                        catch (Exception ex)
-                        {
-                            AddToLog($"Catalog unavailable ({ex.Message}); using the full file listing with spatial filtering.");
-                        }
+                        string layerName = customSource == null
+                            ? $"{MakeFriendlyName(item.ParentThemeForS3)} - {item.DisplayName}"
+                            : item.DisplayName;
                         var result = await _dataProcessor.PrepareDatasetAsync(uri, item.ParentThemeForS3,
-                            item.ActualType, $"{MakeFriendlyName(item.ParentThemeForS3)} - {item.DisplayName}",
-                            snapshot.StagingPath, bounds, compression, provenance, progress, token, files);
+                            item.ActualType, layerName,
+                            snapshot.StagingPath, bounds, compression, provenance, progress, token, files,
+                            customSource?.GeometryColumn, customSource?.GeometryIsWkb ?? false);
                         snapshot.Manifest.Datasets.Add(result);
                         AddToLog(result.Status == DatasetLoadStatus.Empty
                             ? $"{item.DisplayName}: no features in this area."
@@ -809,6 +824,7 @@ namespace DuckDBGeoparquet.Views
                 }
                 themesCollection.Add(parentItem);
             }
+            AppendCustomSourcesNode(themesCollection);
             Themes = themesCollection; // Assign to the public property
             NotifyPropertyChanged(nameof(Themes));
             UpdateIsSelectAllCheckedStatus(); // Set initial state of SelectAll checkbox
