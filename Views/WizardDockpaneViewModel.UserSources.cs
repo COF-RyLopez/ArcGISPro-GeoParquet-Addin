@@ -22,6 +22,13 @@ namespace DuckDBGeoparquet.Views
         internal const string CustomSourcesThemeKey = "custom";
         private const string CustomSourcesDisplayName = "Custom Sources";
 
+        /// <summary>
+        /// The live dockpane instance, so the ribbon Add Data Source dialog can
+        /// refresh the theme tree after saving a source. Null until the pane is
+        /// first created; set in the constructor.
+        /// </summary>
+        internal static WizardDockpaneViewModel Instance { get; set; }
+
         private List<UserDataSource> _userSources = new();
 
         private static string UserSourceStorePath => UserSourceStore.GetStorePath(DeterminedDefaultMfcBasePath);
@@ -85,7 +92,7 @@ namespace DuckDBGeoparquet.Views
             themes.Add(parent);
         }
 
-        private void RebuildCustomSourcesNode()
+        internal void RebuildCustomSourcesNode()
         {
             if (Themes == null) return;
             var existing = Themes.FirstOrDefault(t => t.ParentThemeForS3 == CustomSourcesThemeKey);
@@ -99,17 +106,10 @@ namespace DuckDBGeoparquet.Views
         {
             string name = NewSourceName?.Trim();
             string url = NewSourceUrl?.Trim();
-            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(url)) return;
-            if (!UserSourceStore.IsSupportedUrl(url))
+            string validationError = UserSourceStore.ValidateNewSource(name, url, _userSources);
+            if (validationError != null)
             {
-                StatusText = "Enter an http(s):// or s3:// URL pointing at GeoParquet data.";
-                return;
-            }
-            string typeKey = UserSourceStore.SanitizeTypeName(name);
-            if (_userSources.Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase) ||
-                                      UserSourceStore.SanitizeTypeName(s.Name) == typeKey))
-            {
-                StatusText = $"A custom source named '{name}' already exists.";
+                StatusText = validationError;
                 return;
             }
 

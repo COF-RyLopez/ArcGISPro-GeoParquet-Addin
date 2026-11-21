@@ -126,6 +126,26 @@ namespace DuckDBGeoparquet.Tests
         }
 
         [Fact]
+        public void ValidateNewSource_AcceptsNewSource_RejectsBadInput()
+        {
+            var existing = new List<UserDataSource>
+            {
+                new() { Name = "City Parcels", Url = "https://x/p.parquet" }
+            };
+
+            Assert.Null(UserSourceStore.ValidateNewSource("Trails", "https://x/t.parquet", existing));
+            Assert.Null(UserSourceStore.ValidateNewSource("Trails", "s3://bucket/*.parquet", null));
+
+            Assert.Equal("Enter a name and a URL.", UserSourceStore.ValidateNewSource("  ", "https://x/t.parquet", existing));
+            Assert.Equal("Enter a name and a URL.", UserSourceStore.ValidateNewSource("Trails", null, existing));
+            Assert.Contains("http(s)://", UserSourceStore.ValidateNewSource("Trails", "ftp://x/t.parquet", existing));
+
+            // Duplicate by case-insensitive name and by colliding sanitized type key.
+            Assert.Contains("already exists", UserSourceStore.ValidateNewSource("city parcels", "https://x/t.parquet", existing));
+            Assert.Contains("already exists", UserSourceStore.ValidateNewSource("City  Parcels!", "https://x/t.parquet", existing));
+        }
+
+        [Fact]
         public void BuildProbeQuery_EscapesQuotes()
         {
             string query = UserSourceStore.BuildProbeQuery("https://x/it's.parquet");
