@@ -48,6 +48,7 @@ namespace DuckDBGeoparquet.Views
     {
         #region Commands
         public ICommand LoadDataCommand { get; private set; }
+        public ICommand RefreshReleaseCommand { get; private set; }
         public ICommand ShowThemeInfoCommand { get; private set; }
         public ICommand SetCustomExtentCommand { get; private set; }
         public ICommand BrowseMfcLocationCommand { get; private set; }

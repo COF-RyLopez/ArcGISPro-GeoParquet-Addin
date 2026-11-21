@@ -43,12 +43,12 @@ namespace DuckDBGeoparquet.Services
                 spatialFilter = $"WHERE {GeoParquetSql.BuildBboxOverlapPredicate(extent)}";
             }
 
-            string normalizedOutput = outputGeoJsonPath.Replace('\\', '/');
+            string normalizedOutput = GeoParquetSql.EscapeSqlLiteral(outputGeoJsonPath.Replace('\\', '/'));
             using var command = _connection.CreateCommand();
             command.CommandText = $@"
                 COPY (
                     SELECT id, geometry
-                    FROM read_parquet('{s3Path}', hive_partitioning=1)
+                    FROM read_parquet('{GeoParquetSql.EscapeSqlLiteral(s3Path)}', hive_partitioning=1)
                     {spatialFilter}
                     LIMIT {maxFeatures}
                 ) TO '{normalizedOutput}' WITH (FORMAT GDAL, DRIVER 'GeoJSON');
@@ -191,6 +191,7 @@ namespace DuckDBGeoparquet.Services
                 catch (Exception ex)
                 {
                     progress?.Report($"Error exporting {geomType}: {ex.Message}");
+                    throw;
                 }
             }
 
@@ -201,94 +202,21 @@ namespace DuckDBGeoparquet.Services
         {
             progress?.Report($"Exporting data for {layerName} to {Path.GetFileName(outputPath)}");
 
-            try
-            {
-                if (File.Exists(outputPath))
-                {
-                    await _layerManager.RemoveLayersUsingFileAsync(outputPath);
-                    
-                    await Task.Delay(50);
-                    
-                    for (int attempt = 1; attempt <= 2; attempt++)
-                    {
-                        try
-                        {
-                            File.Delete(outputPath);
-                            break;
-                        }
-                        catch (IOException) when (attempt < 2)
-                        {
-                            await Task.Delay(50);
-                        }
-                        catch (IOException) when (attempt == 2)
-                        {
-                            // Ignore, will use temp file fallback
-                        }
-                    }
-                }
-
-                using var command = _connection.CreateCommand();
-                
-                string actualOutputPath = outputPath;
-                bool useTempFile = File.Exists(outputPath);
-                
-                if (useTempFile)
-                {
-                    string directory = Path.GetDirectoryName(outputPath);
-                    string fileNameWithoutExt = Path.GetFileNameWithoutExtension(outputPath);
-                    string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-                    actualOutputPath = Path.Combine(directory, $"{fileNameWithoutExt}_{timestamp}.parquet");
-                }
-                
-                command.CommandText = GeoParquetSql.BuildCopyCommand(query, actualOutputPath, compression);
-                var copyStopwatch = Stopwatch.StartNew();
-                await command.ExecuteNonQueryAsync(cancellationToken);
-                copyStopwatch.Stop();
-                System.Diagnostics.Debug.WriteLine(
-                    $"[perf][export] copy layer=\"{layerName}\" output={DescribeOutputPathKind(actualOutputPath)} compression={GeoParquetSql.ValidateCompression(compression)} elapsed={FormatElapsed(copyStopwatch.Elapsed)}");
-                
-                if (useTempFile && File.Exists(actualOutputPath))
-                {
-                    for (int attempt = 1; attempt <= 3; attempt++)
-                    {
-                        try
-                        {
-                            if (File.Exists(outputPath))
-                            {
-                                File.Delete(outputPath);
-                            }
-                            File.Move(actualOutputPath, outputPath);
-                            break;
-                        }
-                        catch (IOException) when (attempt < 3)
-                        {
-                            await Task.Delay(attempt * 100);
-                        }
-                        catch (IOException) when (attempt == 3)
-                        {
-                            outputPath = actualOutputPath;
-                        }
-                    }
-                }
-                progress?.Report($"Successfully exported data for {layerName}.");
-                return outputPath;
-            }
-            catch (Exception ex)
-            {
-                progress?.Report($"Error exporting to GeoParquet for {layerName}: {ex.Message}");
-                throw;
-            }
+            if (File.Exists(outputPath))
+                throw new IOException($"Output already exists; create a new snapshot: {outputPath}");
+            using var command = _connection.CreateCommand();
+            command.CommandText = GeoParquetSql.BuildCopyCommand(query, outputPath, compression);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            progress?.Report($"Exported {layerName}.");
+            return outputPath;
         }
 
-        private static string GetDescriptiveGeometryType(string geomType) => geomType switch
+        private static string GetDescriptiveGeometryType(string type) => type switch
         {
-            "POINT" => "points",
-            "LINESTRING" => "lines",
-            "POLYGON" => "polygons",
-            "MULTIPOINT" => "multipoints",
-            "MULTILINESTRING" => "multilines",
-            "MULTIPOLYGON" => "multipolygons",
-            _ => geomType.ToLowerInvariant()
+            "POINT" => "points", "MULTIPOINT" => "multipoints",
+            "LINESTRING" => "lines", "MULTILINESTRING" => "multilines",
+            "POLYGON" => "polygons", "MULTIPOLYGON" => "multipolygons",
+            _ => type.ToLowerInvariant()
         };
 
         private static async Task<bool> CurrentTableHasColumn(DuckDBCommand command, string columnName, CancellationToken cancellationToken)
