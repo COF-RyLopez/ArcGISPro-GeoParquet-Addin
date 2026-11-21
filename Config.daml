@@ -16,6 +16,7 @@
 			<tabs>
 				<tab id="DuckDBGeoparquet_Tab" caption="Overture Maps" keytip="O">
 					<group refID="DuckDBGeoparquet_Group2" />
+					<group refID="DuckDBGeoparquet_Group_Sources" />
 				</tab>
 			</tabs>
 			<groups>
@@ -25,6 +26,9 @@
 					<button refID="DuckDBGeoparquet_Views_OvertureGeocoderDockpane_ShowButton" size="large" />
 					<button refID="DuckDBGeoparquet_Views_GersifyDockpane_ShowButton" size="large" />
 					<button refID="DuckDBGeoparquet_Views_MfcDockpane_ShowButton" size="large" />
+				</group>
+				<group id="DuckDBGeoparquet_Group_Sources" caption="Data Sources" appearsOnAddInTab="false" keytip="S">
+					<button refID="DuckDBGeoparquet_AddSourceButton" size="large" />
 				</group>
 			</groups>
 			<controls>
@@ -48,6 +52,11 @@
 					<tooltip heading="Create MFC">
                         Create an MFC from downloaded GeoParquet data
 						<disabledText>Unable to open MFC tool at this time</disabledText></tooltip>
+				</button>
+				<button id="DuckDBGeoparquet_AddSourceButton" caption="Add Data Source" className="DuckDBGeoparquet.Views.AddSourceButton" loadOnClick="true" smallImage="Images\AddInDesktop16.png" largeImage="Images\AddInDesktop32.png" keytip="A" extendedCaption="Add any GeoParquet URL as a data source">
+					<tooltip heading="Add GeoParquet Data Source">
+                        Save any http(s) or s3 GeoParquet URL as a reusable data source. Added sources appear under Custom Sources in the Overture Maps Data Loader.
+						<disabledText>Unable to open Add Data Source at this time</disabledText></tooltip>
 				</button>
 				<!-- Custom Extent Tool -->
 				<tool id="DuckDBGeoparquet_CustomExtentTool" className="DuckDBGeoparquet.Views.CustomExtentTool" caption="Draw Custom Extent" loadOnClick="true" smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool16.png" largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool32.png" condition="esri_mapping_mapPane" keytip="E">
