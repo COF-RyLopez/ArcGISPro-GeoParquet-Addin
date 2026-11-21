@@ -29,8 +29,8 @@ namespace DuckDBGeoparquet.Services
 
         public static string BuildBundledLoadSql(string extensionsPath)
         {
-            string spatial = SpatialPath(extensionsPath).Replace('\\', '/');
-            string httpfs = HttpfsPath(extensionsPath).Replace('\\', '/');
+            string spatial = GeoParquetSql.EscapeSqlLiteral(SpatialPath(extensionsPath).Replace('\\', '/'));
+            string httpfs = GeoParquetSql.EscapeSqlLiteral(HttpfsPath(extensionsPath).Replace('\\', '/'));
             return $"LOAD '{spatial}';\nLOAD '{httpfs}';";
         }
     }

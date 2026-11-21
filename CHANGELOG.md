@@ -13,6 +13,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 ### Changed
 - When bundled `spatial` and `httpfs` extensions are present, DuckDB never attempts a network `INSTALL`.
 - Blocked or offline S3/Overture reads show "Can't reach Overture S3. Check the proxy or network." instead of a raw DuckDB error.
+- Bumped DuckDB.NET.Data.Full from 1.5.3 to 1.5.6.1 (DuckDB engine v1.5.6; stays on the 1.5 line, not 2.0). CI and `Extensions/README.txt` now fetch bundled `spatial` and `httpfs` from `https://extensions.duckdb.org/v1.5.6/...`. Patch-line notes between 1.5.3 and 1.5.6 report no breaking changes to the add-in's SQL (`ST_*` spatial functions, `read_parquet`, `SET s3_region` / httpfs settings). The test project runs the same engine.
+- Bump the GERSify fallback Overture release from `2026-06-17.0` to `2026-10-21.0`, the newest folder in STAC (`https://stac.overturemaps.org/catalog.json`) and S3 (`s3://overturemaps-us-west-2/release/`). `2026-11-18.0` is still only on the proposed calendar and is not published yet.
 - **Overture Maps Schema v2 Support**: Updated to support Overture Maps schema v2 (releases 2026-09-23 and later)
   - Place `categories` field renamed to `taxonomy` with structured `primary`, `hierarchy`, and `alternates` fields
   - Added support for new `basic_category` field in Places

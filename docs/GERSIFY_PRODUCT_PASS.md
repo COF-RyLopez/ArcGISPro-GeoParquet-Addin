@@ -66,7 +66,7 @@ Standard bridge columns plus provenance extensions:
 | `source_geometry_policy` | `authoritative_local` | Local geometry remains authoritative |
 | `match_strategy` | `exact_address` | Acceptance strategy |
 | `match_score` | `92.4` | Score at acceptance time |
-| `overture_release` | `2026-06-17.0` | Overture release used for matching |
+| `overture_release` | `2026-10-21.0` | Overture release used for matching |
 | `source_layer` | layer name | Provenance back to map layer |
 | `linkage_tool` | `arcgis_pro_gersify` | Tool that produced the link |
 

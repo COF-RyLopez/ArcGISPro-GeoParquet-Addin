@@ -91,7 +91,7 @@ namespace DuckDBGeoparquet.Services
                             AND distance_m <= {proximityOnlyDistance}
                         )"
                 : string.Empty;
-            string bboxFilter = BuildOvertureBboxFilter(options.InputExtent, availableColumns);
+            string bboxFilter = BuildOvertureBboxFilter(options.InputExtent == null ? null : GeographicBounds.Expand(options.InputExtent, options.MaxDistanceMeters), availableColumns);
             string placeNameExpr = BuildFirstExistingExpression(
                 availableColumns,
                 ("names", "CAST(names.primary AS VARCHAR)"),
@@ -167,14 +167,16 @@ namespace DuckDBGeoparquet.Services
                         o.overture_name_norm,
                         o.overture_street_norm,
                         o.overture_address_norm,
-                        sqrt(
-                            pow((o.overture_longitude - u.longitude) * 111320.0 * cos(radians((o.overture_latitude + u.latitude) / 2.0)), 2) +
-                            pow((o.overture_latitude - u.latitude) * 110540.0, 2)
+                        ST_Distance_Spheroid(
+                            ST_Point(u.latitude, u.longitude)::POINT_2D,
+                            ST_Point(o.overture_latitude, o.overture_longitude)::POINT_2D
                         ) AS distance_m
                     FROM user_prepared u
                     JOIN overture_places o
-                      ON abs(o.overture_latitude - u.latitude) <= ({maxDistance} / 110540.0)
-                     AND abs(o.overture_longitude - u.longitude) <= ({maxDistance} / greatest(111320.0 * abs(cos(radians(u.latitude))), 1.0))
+                      ON abs(o.overture_latitude - u.latitude) <= ({maxDistance} / 110000.0)
+                     AND (abs(u.latitude) + ({maxDistance} / 110000.0) >= 89.9
+                          OR least(abs(o.overture_longitude - u.longitude), 360.0 - abs(o.overture_longitude - u.longitude))
+                             <= ({maxDistance} / greatest(110000.0 * cos(radians(least(89.9, abs(u.latitude) + ({maxDistance} / 110000.0)))), 0.001)))
                     WHERE (u.user_name_norm <> '' AND o.overture_name_norm <> '')
                        OR (u.user_street_norm <> '' AND o.overture_street_norm <> '')
                        OR (u.user_name_norm = '' AND u.user_street_norm <> '' AND o.overture_name_norm <> '')
@@ -303,7 +305,7 @@ namespace DuckDBGeoparquet.Services
             string addressThreshold = Format(options.AddressSimilarityThreshold);
             string scoreThreshold = Format(options.AcceptScoreThreshold);
             string weakLinkCeiling = Format(options.AcceptScoreThreshold + GersifyMapReviewSql.WeakLinkScoreBuffer);
-            string bboxFilter = BuildOvertureBboxFilter(options.InputExtent, availableColumns);
+            string bboxFilter = BuildOvertureBboxFilter(options.InputExtent == null ? null : GeographicBounds.Expand(options.InputExtent, options.MaxDistanceMeters), availableColumns);
             string numberExpr = BuildFirstExistingExpression(
                 availableColumns,
                 ("number", "CAST(number AS VARCHAR)"),
@@ -355,7 +357,7 @@ namespace DuckDBGeoparquet.Services
                         latitude,
                         NormalizeText(coalesce(address, '')) AS user_street_norm,
                         NormalizeText(trim(concat_ws(' ', coalesce(address, ''), coalesce(city, ''), coalesce(state, ''), coalesce(postcode, '')))) AS user_address_norm,
-                        regexp_extract(lower(coalesce(address, '')), '^\s*([0-9]+[a-z]?)', 1) AS user_number_norm,
+                        regexp_extract(lower(coalesce(address, '')), '^\s*([0-9]+(?:[a-z]|\s+[0-9]+/[0-9]+|-[0-9]+)?)(?:\s|$)', 1) AS user_number_norm,
                         left(regexp_replace(coalesce(postcode, ''), '[^0-9]', '', 'g'), 5) AS user_postcode_norm
                     FROM {UserInputTable}
                 ),
@@ -390,14 +392,16 @@ namespace DuckDBGeoparquet.Services
                         o.overture_address_norm,
                         o.overture_number_norm,
                         o.overture_postcode_norm,
-                        sqrt(
-                            pow((o.overture_longitude - u.longitude) * 111320.0 * cos(radians((o.overture_latitude + u.latitude) / 2.0)), 2) +
-                            pow((o.overture_latitude - u.latitude) * 110540.0, 2)
+                        ST_Distance_Spheroid(
+                            ST_Point(u.latitude, u.longitude)::POINT_2D,
+                            ST_Point(o.overture_latitude, o.overture_longitude)::POINT_2D
                         ) AS distance_m
                     FROM user_prepared u
                     JOIN overture_addresses o
-                      ON abs(o.overture_latitude - u.latitude) <= ({maxDistance} / 110540.0)
-                     AND abs(o.overture_longitude - u.longitude) <= ({maxDistance} / greatest(111320.0 * abs(cos(radians(u.latitude))), 1.0))
+                      ON abs(o.overture_latitude - u.latitude) <= ({maxDistance} / 110000.0)
+                     AND (abs(u.latitude) + ({maxDistance} / 110000.0) >= 89.9
+                          OR least(abs(o.overture_longitude - u.longitude), 360.0 - abs(o.overture_longitude - u.longitude))
+                             <= ({maxDistance} / greatest(110000.0 * cos(radians(least(89.9, abs(u.latitude) + ({maxDistance} / 110000.0)))), 0.001)))
                     WHERE u.user_street_norm <> ''
                       AND o.overture_street_norm <> ''
                 ),
@@ -429,6 +433,7 @@ namespace DuckDBGeoparquet.Services
                             AND overture_number_norm <> ''
                             AND user_number_norm = overture_number_norm
                         ) AS house_number_match,
+                        (user_street_norm = overture_street_norm) AS full_address_match,
                         (
                             user_postcode_norm = ''
                             OR overture_postcode_norm = ''
@@ -469,6 +474,7 @@ namespace DuckDBGeoparquet.Services
                         AND gers_match_score >= {scoreThreshold}
                         AND address_similarity >= {addressThreshold}
                         AND house_number_match
+                        AND full_address_match
                         AND postcode_compatible
                     ) AS accepted
                 FROM ranked
