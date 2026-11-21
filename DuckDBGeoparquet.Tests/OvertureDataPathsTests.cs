@@ -43,7 +43,7 @@ namespace DuckDBGeoparquet.Tests
             try
             {
                 string older = Directory.CreateDirectory(Path.Combine(dataDir, "2026-05-01.0")).FullName;
-                string newer = Directory.CreateDirectory(Path.Combine(dataDir, "2026-06-17.0")).FullName;
+                string newer = Directory.CreateDirectory(Path.Combine(dataDir, "2026-10-21.0")).FullName;
                 string oldest = Directory.CreateDirectory(Path.Combine(dataDir, "2026-04-01.0")).FullName;
 
                 foreach (var folder in new[] { older, newer, oldest })

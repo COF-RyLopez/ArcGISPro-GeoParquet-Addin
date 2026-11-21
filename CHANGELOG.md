@@ -13,6 +13,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Downloads and preview samples now fail with a clear discovery error instead of building `s3://.../release/latest/...` when no release can be resolved. The "release has been removed" message names the newest available folder.
 
 ### Changed
+- Bump the GERSify fallback Overture release from `2026-06-17.0` to `2026-10-21.0`, the newest folder in STAC (`https://stac.overturemaps.org/catalog.json`) and S3 (`s3://overturemaps-us-west-2/release/`). `2026-11-18.0` is still only on the proposed calendar and is not published yet.
 - **Overture Maps Schema v2 Support**: Updated to support Overture Maps schema v2 (releases 2026-09-23 and later)
   - Place `categories` field renamed to `taxonomy` with structured `primary`, `hierarchy`, and `alternates` fields
   - Added support for new `basic_category` field in Places
