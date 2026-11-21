@@ -200,6 +200,7 @@ namespace DuckDBGeoparquet.Views
         {
             System.Diagnostics.Debug.WriteLine("InitializeViewModelForRuntime executing...");
             _dataProcessor = new DataProcessor();
+            LoadAddinSettings();
 
             LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => !IsWorking && !_isPreviewSampling && !IsLoading && GetSelectedLeafItems().Count > 0);
             RefreshReleaseCommand = new RelayCommand(async () =>
@@ -303,6 +304,15 @@ namespace DuckDBGeoparquet.Views
                 // DuckDB init happens after UI is ready so a failure here
                 // does not prevent the user from seeing/selecting themes.
                 AddToLog("Async Initialization: Initializing DuckDB");
+                try
+                {
+                    var proxy = DuckDBManager.ResolveProxy(AddinSettingsStore.Load());
+                    AddToLog($"Async Initialization: {proxy.ToLogSafeDescription()}");
+                }
+                catch (Exception proxyEx)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Proxy description failed: {proxyEx.Message}");
+                }
                 await _dataProcessor.InitializeDuckDBAsync();
 
                 // Complete discovery before enabling downloads of a cached release.

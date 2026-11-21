@@ -1,4 +1,5 @@
 using DuckDB.NET.Data;
+using DuckDBGeoparquet.Models;
 using System;
 using System.IO;
 using System.Threading;
@@ -9,7 +10,8 @@ namespace DuckDBGeoparquet.Services
     /// <summary>
     /// Owns the DuckDB connection lifecycle for the add-in: opening the
     /// in-memory database, loading the spatial/httpfs extensions (bundled
-    /// first, network INSTALL as fallback), and applying session settings.
+    /// first, network INSTALL only when bundled files are absent), applying
+    /// httpfs proxy settings, and applying session settings.
     /// Extracted from DataProcessor (Phase 2c stage 2).
     /// </summary>
     public sealed class DuckDBManager : IDisposable
@@ -49,7 +51,10 @@ namespace DuckDBGeoparquet.Services
                 if (_connection.State != System.Data.ConnectionState.Open)
                     await _connection.OpenAsync();
 
-                // Get the various potential paths where extensions might be found
+                var settings = AddinSettingsStore.Load();
+                var proxy = ResolveProxy(settings);
+                await ApplyProxySettingsAsync(proxy, cancellationToken);
+
                 string addInFolder = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
                 string extensionsPath = Path.Combine(addInFolder, "Extensions");
 
@@ -64,15 +69,10 @@ namespace DuckDBGeoparquet.Services
                     // runtime. LOAD takes the explicit file path — setting
                     // extension_directory does not work here because DuckDB then
                     // expects a v<version>/<platform> subfolder structure.
-                    string spatialBundled = Path.Combine(extensionsPath, "spatial.duckdb_extension");
-                    string httpfsBundled = Path.Combine(extensionsPath, "httpfs.duckdb_extension");
-
-                    if (File.Exists(spatialBundled) && File.Exists(httpfsBundled))
+                    // When both bundled files are present, never attempt a network INSTALL.
+                    if (DuckDbExtensionPolicy.BundledExtensionsPresent(extensionsPath))
                     {
-                        command.CommandText = $@"
-                            LOAD '{GeoParquetSql.EscapeSqlLiteral(spatialBundled.Replace('\\', '/'))}';
-                            LOAD '{GeoParquetSql.EscapeSqlLiteral(httpfsBundled.Replace('\\', '/'))}';
-                        ";
+                        command.CommandText = DuckDbExtensionPolicy.BuildBundledLoadSql(extensionsPath);
                         await command.ExecuteNonQueryAsync(cancellationToken);
                         System.Diagnostics.Debug.WriteLine($"Loaded bundled DuckDB extensions from {extensionsPath}");
                     }
@@ -128,37 +128,90 @@ namespace DuckDBGeoparquet.Services
                         $"3. Current extension search path: {extensionsPath}", ex);
                 }
 
-                // Configure DuckDB settings for optimal performance.
-                // Batched into a single multi-statement execution to reduce round trips.
-                try
-                {
-                    int threads = Math.Max(1, Environment.ProcessorCount);
-                    string tempDir = Path.GetTempPath().Replace('\\', '/');
-                    command.CommandText = $@"
-                        SET s3_region='us-west-2';
-                        SET enable_http_metadata_cache=true;
-
-                        SET enable_progress_bar=true;
-
-                        SET memory_limit='2GB';
-                        SET temp_directory='{GeoParquetSql.EscapeSqlLiteral(tempDir)}';
-                        SET threads={threads};
-                    ";
-                    await command.ExecuteNonQueryAsync(cancellationToken);
-                    System.Diagnostics.Debug.WriteLine($"DuckDB settings configured successfully (threads={threads})");
-                }
-                catch (Exception settingsEx) when (!cancellationToken.IsCancellationRequested)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Warning: Could not set some DuckDB settings: {settingsEx.Message}");
-                    // Continue — these are optimizations, not required for functionality
-                }
-                cancellationToken.ThrowIfCancellationRequested();
+                // Extensions loaded successfully — mark as initialized so a retry
+                // after a settings failure doesn't re-open the connection.
                 IsInitialized = true;
+
+                await ApplySessionSettingsAsync(settings, proxy, cancellationToken);
             }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
                 throw new Exception($"Failed to initialize DuckDB: {ex.Message}", ex);
             }
+        }
+
+        /// <summary>
+        /// Re-applies httpfs proxy and memory settings after the user changes add-in settings.
+        /// </summary>
+        public Task ApplySessionSettingsAsync(CancellationToken cancellationToken = default)
+        {
+            if (!IsInitialized)
+                return Task.CompletedTask;
+
+            var settings = AddinSettingsStore.Load();
+            var proxy = ResolveProxy(settings);
+            return ApplySessionSettingsAsync(settings, proxy, cancellationToken);
+        }
+
+        private async Task ApplySessionSettingsAsync(
+            AddinSettings settings,
+            HttpProxySettings proxy,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                int threads = Math.Max(1, Environment.ProcessorCount);
+                string tempDir = Path.GetTempPath().Replace('\\', '/');
+                using var command = _connection.CreateCommand();
+                command.CommandText = HttpProxySettingsBuilder.BuildSessionSettingsSql(
+                    settings, proxy, threads, tempDir);
+                await command.ExecuteNonQueryAsync(cancellationToken);
+                System.Diagnostics.Debug.WriteLine(
+                    $"DuckDB settings configured successfully (threads={threads}, {proxy.ToLogSafeDescription()}, memory={settings.EffectiveMemoryLimit}/{settings.EffectiveMaxMemory})");
+            }
+            catch (Exception settingsEx)
+            {
+                System.Diagnostics.Debug.WriteLine($"Warning: Could not set some DuckDB settings: {proxy.RedactSecrets(settingsEx.Message)}");
+                // Continue — these are optimizations, not required for functionality
+            }
+        }
+
+        private async Task ApplyProxySettingsAsync(HttpProxySettings proxy, CancellationToken cancellationToken)
+        {
+            string sql = HttpProxySettingsBuilder.BuildDuckDbSetSql(proxy);
+            if (string.IsNullOrEmpty(sql))
+            {
+                System.Diagnostics.Debug.WriteLine("DuckDB httpfs proxy: none configured");
+                return;
+            }
+
+            try
+            {
+                using var command = _connection.CreateCommand();
+                command.CommandText = sql;
+                await command.ExecuteNonQueryAsync(cancellationToken);
+                System.Diagnostics.Debug.WriteLine($"DuckDB httpfs proxy applied: {proxy.ToLogSafeDescription()}");
+            }
+            catch (Exception ex)
+            {
+                // http_proxy may require httpfs to be loaded; session settings retry after LOAD.
+                System.Diagnostics.Debug.WriteLine($"DuckDB httpfs proxy not applied yet ({proxy.ToLogSafeDescription()}): {proxy.RedactSecrets(ex.Message)}");
+            }
+        }
+
+        internal static HttpProxySettings ResolveProxy(AddinSettings settings)
+        {
+            HttpProxySettings detected = null;
+            try
+            {
+                detected = SystemProxyDetector.DetectForS3();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"System proxy detection failed: {ex.Message}");
+            }
+
+            return HttpProxySettingsBuilder.Resolve(settings, detected);
         }
 
         public void Dispose()

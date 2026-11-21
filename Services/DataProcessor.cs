@@ -80,6 +80,9 @@ namespace DuckDBGeoparquet.Services
         public Task InitializeDuckDBAsync(CancellationToken cancellationToken = default)
             => _duckDb.InitializeAsync(cancellationToken);
 
+        public Task ApplySessionSettingsAsync(CancellationToken cancellationToken = default)
+            => _duckDb.ApplySessionSettingsAsync(cancellationToken);
+
         /// <summary>
         /// Exports a small GeoJSON sample of an Overture S3 dataset for the
         /// preview map — a cheap dry-run of a load. Uses the same bbox
@@ -200,9 +203,13 @@ namespace DuckDBGeoparquet.Services
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Query error: {ex.Message}");
-                progress?.Report(ReleaseValidator.IsMissingFileError(ex.Message)
-                    ? "ERROR: No files found at S3 path. The release may have been removed from Overture's S3 bucket."
-                    : $"ERROR: {ex.Message}");
+                string errorDetail = ex.Message;
+                if (ReleaseValidator.IsMissingFileError(errorDetail))
+                    progress?.Report("ERROR: No files found at S3 path. The release may have been removed from Overture's S3 bucket.");
+                else if (DuckDbNetworkErrors.IsNetworkOrProxyFailure(errorDetail))
+                    progress?.Report($"ERROR: {DuckDbNetworkErrors.OvertureS3UnreachableMessage}");
+                else
+                    progress?.Report($"ERROR: {errorDetail}");
                 throw;
             }
         }
@@ -401,7 +408,7 @@ namespace DuckDBGeoparquet.Services
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Error getting schema for {s3Path}: {ex.Message}");
-                throw new Exception($"Failed to get schema: {ex.Message}", ex);
+                throw new Exception($"Failed to get schema: {DuckDbNetworkErrors.ToUserFacingMessage(ex.Message)}", ex);
             }
         }
 
