@@ -158,11 +158,17 @@ namespace DuckDBGeoparquet.Views
                     PreviewBridge?.ShowExtent(extent.XMin, extent.YMin, extent.XMax, extent.YMax);
 
                 string trimmedRelease = LatestRelease?.Trim() ?? "";
-                await new OvertureReleaseDiscovery().EnsureAvailableAsync(trimmedRelease, token);
+                if (selectedLeafItems.Exists(i => i.UserSource == null))
+                    await new OvertureReleaseDiscovery().EnsureAvailableAsync(trimmedRelease, token);
                 int rendered = 0;
                 foreach (var item in selectedLeafItems)
                 {
                     token.ThrowIfCancellationRequested();
+                    if (item.UserSource != null)
+                    {
+                        AddToLog($"Preview: {item.DisplayName} is a custom source — preview sampling is Overture-only for now.");
+                        continue;
+                    }
                     string s3Path = trimmedRelease.Length > 0
                         ? $"{S3_BASE_PATH}/{trimmedRelease}/theme={item.ParentThemeForS3}/type={item.ActualType}/*.parquet"
                         : $"{S3_BASE_PATH}/theme={item.ParentThemeForS3}/type={item.ActualType}/*.parquet";

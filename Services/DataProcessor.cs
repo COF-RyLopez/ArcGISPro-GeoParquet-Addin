@@ -101,7 +101,8 @@ namespace DuckDBGeoparquet.Services
             string actualS3Type = null,
             IProgress<string> progress = null,
             CancellationToken cancellationToken = default,
-            bool includeSourceProvenance = false, bool preserveSource = false, IReadOnlyList<string> files = null)
+            bool includeSourceProvenance = false, bool preserveSource = false, IReadOnlyList<string> files = null,
+            string geometryColumn = null, bool geometryIsWkb = false)
         {
             try
             {
@@ -123,13 +124,13 @@ namespace DuckDBGeoparquet.Services
                 List<string> columnNames;
                 try
                 {
-                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken, files);
+                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken, files, geometryColumn, geometryIsWkb);
                 }
                 catch (Exception ex) when (!cancellationToken.IsCancellationRequested && !UsesUnionByName(readParquetOptions))
                 {
                     System.Diagnostics.Debug.WriteLine($"[{typeLabel}] Fast schema read failed, retrying with union_by_name: {ex.Message}");
                     readParquetOptions = S3Ingester.S3ReadParquetOptions;
-                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken, files);
+                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken, files, geometryColumn, geometryIsWkb);
                 }
                 schemaStopwatch.Stop();
                 System.Diagnostics.Debug.WriteLine(
@@ -150,7 +151,7 @@ namespace DuckDBGeoparquet.Services
                 // Build query with optional column projection and geometry clipping.
                 // The pure builder trims heavy structs/arrays when safe and applies
                 // the bbox pushdown + ST_Intersects filter and clipping (see S3Ingester).
-                string query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions, preserveSource: preserveSource, files: files);
+                string query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions, preserveSource: preserveSource, files: files, geometryColumn: geometryColumn, geometryIsWkb: geometryIsWkb);
 
                 // Clear command text before setting new query to ensure clean state
                 command.CommandText = string.Empty;
@@ -166,8 +167,8 @@ namespace DuckDBGeoparquet.Services
                 {
                     System.Diagnostics.Debug.WriteLine($"[{typeLabel}] Fast data load failed, retrying with union_by_name: {ex.Message}");
                     readParquetOptions = S3Ingester.S3ReadParquetOptions;
-                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken, files);
-                    query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions, preserveSource: preserveSource, files: files);
+                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken, files, geometryColumn, geometryIsWkb);
+                    query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions, preserveSource: preserveSource, files: files, geometryColumn: geometryColumn, geometryIsWkb: geometryIsWkb);
                     command.CommandText = query;
                     await command.ExecuteNonQueryAsync(cancellationToken);
                 }
@@ -208,10 +209,11 @@ namespace DuckDBGeoparquet.Services
 
         public Task<DatasetLoadResult> PrepareDatasetAsync(string sourceUri, string theme, string type,
             string layerName, string stagingPath, ExtentBounds extent, string compression,
-            bool displayProvenance, IProgress<string> progress, CancellationToken token, IReadOnlyList<string> files = null)
+            bool displayProvenance, IProgress<string> progress, CancellationToken token, IReadOnlyList<string> files = null,
+            string geometryColumn = null, bool geometryIsWkb = false)
             => _duckDb.RunAsync(async () =>
             {
-                bool hasRows = files?.Count == 0 ? false : await IngestFileCoreAsync(sourceUri, extent, type, progress, token, false, true, files);
+                bool hasRows = files?.Count == 0 ? false : await IngestFileCoreAsync(sourceUri, extent, type, progress, token, false, true, files, geometryColumn, geometryIsWkb);
                 if (!hasRows)
                     return new DatasetLoadResult { Theme = theme, Type = type, SourceUri = sourceUri, SourceAssets = files?.ToList() ?? new(), Status = DatasetLoadStatus.Empty };
 
@@ -268,11 +270,14 @@ namespace DuckDBGeoparquet.Services
             string s3Path,
             string typeLabel,
             string readParquetOptions,
-            CancellationToken cancellationToken, IReadOnlyList<string> files = null)
+            CancellationToken cancellationToken, IReadOnlyList<string> files = null,
+            string geometryColumn = null, bool geometryIsWkb = false)
         {
+            string readExpression = S3Ingester.WrapGeometryColumn(
+                S3Ingester.BuildReadParquetExpression(s3Path, readParquetOptions, files), geometryColumn, geometryIsWkb);
             string schemaQuery = $@"
-                    CREATE OR REPLACE TABLE temp AS 
-                    SELECT * FROM {S3Ingester.BuildReadParquetExpression(s3Path, readParquetOptions, files)} LIMIT 0;
+                    CREATE OR REPLACE TABLE temp AS
+                    SELECT * FROM {readExpression} LIMIT 0;
                 ";
             command.CommandText = schemaQuery;
             System.Diagnostics.Debug.WriteLine($"Executing schema query for {typeLabel} ({DescribeReadOptions(readParquetOptions)})...");
@@ -341,6 +346,30 @@ namespace DuckDBGeoparquet.Services
                 throw new Exception($"Failed to get preview data: {ex.Message}", ex);
             }
         }
+
+        /// <summary>
+        /// Validates a user-supplied GeoParquet URL by reading its schema and
+        /// detecting the geometry column. Throws with a user-readable message
+        /// when the URL is unreadable or has no usable geometry.
+        /// </summary>
+        public Task<UserDataSource> ProbeUserSourceAsync(string name, string url, CancellationToken token = default)
+            => _duckDb.RunAsync(async () =>
+            {
+                using var command = _connection.CreateCommand();
+                command.CommandText = UserSourceStore.BuildProbeQuery(url);
+                var columns = new List<(string Name, string Type)>();
+                using (var reader = await command.ExecuteReaderAsync(token))
+                {
+                    while (await reader.ReadAsync())
+                        columns.Add((reader.GetString(0), reader.GetString(1)));
+                }
+                var (geometryColumn, isWkb) = UserSourceStore.PickGeometryColumn(columns);
+                if (geometryColumn == null)
+                    throw new InvalidOperationException(
+                        "No geometry column found. The URL must point at GeoParquet data " +
+                        "(a GEOMETRY column, or WKB bytes named geometry/geom/wkb_geometry/shape).");
+                return new UserDataSource { Name = name, Url = url, GeometryColumn = geometryColumn, GeometryIsWkb = isWkb };
+            }, token);
 
         /// <summary>
         /// Gets the schema information for a GeoParquet file from S3.

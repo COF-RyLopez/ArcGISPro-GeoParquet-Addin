@@ -46,6 +46,59 @@ namespace DuckDBGeoparquet.Tests
 
         }
 
+        [Fact]
+        public void CustomSource_RenamedGeometryColumn_ProbesAndLoads()
+        {
+            Spatial();
+            string file = Path.Combine(_folder, "custom.parquet");
+            Sql($"COPY (SELECT 'a' id, ST_Point(-119, 36) geom) TO '{GeoParquetSql.EscapeSqlLiteral(file)}' (FORMAT 'PARQUET')");
+
+            // Probe: DESCRIBE finds the GEOMETRY-typed column under its own name.
+            var columns = new System.Collections.Generic.List<(string, string)>();
+            using (var command = _connection.CreateCommand())
+            {
+                command.CommandText = UserSourceStore.BuildProbeQuery(file);
+                using var reader = command.ExecuteReader();
+                while (reader.Read()) columns.Add((reader.GetString(0), reader.GetString(1)));
+            }
+            var (geometryColumn, isWkb) = UserSourceStore.PickGeometryColumn(columns);
+            Assert.Equal("geom", geometryColumn);
+            Assert.False(isWkb);
+
+            // Load: the wrapped query surfaces it as "geometry" and spatially filters.
+            Sql(S3Ingester.BuildLoadQuery(file, "my_source", new[] { "id", "geometry" },
+                new ExtentBounds(-120, 35, -118, 37), preserveSource: true, geometryColumn: geometryColumn, geometryIsWkb: isWkb));
+            Assert.Equal("POINT (-119 36)", Scalar("SELECT ST_AsText(geometry) FROM current_table"));
+
+            // Outside the extent nothing loads.
+            Sql(S3Ingester.BuildLoadQuery(file, "my_source", new[] { "id", "geometry" },
+                new ExtentBounds(0, 0, 1, 1), preserveSource: true, geometryColumn: geometryColumn, geometryIsWkb: isWkb));
+            Assert.Equal(0L, Convert.ToInt64(Scalar("SELECT count(*) FROM current_table")));
+        }
+
+        [Fact]
+        public void CustomSource_WkbGeometryColumn_ProbesAndLoads()
+        {
+            Spatial();
+            string file = Path.Combine(_folder, "wkb.parquet");
+            Sql($"COPY (SELECT 'a' id, ST_AsWKB(ST_Point(-119, 36))::BLOB wkb_geometry) TO '{GeoParquetSql.EscapeSqlLiteral(file)}' (FORMAT 'PARQUET')");
+
+            var columns = new System.Collections.Generic.List<(string, string)>();
+            using (var command = _connection.CreateCommand())
+            {
+                command.CommandText = UserSourceStore.BuildProbeQuery(file);
+                using var reader = command.ExecuteReader();
+                while (reader.Read()) columns.Add((reader.GetString(0), reader.GetString(1)));
+            }
+            var (geometryColumn, isWkb) = UserSourceStore.PickGeometryColumn(columns);
+            Assert.Equal("wkb_geometry", geometryColumn);
+            Assert.True(isWkb);
+
+            Sql(S3Ingester.BuildLoadQuery(file, "my_source", new[] { "id", "geometry" },
+                new ExtentBounds(-120, 35, -118, 37), preserveSource: true, geometryColumn: geometryColumn, geometryIsWkb: isWkb));
+            Assert.Equal("POINT (-119 36)", Scalar("SELECT ST_AsText(geometry) FROM current_table"));
+        }
+
         [Theory]
         [InlineData("12 Main St", 0.0001, 1)]
         [InlineData("12 1/2 Main St", 0, 0)]

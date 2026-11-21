@@ -110,6 +110,31 @@
                                 </ItemsControl>
                             </StackPanel>
                         </Border>
+                        <!-- Custom GeoParquet sources (any URL) -->
+                        <Expander Style="{DynamicResource Esri_Expander}" Header="Custom Sources (any GeoParquet URL)" Margin="0,0,0,12">
+                            <StackPanel Margin="4,6,4,2">
+                                <TextBlock Text="Save any online GeoParquet file or partition (https:// or s3://). It is validated when added, and saved sources appear in the theme list above."
+                                           TextWrapping="Wrap" Margin="0,0,0,6" Opacity="0.8"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition/>
+                                        <RowDefinition/>
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="Name" VerticalAlignment="Center" Margin="0,0,6,4"/>
+                                    <TextBox Grid.Column="1" Margin="0,0,0,4" Text="{Binding NewSourceName, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <TextBlock Grid.Row="1" Text="URL" VerticalAlignment="Center" Margin="0,0,6,4"/>
+                                    <TextBox Grid.Row="1" Grid.Column="1" Margin="0,0,0,4" Text="{Binding NewSourceUrl, UpdateSourceTrigger=PropertyChanged}"/>
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button Content="Add Source" Command="{Binding AddUserSourceCommand}" Style="{DynamicResource Esri_Button}" Margin="0,0,6,0"/>
+                                    <Button Content="Remove Selected" Command="{Binding RemoveUserSourceCommand}" Style="{DynamicResource Esri_Button}"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Expander>
                         <!-- 2. Select Area -->
                         <TextBlock Text="2. Select Area" Margin="0,0,0,4"/>
                         <Border 
