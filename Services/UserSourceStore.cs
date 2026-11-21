@@ -119,6 +119,26 @@ namespace DuckDBGeoparquet.Services
             return result.Length == 0 ? "custom_source" : result;
         }
 
+        /// <summary>
+        /// Shared add-time validation (wizard panel and ribbon dialog):
+        /// returns an error message, or null when the candidate is addable.
+        /// </summary>
+        public static string ValidateNewSource(string name, string url, IEnumerable<UserDataSource> existing)
+        {
+            name = name?.Trim();
+            url = url?.Trim();
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(url))
+                return "Enter a name and a URL.";
+            if (!IsSupportedUrl(url))
+                return "Enter an http(s):// or s3:// URL pointing at GeoParquet data.";
+            string typeKey = SanitizeTypeName(name);
+            if (existing != null && existing.Any(s =>
+                    s.Name.Equals(name, StringComparison.OrdinalIgnoreCase) ||
+                    SanitizeTypeName(s.Name) == typeKey))
+                return $"A custom source named '{name}' already exists.";
+            return null;
+        }
+
         /// <summary>Basic shape check before probing: http(s) or s3 URL.</summary>
         public static bool IsSupportedUrl(string url)
         {

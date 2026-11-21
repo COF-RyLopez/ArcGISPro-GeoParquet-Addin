@@ -157,6 +157,7 @@ namespace DuckDBGeoparquet.Views
         // Public parameterless constructor for XAML Designer
         public WizardDockpaneViewModel()
         {
+            Instance = this;
             // This constructor is ONLY for the XAML designer.
             // It should initialize properties to provide a design-time preview.
             // Do NOT call full runtime initialization logic (like InitializeAsync).
