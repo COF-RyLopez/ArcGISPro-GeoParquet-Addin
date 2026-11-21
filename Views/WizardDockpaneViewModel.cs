@@ -200,6 +200,7 @@ namespace DuckDBGeoparquet.Views
         {
             System.Diagnostics.Debug.WriteLine("InitializeViewModelForRuntime executing...");
             _dataProcessor = new DataProcessor();
+            LoadAddinSettings();
 
             LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => !IsWorking && !_isPreviewSampling && !IsLoading && GetSelectedLeafItems().Count > 0);
             RefreshReleaseCommand = new RelayCommand(async () =>
@@ -211,7 +212,10 @@ namespace DuckDBGeoparquet.Views
             RefreshCacheInfoCommand = new RelayCommand(() => RefreshCacheInfo());
             ClearCacheCommand = new RelayCommand(() => ClearCache(), () => ArcGISProVersionHelper.IsPro36OrLater);
             ShowThemeInfoCommand = new RelayCommand(() => ShowThemeInfo(), () => SelectedItemForPreview != null);
-            SetCustomExtentCommand = new RelayCommand(() => SetCustomExtent(), () => UseCustomExtent);            BrowseDataLocationCommand = new RelayCommand(() => BrowseDataLocation());            ApplyManualReleaseCommand = new RelayCommand(() => ApplyManualRelease(), () => !string.IsNullOrWhiteSpace(ManualReleaseText));
+            SetCustomExtentCommand = new RelayCommand(() => SetCustomExtent(), () => UseCustomExtent);
+            BrowseDataLocationCommand = new RelayCommand(() => BrowseDataLocation());
+            BrowseFileGeodatabaseCommand = new RelayCommand(() => BrowseFileGeodatabase(), () => SaveToFileGeodatabase);
+            ApplyManualReleaseCommand = new RelayCommand(() => ApplyManualRelease(), () => !string.IsNullOrWhiteSpace(ManualReleaseText));
             NextCommand = new RelayCommand(async () => {
                 if (SelectedTabIndex == (int)WizardTab.SelectData) {
                     if (GetSelectedLeafItems().Count == 0) {
@@ -303,6 +307,15 @@ namespace DuckDBGeoparquet.Views
                 // DuckDB init happens after UI is ready so a failure here
                 // does not prevent the user from seeing/selecting themes.
                 AddToLog("Async Initialization: Initializing DuckDB");
+                try
+                {
+                    var proxy = DuckDBManager.ResolveProxy(AddinSettingsStore.Load());
+                    AddToLog($"Async Initialization: {proxy.ToLogSafeDescription()}");
+                }
+                catch (Exception proxyEx)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Proxy description failed: {proxyEx.Message}");
+                }
                 await _dataProcessor.InitializeDuckDBAsync();
 
                 // Complete discovery before enabling downloads of a cached release.
@@ -620,6 +633,23 @@ namespace DuckDBGeoparquet.Views
                 string adoptedPath = await Task.Run(() => snapshot.Commit());
                 _dataProcessor.LayerManager.RelocatePendingLayers(snapshot.StagingPath, adoptedPath);
                 _lastLoadedDataPath = adoptedPath;
+                if (SaveToFileGeodatabase)
+                {
+                    StatusText = "Exporting GeoParquet to file geodatabase...";
+                    AddToLog("Exporting GeoParquet files to a file geodatabase with conversion.ExportFeatures...");
+                    var fgdbSettings = new FileGeodatabaseOutputSettings
+                    {
+                        Enabled = true,
+                        GeodatabasePath = FileGeodatabasePath,
+                        OverwriteExisting = true
+                    };
+                    var fgdbResult = await _dataProcessor.ExportPendingLayersToFileGeodatabaseAsync(
+                        fgdbSettings, adoptedPath, progress, token);
+                    if (fgdbResult?.FailedCount > 0)
+                        AddToLog($"File geodatabase export had {fgdbResult.FailedCount} failure(s). GeoParquet files were kept for those layers.");
+                    else if (fgdbResult?.ExportedCount > 0)
+                        AddToLog($"File geodatabase export wrote {fgdbResult.ExportedCount} feature class(es) to {fgdbResult.GeodatabasePath}.");
+                }
                 StatusText = "Preparing ArcGIS layers...";
                 int expectedLayers = _dataProcessor.LayerManager.GetPendingLayers().Count;
                 await _dataProcessor.AddAllLayersToMapAsync(progress, targetMap, adoptedPath);
@@ -737,6 +767,8 @@ namespace DuckDBGeoparquet.Views
                 LatestRelease ?? "latest"
             );
             AddSourceProvenanceFields = false;
+            SaveToFileGeodatabase = false;
+            FileGeodatabasePath = null;
 
             // Reset MFC options
             IsSharedMfc = true;
