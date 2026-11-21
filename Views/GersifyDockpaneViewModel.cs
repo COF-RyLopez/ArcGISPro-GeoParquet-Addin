@@ -746,7 +746,7 @@ namespace DuckDBGeoparquet.Views
 
             using var featureClass = layer.GetFeatureClass();
             int previewRowCount = 0;
-            using var cursor = featureClass.Search(new QueryFilter(), false);
+            using var cursor = layer.Search(new QueryFilter());
             while (cursor.MoveNext() && previewRowCount < 25)
             {
                 previewRowCount++;
@@ -841,8 +841,7 @@ namespace DuckDBGeoparquet.Views
             try
             {
                 string releaseFolder = ResolveReleaseFolder();
-                _lastOvertureRelease = Path.GetFileName(
-                    releaseFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                _lastOvertureRelease = DownloadSnapshot.ReadRelease(releaseFolder);
                 if (string.IsNullOrWhiteSpace(releaseFolder) || !Directory.Exists(releaseFolder))
                 {
                     StatusText = "Choose a loaded Overture release folder.";
@@ -1248,7 +1247,7 @@ namespace DuckDBGeoparquet.Views
                     .Select(field => field.Name)
                     .Where(name => !string.IsNullOrWhiteSpace(name))
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                using var cursor = featureClass.Search(new QueryFilter(), false);
+                using var cursor = layer.Search(new QueryFilter());
                 while (cursor.MoveNext())
                 {
                     using var row = cursor.Current;
@@ -1315,7 +1314,7 @@ namespace DuckDBGeoparquet.Views
                 var sb = new StringBuilder();
                 sb.AppendLine("gers_id");
                 using var featureClass = layer.GetFeatureClass();
-                using var cursor = featureClass.Search(new QueryFilter(), false);
+                using var cursor = layer.Search(new QueryFilter());
                 while (cursor.MoveNext())
                 {
                     using var row = cursor.Current;
@@ -1712,7 +1711,7 @@ namespace DuckDBGeoparquet.Views
         private string ResolveReleaseFolder()
         {
             if (!string.IsNullOrWhiteSpace(ReleaseFolderPath))
-                return ReleaseFolderPath;
+                return DownloadSnapshot.ResolveCurrent(ReleaseFolderPath) ?? ReleaseFolderPath;
 
             ReleaseFolderPath = ProjectDataLocator.GetNewestLoadedReleaseFolder();
             return ReleaseFolderPath;
