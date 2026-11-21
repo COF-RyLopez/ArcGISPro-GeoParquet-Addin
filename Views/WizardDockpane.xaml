@@ -31,6 +31,8 @@
         <!-- Header with title and version info -->
         <StackPanel Grid.Row="0" Margin="16,12,16,0">
             <TextBlock Text="{Binding LatestRelease, StringFormat='Overture Release: {0}'}" Style="{DynamicResource Esri_TextBlockH2}" Foreground="{DynamicResource Esri_TextCaptionActiveBrush}"/>
+            <TextBlock Text="{Binding ReleaseStatusText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+            <Button Content="Refresh releases" Command="{Binding RefreshReleaseCommand}" Style="{DynamicResource Esri_Button}" HorizontalAlignment="Left" Margin="0,4,0,0"/>
             <!-- Manual release entry shown only if online fetch fails -->
             <Border Visibility="{Binding IsManualReleaseEntryVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                     BorderBrush="{DynamicResource Esri_BorderBrush}"
@@ -44,7 +46,7 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Manual release (offline):" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBlock Grid.Column="0" Text="Release date:" VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <TextBox Grid.Column="1" Text="{Binding ManualReleaseText, UpdateSourceTrigger=PropertyChanged}" />
                     <Button Grid.Column="2" Content="Apply" Command="{Binding ApplyManualReleaseCommand}" Style="{DynamicResource Esri_Button}" Margin="8,0,0,0"/>
                 </Grid>
@@ -108,6 +110,31 @@
                                 </ItemsControl>
                             </StackPanel>
                         </Border>
+                        <!-- Custom GeoParquet sources (any URL) -->
+                        <Expander Style="{DynamicResource Esri_Expander}" Header="Custom Sources (any GeoParquet URL)" Margin="0,0,0,12">
+                            <StackPanel Margin="4,6,4,2">
+                                <TextBlock Text="Save any online GeoParquet file or partition (https:// or s3://). It is validated when added, and saved sources appear in the theme list above."
+                                           TextWrapping="Wrap" Margin="0,0,0,6" Opacity="0.8"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition/>
+                                        <RowDefinition/>
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="Name" VerticalAlignment="Center" Margin="0,0,6,4"/>
+                                    <TextBox Grid.Column="1" Margin="0,0,0,4" Text="{Binding NewSourceName, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <TextBlock Grid.Row="1" Text="URL" VerticalAlignment="Center" Margin="0,0,6,4"/>
+                                    <TextBox Grid.Row="1" Grid.Column="1" Margin="0,0,0,4" Text="{Binding NewSourceUrl, UpdateSourceTrigger=PropertyChanged}"/>
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button Content="Add Source" Command="{Binding AddUserSourceCommand}" Style="{DynamicResource Esri_Button}" Margin="0,0,6,0"/>
+                                    <Button Content="Remove Selected" Command="{Binding RemoveUserSourceCommand}" Style="{DynamicResource Esri_Button}"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Expander>
                         <!-- 2. Select Area -->
                         <TextBlock Text="2. Select Area" Margin="0,0,0,4"/>
                         <Border 
@@ -130,7 +157,7 @@
                             </StackPanel>
                         </Border>
                         <!-- 3. Output Settings -->
-                        <TextBlock Text="3. Output Settings"  Margin="0,0,0,4"/>
+                        <Expander Header="3. Save options" IsExpanded="False" Margin="0,0,0,12">
                         <Border 
                                 BorderBrush="{DynamicResource Esri_BorderBrush}"
                                 BorderThickness="1"
@@ -139,7 +166,7 @@
                                 Margin="0,0,0,12">
                             <StackPanel>
                                 <TextBlock TextWrapping="Wrap" Margin="0,4,0,4">
-                                    Files are saved as GeoParquet by default. Optionally export those files into a file geodatabase after download. After loading data, you can also create a Multifile Feature Connection (MFC) from the Create MFC tool.
+                                    Each download creates a saved snapshot with whole features for your area. Display layers open in your map; original attributes and geometry remain in the snapshot’s _source folder. Optionally export the downloaded files into a file geodatabase below.
                                 </TextBlock>
                                 <Grid Margin="0,4,0,4">
                                     <Grid.ColumnDefinitions>
@@ -187,15 +214,16 @@
                                            Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
                                     Leave blank to create Overture.gdb under the data output folder.
                                 </TextBlock>
-                                <CheckBox Content="Add source edit fields (slower)"
+                                <CheckBox Content="Show source and edit links in the map layer"
                                           IsChecked="{Binding AddSourceProvenanceFields, Mode=TwoWay}"
                                           Margin="0,8,0,0"
-                                          ToolTip="Adds source dataset, record ID, update time, and edit/provider URL fields from Overture's nested sources array. This can significantly extend download time. The raw nested sources array is still excluded from exported GeoParquet."/>
+                                          ToolTip="Adds convenient source dataset, record ID, update time, and provider links to the display layer. The complete source records are always preserved in the snapshot."/>
                                 <TextBlock TextWrapping="Wrap" Margin="18,2,0,0" Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
-                                    Reads nested Overture source records and can significantly extend download time. Use when you need per-feature edit or source links in the downloaded layer.
+                                    Optional display fields for inspecting where a feature came from and reviewing it with its source provider.
                                 </TextBlock>
                             </StackPanel>
                         </Border>
+                        </Expander>
                         <!-- 4. Choose Map Purpose -->
                         <TextBlock Text="4. Choose Map Purpose" Margin="0,0,0,4"/>
                         <Border 
@@ -350,26 +378,7 @@
                                 <Border  BorderBrush="{DynamicResource Esri_BorderBrush}" BorderThickness="1" Padding="8" Margin="0,0,0,8">
                                     <TextBlock Text="{Binding ThemeDescription}" TextWrapping="Wrap"/>
                                 </Border>
-                                <Grid Margin="0,0,0,4">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <Image Grid.Column="0" Width="16" Height="16" Margin="0,0,8,0" Source="{StaticResource OvertureIcon}" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="1" Text="Estimated Features:" Margin="0,0,4,0"/>
-                                    <TextBlock Grid.Column="2" Text="{Binding EstimatedFeatures}"/>
-                                </Grid>
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <Image Grid.Column="0" Width="16" Height="16" Margin="0,0,8,0" Source="{StaticResource OvertureIcon}" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="1" Text="Estimated Size:" Margin="0,0,4,0"/>
-                                    <TextBlock Grid.Column="2" Text="{Binding EstimatedSize}"/>
-                                </Grid>
+                                <TextBlock Text="Start with a neighborhood or study area. Add to map downloads your selection; Preview lets you inspect a small sample first." TextWrapping="Wrap"/>
                             </StackPanel>
                         </Border>
                         
@@ -528,6 +537,7 @@
                 <Button Grid.Column="0" Content="Back" Command="{Binding BackCommand}" Style="{DynamicResource Esri_Button}" Width="100" Visibility="{Binding IsBackButtonVisible, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                 <StackPanel Grid.Column="2" Orientation="Horizontal">
                     <Button Content="Cancel" Command="{Binding CancelCommand}" Style="{DynamicResource Esri_Button}" Margin="0,0,8,0" Width="100"/>
+                    <Button Content="Add to map" Command="{Binding LoadDataCommand}" Style="{DynamicResource Esri_Button}" Margin="0,0,8,0" Width="100" Visibility="{Binding IsSelectDataTab, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                     <Button Content="{Binding NextButtonText}" Command="{Binding NextCommand}" Style="{DynamicResource Esri_Button}" Width="100" Visibility="{Binding IsNextButtonVisible, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                 </StackPanel>
             </Grid>

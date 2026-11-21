@@ -93,8 +93,14 @@ namespace DuckDBGeoparquet.Services
         /// </summary>
         public async Task<GeocodeCandidate> GeocodeBestAsync(string query, CancellationToken cancellationToken = default)
         {
-            var results = await SearchAsync(query, null, 1, cancellationToken);
-            return results.FirstOrDefault();
+            var decision = await GeocodeForReviewAsync(query, cancellationToken);
+            return decision.Match;
+        }
+
+        public async Task<GeocodeDecision> GeocodeForReviewAsync(string query, CancellationToken cancellationToken = default)
+        {
+            var candidates = await SearchAsync(query, null, 100, cancellationToken);
+            return GeocodeAcceptance.Evaluate(query, candidates);
         }
 
         public bool IsLocatorReady()
@@ -188,26 +194,11 @@ namespace DuckDBGeoparquet.Services
                 return null;
             }
 
-            var releaseDirectories = new DirectoryInfo(dataRoot)
-                .GetDirectories()
-                .OrderByDescending(d => d.LastWriteTimeUtc)
-                .ToList();
-
-            foreach (var releaseDir in releaseDirectories)
-            {
-                string typeDir = Path.Combine(releaseDir.FullName, dataType);
-                if (!Directory.Exists(typeDir))
-                {
-                    continue;
-                }
-
-                if (Directory.EnumerateFiles(typeDir, "*.parquet", SearchOption.TopDirectoryOnly).Any())
-                {
-                    return Path.Combine(typeDir, "*.parquet");
-                }
-            }
-
-            return null;
+            string folder = OvertureDataPaths.ResolveNewestReleaseFolder(dataRoot);
+            if (folder == null) return null;
+            string typeDir = Path.Combine(folder, dataType);
+            return Directory.Exists(typeDir) && Directory.EnumerateFiles(typeDir, "*.parquet").Any()
+                ? Path.Combine(typeDir, "*.parquet") : null;
         }
 
         private static string ResolveDataRootPath()

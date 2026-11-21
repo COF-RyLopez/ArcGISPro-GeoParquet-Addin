@@ -21,6 +21,9 @@ namespace DuckDBGeoparquet.Views
 
         public SelectableThemeItem Parent { get; internal set; } // Property to hold the parent
 
+        /// <summary>Set when this leaf is a user-saved custom GeoParquet source.</summary>
+        public Models.UserDataSource UserSource { get; set; }
+
         public string DisplayName
         {
             get => _displayName;

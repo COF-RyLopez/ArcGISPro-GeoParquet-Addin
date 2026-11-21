@@ -41,6 +41,8 @@ namespace DuckDBGeoparquet.Services
 
         // Add a class-level field to store the current extent
         private ExtentBounds _currentExtent;
+        private long _lastRowCount;
+        private List<string> _lastSourceColumns;
 
 
         private string _outputSessionSuffix = DateTime.UtcNow.ToString("yyyyMMddHHmmssfff", CultureInfo.InvariantCulture);
@@ -91,15 +93,16 @@ namespace DuckDBGeoparquet.Services
         /// <param name="extent">Optional WGS84 extent filter.</param>
         /// <param name="maxFeatures">Row cap for the sample.</param>
         public Task ExportPreviewSampleAsync(string s3Path, string outputGeoJsonPath, ExtentBounds extent = null, int maxFeatures = 2000, CancellationToken cancellationToken = default)
-            => ParquetExporter.ExportPreviewSampleAsync(s3Path, outputGeoJsonPath, extent, maxFeatures, cancellationToken);
+            => _duckDb.RunAsync(() => ParquetExporter.ExportPreviewSampleAsync(s3Path, outputGeoJsonPath, extent, maxFeatures, cancellationToken), cancellationToken);
 
-        public async Task<bool> IngestFileAsync(
+        private async Task<bool> IngestFileCoreAsync(
             string s3Path,
             ExtentBounds extent = null,
             string actualS3Type = null,
             IProgress<string> progress = null,
             CancellationToken cancellationToken = default,
-            bool includeSourceProvenance = false)
+            bool includeSourceProvenance = false, bool preserveSource = false, IReadOnlyList<string> files = null,
+            string geometryColumn = null, bool geometryIsWkb = false)
         {
             try
             {
@@ -107,17 +110,6 @@ namespace DuckDBGeoparquet.Services
 
                 // Store the extent for later use in CreateFeatureLayerAsync
                 _currentExtent = extent;
-
-                // Enable ArcGIS Pro 3.5 overwrite capabilities to handle file conflicts gracefully
-                await QueuedTask.Run(() => {
-                    try {
-                        Geoprocessing.MakeEnvironmentArray(overwriteoutput: true);
-                        System.Diagnostics.Debug.WriteLine("Set geoprocessing environment to allow overwriting outputs");
-                    }
-                    catch (Exception ex) {
-                        System.Diagnostics.Debug.WriteLine($"Warning: Could not set geoprocessing environment: {ex.Message}");
-                    }
-                });
 
                 progress?.Report($"Reading schema from S3...");
 
@@ -132,13 +124,13 @@ namespace DuckDBGeoparquet.Services
                 List<string> columnNames;
                 try
                 {
-                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken);
+                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken, files, geometryColumn, geometryIsWkb);
                 }
-                catch (Exception ex) when (!UsesUnionByName(readParquetOptions))
+                catch (Exception ex) when (!cancellationToken.IsCancellationRequested && !UsesUnionByName(readParquetOptions))
                 {
                     System.Diagnostics.Debug.WriteLine($"[{typeLabel}] Fast schema read failed, retrying with union_by_name: {ex.Message}");
                     readParquetOptions = S3Ingester.S3ReadParquetOptions;
-                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken);
+                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken, files, geometryColumn, geometryIsWkb);
                 }
                 schemaStopwatch.Stop();
                 System.Diagnostics.Debug.WriteLine(
@@ -159,7 +151,7 @@ namespace DuckDBGeoparquet.Services
                 // Build query with optional column projection and geometry clipping.
                 // The pure builder trims heavy structs/arrays when safe and applies
                 // the bbox pushdown + ST_Intersects filter and clipping (see S3Ingester).
-                string query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions);
+                string query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions, preserveSource: preserveSource, files: files, geometryColumn: geometryColumn, geometryIsWkb: geometryIsWkb);
 
                 // Clear command text before setting new query to ensure clean state
                 command.CommandText = string.Empty;
@@ -171,12 +163,12 @@ namespace DuckDBGeoparquet.Services
                 {
                     await command.ExecuteNonQueryAsync(cancellationToken);
                 }
-                catch (Exception ex) when (!UsesUnionByName(readParquetOptions))
+                catch (Exception ex) when (!cancellationToken.IsCancellationRequested && !UsesUnionByName(readParquetOptions))
                 {
                     System.Diagnostics.Debug.WriteLine($"[{typeLabel}] Fast data load failed, retrying with union_by_name: {ex.Message}");
                     readParquetOptions = S3Ingester.S3ReadParquetOptions;
-                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken);
-                    query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions);
+                    columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken, files, geometryColumn, geometryIsWkb);
+                    query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions, preserveSource: preserveSource, files: files, geometryColumn: geometryColumn, geometryIsWkb: geometryIsWkb);
                     command.CommandText = query;
                     await command.ExecuteNonQueryAsync(cancellationToken);
                 }
@@ -187,6 +179,8 @@ namespace DuckDBGeoparquet.Services
                 var rowCountStopwatch = Stopwatch.StartNew();
                 command.CommandText = "SELECT COUNT(*) FROM current_table";
                 var count = await command.ExecuteScalarAsync(cancellationToken);
+                _lastRowCount = Convert.ToInt64(count);
+                _lastSourceColumns = columnNames;
                 rowCountStopwatch.Stop();
                 progress?.Report($"Successfully loaded {count:N0} rows from S3");
                 System.Diagnostics.Debug.WriteLine($"[{typeLabel}] Loaded {count} rows");
@@ -206,20 +200,45 @@ namespace DuckDBGeoparquet.Services
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Query error: {ex.Message}");
-                
-                string errorDetail = ex.Message;
-                if (ReleaseValidator.IsMissingFileError(errorDetail))
-                {
-                    progress?.Report($"ERROR: No files found at S3 path. The release may have been removed from Overture's S3 bucket.");
-                }
-                else
-                {
-                    progress?.Report($"ERROR: {errorDetail}");
-                }
-                
-                return false;
+                progress?.Report(ReleaseValidator.IsMissingFileError(ex.Message)
+                    ? "ERROR: No files found at S3 path. The release may have been removed from Overture's S3 bucket."
+                    : $"ERROR: {ex.Message}");
+                throw;
             }
         }
+
+        public Task<DatasetLoadResult> PrepareDatasetAsync(string sourceUri, string theme, string type,
+            string layerName, string stagingPath, ExtentBounds extent, string compression,
+            bool displayProvenance, IProgress<string> progress, CancellationToken token, IReadOnlyList<string> files = null,
+            string geometryColumn = null, bool geometryIsWkb = false)
+            => _duckDb.RunAsync(async () =>
+            {
+                bool hasRows = files?.Count == 0 ? false : await IngestFileCoreAsync(sourceUri, extent, type, progress, token, false, true, files, geometryColumn, geometryIsWkb);
+                if (!hasRows)
+                    return new DatasetLoadResult { Theme = theme, Type = type, SourceUri = sourceUri, SourceAssets = files?.ToList() ?? new(), Status = DatasetLoadStatus.Empty };
+
+                string archive = Path.Combine(stagingPath, "_source", type + ".geoparquet");
+                Directory.CreateDirectory(Path.GetDirectoryName(archive));
+                using var command = _connection.CreateCommand();
+                progress?.Report($"Preserving original {type} geometry, attributes and provenance...");
+                command.CommandText = GeoParquetSql.BuildCopyCommand(
+                    $"SELECT * EXCLUDE({GeoParquetSql.InternalGeometryTypeColumn}) FROM current_table", archive, compression);
+                await command.ExecuteNonQueryAsync(token);
+                var displayColumns = _lastSourceColumns.Append(GeoParquetSql.InternalGeometryTypeColumn).ToList();
+                command.CommandText = S3Ingester.BuildDisplayTableCommand(type, displayColumns, displayProvenance);
+                await command.ExecuteNonQueryAsync(token);
+                await ParquetExporter.CreateFeatureLayersAsync(layerName, progress, theme, type,
+                    stagingPath, _outputSessionSuffix, compression, token);
+                var displayFiles = LayerManager.GetPendingLayers().Where(l => l.ActualType == type)
+                    .Select(l => Path.GetRelativePath(stagingPath, l.FilePath)).ToList();
+                if (displayFiles.Count == 0) throw new InvalidOperationException($"No usable geometry was exported for {type}.");
+                return new DatasetLoadResult
+                {
+                    Theme = theme, Type = type, Status = DatasetLoadStatus.Completed,
+                    RowCount = _lastRowCount, SourceUri = sourceUri, SourceAssets = files?.ToList() ?? new(),
+                    SourceFile = Path.GetRelativePath(stagingPath, archive), DisplayFiles = displayFiles
+                };
+            }, token);
 
         private static bool ShouldUseFastS3Read(string s3Path)
         {
@@ -251,11 +270,14 @@ namespace DuckDBGeoparquet.Services
             string s3Path,
             string typeLabel,
             string readParquetOptions,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken, IReadOnlyList<string> files = null,
+            string geometryColumn = null, bool geometryIsWkb = false)
         {
+            string readExpression = S3Ingester.WrapGeometryColumn(
+                S3Ingester.BuildReadParquetExpression(s3Path, readParquetOptions, files), geometryColumn, geometryIsWkb);
             string schemaQuery = $@"
-                    CREATE OR REPLACE TABLE temp AS 
-                    SELECT * FROM {S3Ingester.BuildReadParquetExpression(s3Path, readParquetOptions)} LIMIT 0;
+                    CREATE OR REPLACE TABLE temp AS
+                    SELECT * FROM {readExpression} LIMIT 0;
                 ";
             command.CommandText = schemaQuery;
             System.Diagnostics.Debug.WriteLine($"Executing schema query for {typeLabel} ({DescribeReadOptions(readParquetOptions)})...");
@@ -306,7 +328,9 @@ namespace DuckDBGeoparquet.Services
             return null;
         }
 
-        public async Task<DataTable> GetPreviewDataAsync(CancellationToken cancellationToken = default)
+        public Task<DataTable> GetPreviewDataAsync(CancellationToken cancellationToken = default) => _duckDb.RunAsync(() => GetPreviewDataAsyncCore(cancellationToken));
+
+        private async Task<DataTable> GetPreviewDataAsyncCore(CancellationToken cancellationToken = default)
         {
             try
             {
@@ -324,13 +348,39 @@ namespace DuckDBGeoparquet.Services
         }
 
         /// <summary>
+        /// Validates a user-supplied GeoParquet URL by reading its schema and
+        /// detecting the geometry column. Throws with a user-readable message
+        /// when the URL is unreadable or has no usable geometry.
+        /// </summary>
+        public Task<UserDataSource> ProbeUserSourceAsync(string name, string url, CancellationToken token = default)
+            => _duckDb.RunAsync(async () =>
+            {
+                using var command = _connection.CreateCommand();
+                command.CommandText = UserSourceStore.BuildProbeQuery(url);
+                var columns = new List<(string Name, string Type)>();
+                using (var reader = await command.ExecuteReaderAsync(token))
+                {
+                    while (await reader.ReadAsync())
+                        columns.Add((reader.GetString(0), reader.GetString(1)));
+                }
+                var (geometryColumn, isWkb) = UserSourceStore.PickGeometryColumn(columns);
+                if (geometryColumn == null)
+                    throw new InvalidOperationException(
+                        "No geometry column found. The URL must point at GeoParquet data " +
+                        "(a GEOMETRY column, or WKB bytes named geometry/geom/wkb_geometry/shape).");
+                return new UserDataSource { Name = name, Url = url, GeometryColumn = geometryColumn, GeometryIsWkb = isWkb };
+            }, token);
+
+        /// <summary>
         /// Gets the schema information for a GeoParquet file from S3.
         /// Returns a list of dictionaries with column_name and column_type.
         /// This method follows the Overture Maps schema conventions.
         /// </summary>
         /// <param name="s3Path">S3 path to the GeoParquet file(s)</param>
         /// <returns>List of dictionaries containing column_name and column_type</returns>
-        public async Task<List<Dictionary<string, object>>> GetSchemaAsync(string s3Path, CancellationToken cancellationToken = default)
+        public Task<List<Dictionary<string, object>>> GetSchemaAsync(string s3Path, CancellationToken cancellationToken = default) => _duckDb.RunAsync(() => GetSchemaAsyncCore(s3Path, cancellationToken));
+
+        private async Task<List<Dictionary<string, object>>> GetSchemaAsyncCore(string s3Path, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -343,7 +393,7 @@ namespace DuckDBGeoparquet.Services
                 await command.ExecuteNonQueryAsync(cancellationToken);
 
                 // Use ExecuteQueryAsync to get schema results
-                var results = await ExecuteQueryAsync("DESCRIBE temp_schema");
+                var results = await ExecuteQueryAsyncCore("DESCRIBE temp_schema");
                 
                 System.Diagnostics.Debug.WriteLine($"Schema discovery: Found {results.Count} columns for {s3Path}");
                 return results;
@@ -369,7 +419,7 @@ namespace DuckDBGeoparquet.Services
         /// <param name="actualS3Type">The specific S3 data type (e.g., 'building', 'building_part').</param>
         /// <param name="dataOutputPathRoot">The root directory where data for the current release is stored (e.g., C:\...\ProjectHome\OvertureProAddinData\Data\{ReleaseVersion})</param>
         public Task CreateFeatureLayerAsync(string layerNameBase, IProgress<string> progress, string parentS3Theme, string actualS3Type, string dataOutputPathRoot, string compression = "ZSTD", CancellationToken cancellationToken = default)
-            => ParquetExporter.CreateFeatureLayersAsync(layerNameBase, progress, parentS3Theme, actualS3Type, dataOutputPathRoot, _outputSessionSuffix, compression, cancellationToken);
+            => _duckDb.RunAsync(() => ParquetExporter.CreateFeatureLayersAsync(layerNameBase, progress, parentS3Theme, actualS3Type, dataOutputPathRoot, _outputSessionSuffix, compression, cancellationToken), cancellationToken);
 
         /// <summary>
         /// After GeoParquet files are written, optionally export them into a file
@@ -394,8 +444,8 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Adds all pending layers to the map in optimal stacking order (polygons → lines → points)
         /// </summary>
-        public Task AddAllLayersToMapAsync(IProgress<string> progress = null)
-            => LayerManager.AddAllLayersToMapAsync(SelectedMapStyle, SelectedCartographicProfile, progress);
+        public Task AddAllLayersToMapAsync(IProgress<string> progress = null, Map targetMap = null, string snapshotPath = null)
+            => LayerManager.AddAllLayersToMapAsync(SelectedMapStyle, SelectedCartographicProfile, progress, targetMap, snapshotPath);
 
 /// <summary>
         /// Clears any pending layers (useful for cleanup or reset operations)
@@ -408,7 +458,9 @@ namespace DuckDBGeoparquet.Services
         /// <summary>
         /// Executes a SQL query against the current DuckDB connection and returns results
         /// </summary>
-        public async Task<List<Dictionary<string, object>>> ExecuteQueryAsync(string sqlQuery)
+        public Task<List<Dictionary<string, object>>> ExecuteQueryAsync(string sqlQuery) => _duckDb.RunAsync(() => ExecuteQueryAsyncCore(sqlQuery));
+
+        private async Task<List<Dictionary<string, object>>> ExecuteQueryAsyncCore(string sqlQuery)
         {
             var results = new List<Dictionary<string, object>>();
 
@@ -442,10 +494,10 @@ namespace DuckDBGeoparquet.Services
         // Geocoding moved to GeocoderEngine (Phase 2c stage 2); these
         // wrappers preserve the public API for existing callers.
         public Task<List<GeocodeCandidate>> SearchAddressCandidatesAsync(string parquetGlobPath, string normalizedQuery, ExtentBounds extent = null, int maxResults = 25, CancellationToken cancellationToken = default)
-            => _geocoder.SearchAddressCandidatesAsync(parquetGlobPath, normalizedQuery, extent, maxResults, cancellationToken);
+            => _duckDb.RunAsync(() => _geocoder.SearchAddressCandidatesAsync(parquetGlobPath, normalizedQuery, extent, maxResults, cancellationToken), cancellationToken);
 
         public Task<List<GeocodeCandidate>> SearchPlaceCandidatesAsync(string parquetGlobPath, string normalizedQuery, ExtentBounds extent = null, int maxResults = 25, CancellationToken cancellationToken = default)
-            => _geocoder.SearchPlaceCandidatesAsync(parquetGlobPath, normalizedQuery, extent, maxResults, cancellationToken);
+            => _duckDb.RunAsync(() => _geocoder.SearchPlaceCandidatesAsync(parquetGlobPath, normalizedQuery, extent, maxResults, cancellationToken), cancellationToken);
 
         public void Dispose()
         {

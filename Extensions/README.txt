@@ -12,8 +12,10 @@ blocked this file"). Bundling the extensions in this folder fixes that: they
 then load from the add-in's own install folder and no runtime download is
 needed.
 
-The extension version MUST match the DuckDB.NET.Data.Full package version in
-DuckDBGeoparquet.csproj (currently 1.5.3).
+The extension version MUST match the DuckDB engine version shipped by
+DuckDB.NET.Data.Full in DuckDBGeoparquet.csproj. That package is currently
+1.5.6.1, which is built on DuckDB v1.5.6 — so these files come from the
+v1.5.6 extension repository, not v1.5.6.1.
 
 CI does this automatically
 ---------------------------
@@ -24,20 +26,22 @@ below for local builds.
 OPTION 1: Copy from your local DuckDB cache (fastest)
 -----------------------------------------------------
 If the add-in ever ran on your machine, DuckDB already downloaded the files:
-  %USERPROFILE%\.duckdb\extensions\v1.5.3\windows_amd64\spatial.duckdb_extension
-  %USERPROFILE%\.duckdb\extensions\v1.5.3\windows_amd64\httpfs.duckdb_extension
+  %USERPROFILE%\.duckdb\extensions\v1.5.6\windows_amd64\spatial.duckdb_extension
+  %USERPROFILE%\.duckdb\extensions\v1.5.6\windows_amd64\httpfs.duckdb_extension
 Copy both files directly into this Extensions folder (no subfolders).
 
 OPTION 2: Direct download
 -------------------------
-  https://extensions.duckdb.org/v1.5.3/windows_amd64/spatial.duckdb_extension.gz
-  https://extensions.duckdb.org/v1.5.3/windows_amd64/httpfs.duckdb_extension.gz
+  https://extensions.duckdb.org/v1.5.6/windows_amd64/spatial.duckdb_extension.gz
+  https://extensions.duckdb.org/v1.5.6/windows_amd64/httpfs.duckdb_extension.gz
 Un-gzip each file and place the resulting .duckdb_extension files directly in
 this folder.
 
 CRITICAL
 --------
-1. Version must match the DuckDB.NET package (1.5.3 today; update on upgrade)
+1. Version must match the DuckDB engine (v1.5.6 today; DuckDB.NET.Data.Full
+   1.5.6.1). Update both on upgrade. Do not use the NuGet patch suffix in
+   the extensions.duckdb.org URL.
 2. Names must be exactly spatial.duckdb_extension and httpfs.duckdb_extension
 3. Files go DIRECTLY in this Extensions folder (no version/platform subfolders)
 4. The csproj packages Extensions\*.duckdb_extension into the .esriAddInX
