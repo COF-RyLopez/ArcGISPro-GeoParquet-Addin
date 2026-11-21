@@ -154,6 +154,12 @@
                                         <TextBlock Text="{Binding CustomExtentDisplay}"  TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
                                     </StackPanel>
                                 </Border>
+                                <TextBlock Text="Attribute filter (optional):" Margin="0,10,0,2"/>
+                                <TextBox Text="{Binding AttributeFilter, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="SQL WHERE condition applied to downloads and previews, e.g. subtype = 'road' AND class IN ('motorway', 'primary'). Statements, subqueries, and file-reading functions are rejected."/>
+                                <TextBlock TextWrapping="Wrap" Margin="0,2,0,0" Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+                                    SQL condition on the data's columns, e.g. subtype = 'road'. Applies to every selected type; a column missing from a type fails that type's download.
+                                </TextBlock>
                             </StackPanel>
                         </Border>
                         <!-- 3. Output Settings -->

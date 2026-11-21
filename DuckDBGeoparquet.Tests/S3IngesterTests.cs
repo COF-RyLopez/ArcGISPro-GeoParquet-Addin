@@ -16,6 +16,44 @@ namespace DuckDBGeoparquet.Tests
         }
 
         [Fact]
+        public void BuildLoadQuery_WithExtentAndAttributeFilter_AppendsFilterToWhere()
+        {
+            var sql = S3Ingester.BuildLoadQuery("roads.parquet", "segment",
+                new[] { "id", "geometry", "bbox" }, new ExtentBounds(1, 2, 3, 4),
+                attributeFilter: "subtype = 'road'");
+            Assert.Contains("ST_Intersects(geometry,", sql);
+            Assert.Contains("AND (subtype = 'road')", sql);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_NoExtent_AttributeFilterBecomesWhere()
+        {
+            var sql = S3Ingester.BuildLoadQuery("roads.parquet", "segment",
+                new[] { "id", "geometry" }, extent: null,
+                attributeFilter: "WHERE subtype = 'road'");
+            Assert.Contains("WHERE (subtype = 'road')", sql);
+            Assert.DoesNotContain("ST_Intersects", sql);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_ClippedPath_CarriesAttributeFilter()
+        {
+            var sql = S3Ingester.BuildLoadQuery("roads.parquet", "water",
+                new[] { "id", "geometry", "bbox" }, new ExtentBounds(1, 2, 3, 4),
+                clipGeometry: true, attributeFilter: "subtype = 'ocean'");
+            Assert.Contains("ST_Intersection(", sql);
+            Assert.Contains("AND (subtype = 'ocean')", sql);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_InvalidAttributeFilter_Throws()
+        {
+            Assert.Throws<System.ArgumentException>(() => S3Ingester.BuildLoadQuery(
+                "roads.parquet", "segment", new[] { "id", "geometry" },
+                new ExtentBounds(1, 2, 3, 4), attributeFilter: "1=1; DROP TABLE x"));
+        }
+
+        [Fact]
         public void BuildColumnProjection_RetainsAllColumns_WhenTypeHasExclusionsButNonePresent()
         {
             // "building" only drops "sources"; a file without it keeps every

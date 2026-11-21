@@ -95,8 +95,8 @@ namespace DuckDBGeoparquet.Services
         /// <param name="outputGeoJsonPath">Destination .geojson file path.</param>
         /// <param name="extent">Optional WGS84 extent filter.</param>
         /// <param name="maxFeatures">Row cap for the sample.</param>
-        public Task ExportPreviewSampleAsync(string s3Path, string outputGeoJsonPath, ExtentBounds extent = null, int maxFeatures = 2000, CancellationToken cancellationToken = default)
-            => _duckDb.RunAsync(() => ParquetExporter.ExportPreviewSampleAsync(s3Path, outputGeoJsonPath, extent, maxFeatures, cancellationToken), cancellationToken);
+        public Task ExportPreviewSampleAsync(string s3Path, string outputGeoJsonPath, ExtentBounds extent = null, int maxFeatures = 2000, CancellationToken cancellationToken = default, string attributeFilter = null)
+            => _duckDb.RunAsync(() => ParquetExporter.ExportPreviewSampleAsync(s3Path, outputGeoJsonPath, extent, maxFeatures, cancellationToken, attributeFilter), cancellationToken);
 
         private async Task<bool> IngestFileCoreAsync(
             string s3Path,
@@ -105,7 +105,7 @@ namespace DuckDBGeoparquet.Services
             IProgress<string> progress = null,
             CancellationToken cancellationToken = default,
             bool includeSourceProvenance = false, bool preserveSource = false, IReadOnlyList<string> files = null,
-            string geometryColumn = null, bool geometryIsWkb = false)
+            string geometryColumn = null, bool geometryIsWkb = false, string attributeFilter = null)
         {
             try
             {
@@ -154,7 +154,7 @@ namespace DuckDBGeoparquet.Services
                 // Build query with optional column projection and geometry clipping.
                 // The pure builder trims heavy structs/arrays when safe and applies
                 // the bbox pushdown + ST_Intersects filter and clipping (see S3Ingester).
-                string query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions, preserveSource: preserveSource, files: files, geometryColumn: geometryColumn, geometryIsWkb: geometryIsWkb);
+                string query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions, preserveSource: preserveSource, files: files, geometryColumn: geometryColumn, geometryIsWkb: geometryIsWkb, attributeFilter: attributeFilter);
 
                 // Clear command text before setting new query to ensure clean state
                 command.CommandText = string.Empty;
@@ -171,7 +171,7 @@ namespace DuckDBGeoparquet.Services
                     System.Diagnostics.Debug.WriteLine($"[{typeLabel}] Fast data load failed, retrying with union_by_name: {ex.Message}");
                     readParquetOptions = S3Ingester.S3ReadParquetOptions;
                     columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken, files, geometryColumn, geometryIsWkb);
-                    query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions, preserveSource: preserveSource, files: files, geometryColumn: geometryColumn, geometryIsWkb: geometryIsWkb);
+                    query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions, preserveSource: preserveSource, files: files, geometryColumn: geometryColumn, geometryIsWkb: geometryIsWkb, attributeFilter: attributeFilter);
                     command.CommandText = query;
                     await command.ExecuteNonQueryAsync(cancellationToken);
                 }
@@ -217,10 +217,11 @@ namespace DuckDBGeoparquet.Services
         public Task<DatasetLoadResult> PrepareDatasetAsync(string sourceUri, string theme, string type,
             string layerName, string stagingPath, ExtentBounds extent, string compression,
             bool displayProvenance, IProgress<string> progress, CancellationToken token, IReadOnlyList<string> files = null,
-            string geometryColumn = null, bool geometryIsWkb = false, string geoParquetVersion = null)
+            string geometryColumn = null, bool geometryIsWkb = false, string geoParquetVersion = null,
+            string attributeFilter = null)
             => _duckDb.RunAsync(async () =>
             {
-                bool hasRows = files?.Count == 0 ? false : await IngestFileCoreAsync(sourceUri, extent, type, progress, token, false, true, files, geometryColumn, geometryIsWkb);
+                bool hasRows = files?.Count == 0 ? false : await IngestFileCoreAsync(sourceUri, extent, type, progress, token, false, true, files, geometryColumn, geometryIsWkb, attributeFilter);
                 if (!hasRows)
                     return new DatasetLoadResult { Theme = theme, Type = type, SourceUri = sourceUri, SourceAssets = files?.ToList() ?? new(), Status = DatasetLoadStatus.Empty };
 

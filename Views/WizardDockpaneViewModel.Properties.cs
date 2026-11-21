@@ -213,6 +213,16 @@ namespace DuckDBGeoparquet.Views
             }
         }
 
+        private string _attributeFilter = "";
+        /// <summary>Optional WHERE-clause fragment applied to downloads and
+        /// previews. Validated by GeoParquetSql.ValidateAttributeFilter before
+        /// any query runs.</summary>
+        public string AttributeFilter
+        {
+            get => _attributeFilter;
+            set => SetProperty(ref _attributeFilter, value);
+        }
+
         private bool _useCustomExtent = false;
         public bool UseCustomExtent
         {

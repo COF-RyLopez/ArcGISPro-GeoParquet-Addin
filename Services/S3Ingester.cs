@@ -96,11 +96,15 @@ namespace DuckDBGeoparquet.Services
             string readParquetOptions = null,
             bool clipGeometry = false,
             bool preserveSource = false, IReadOnlyList<string> files = null,
-            string geometryColumn = null, bool geometryIsWkb = false)
+            string geometryColumn = null, bool geometryIsWkb = false, string attributeFilter = null)
         {
             var projectedColumns = preserveSource ? null : BuildColumnProjection(actualS3Type, columnNames);
             string readParquet = WrapGeometryColumn(
                 BuildReadParquetExpression(s3Path, readParquetOptions, files), geometryColumn, geometryIsWkb);
+
+            // Validated-or-throw: the UI reports validation errors before any
+            // query is built, so this is the trust-boundary backstop.
+            string attributePredicate = GeoParquetSql.BuildAttributeFilterPredicate(attributeFilter);
 
             string spatialFilter = "";
             string extentPolygon = "";
@@ -112,6 +116,12 @@ namespace DuckDBGeoparquet.Services
                 // actually intersects the extent are kept — prevents data extending beyond the frame.
                 spatialFilter = $@"
                         WHERE {(columnNames?.Any(c => c.Equals(BboxColumn, StringComparison.OrdinalIgnoreCase)) == true ? GeoParquetSql.BuildBboxOverlapPredicate(extent) + " AND " : "")}ST_Intersects(geometry, {extentPolygon})";
+                if (attributePredicate != null)
+                    spatialFilter += $" AND {attributePredicate}";
+            }
+            else if (attributePredicate != null)
+            {
+                spatialFilter = $"WHERE {attributePredicate}";
             }
 
             // Determine which columns to project (if any) while always retaining geometry

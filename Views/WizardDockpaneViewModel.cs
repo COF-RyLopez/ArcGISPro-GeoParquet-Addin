@@ -551,6 +551,9 @@ namespace DuckDBGeoparquet.Views
                 string release = LatestRelease?.Trim();
                 string compression = SelectedCompression;
                 bool provenance = AddSourceProvenanceFields;
+                string attributeFilter = GeoParquetSql.NormalizeAttributeFilter(AttributeFilter);
+                string filterError = GeoParquetSql.ValidateAttributeFilter(attributeFilter);
+                if (filterError != null) throw new InvalidOperationException(filterError);
                 string dataDirectory = Path.GetFullPath(DataOutputPath);
                 var targetView = MapView.Active;
                 var targetMap = targetView?.Map;
@@ -606,7 +609,8 @@ namespace DuckDBGeoparquet.Views
                         var result = await _dataProcessor.PrepareDatasetAsync(uri, item.ParentThemeForS3,
                             item.ActualType, layerName,
                             snapshot.StagingPath, bounds, compression, provenance, progress, token, files,
-                            customSource?.GeometryColumn, customSource?.GeometryIsWkb ?? false, SelectedGeoParquetCopyVersion);
+                            customSource?.GeometryColumn, customSource?.GeometryIsWkb ?? false, SelectedGeoParquetCopyVersion,
+                            attributeFilter);
                         snapshot.Manifest.Datasets.Add(result);
                         AddToLog(result.Status == DatasetLoadStatus.Empty
                             ? $"{item.DisplayName}: no features in this area."
