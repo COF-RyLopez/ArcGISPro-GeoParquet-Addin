@@ -53,6 +53,7 @@ namespace DuckDBGeoparquet.Views
         public ICommand SetCustomExtentCommand { get; private set; }
         public ICommand BrowseMfcLocationCommand { get; private set; }
         public ICommand BrowseDataLocationCommand { get; private set; }
+        public ICommand BrowseFileGeodatabaseCommand { get; private set; }
         public ICommand BrowseCustomDataFolderCommand { get; private set; }
         public ICommand CreateMfcCommand { get; private set; }
         public ICommand GoToCreateMfcTabCommand { get; private set; }

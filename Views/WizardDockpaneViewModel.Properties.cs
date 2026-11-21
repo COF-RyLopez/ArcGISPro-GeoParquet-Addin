@@ -343,6 +343,24 @@ namespace DuckDBGeoparquet.Views
             set => SetProperty(ref _addSourceProvenanceFields, value);
         }
 
+        private bool _saveToFileGeodatabase;
+        public bool SaveToFileGeodatabase
+        {
+            get => _saveToFileGeodatabase;
+            set
+            {
+                if (SetProperty(ref _saveToFileGeodatabase, value))
+                    (BrowseFileGeodatabaseCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            }
+        }
+
+        private string _fileGeodatabasePath;
+        public string FileGeodatabasePath
+        {
+            get => _fileGeodatabasePath;
+            set => SetProperty(ref _fileGeodatabasePath, value);
+        }
+
         // Available compression options for binding
         public List<string> CompressionOptions => new List<string> { "ZSTD", "SNAPPY", "GZIP" };
 

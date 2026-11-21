@@ -112,8 +112,8 @@ namespace DuckDBGeoparquet.Services
                     {
                         try
                         {
-                            if (!File.Exists(info.FilePath)) throw new FileNotFoundException("Saved layer is missing.", info.FilePath);
-                            var layer = LayerFactory.Instance.CreateLayer(new Uri(info.FilePath), group, -1, info.LayerName);
+                            if (!FileGeodatabaseOutput.LayerSourceExists(info.FilePath)) throw new FileNotFoundException("Saved layer is missing.", info.FilePath);
+                            var layer = LayerFactory.Instance.CreateLayer(new Uri(Path.GetFullPath(info.FilePath)), group, -1, info.LayerName);
                             if (layer == null) throw new InvalidOperationException("ArcGIS could not open this GeoParquet file.");
                             LastAddedLayerCount++;
                             if (layer is FeatureLayer featureLayer)
@@ -335,9 +335,10 @@ namespace DuckDBGeoparquet.Services
                     }
                 }
             }
-            catch (ArgumentException ex) when (ex.Message.Contains("domain") || ex.Message.Contains("Domain") || ex.Message.Contains("not supported"))
+            catch (ArgumentException ex) when (FileGeodatabaseOutput.ShouldSkipParquetDomainLimitation(
+                layerInfo?.IsFileGeodatabase == true, layerInfo?.FilePath, ex?.Message))
             {
-                System.Diagnostics.Debug.WriteLine($"Info: Skipping layer settings for {featureLayer.Name} (domain access not supported for Parquet in Pro 3.5): {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Info: Skipping layer settings for {featureLayer.Name} (domain access not supported for Parquet): {ex.Message}");
             }
             catch (Exception ex)
             {

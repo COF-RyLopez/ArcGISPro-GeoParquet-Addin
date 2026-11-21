@@ -28,5 +28,24 @@ namespace DuckDBGeoparquet.Tests
 
             Assert.Equal("FallbackName", result);
         }
+
+        [Theory]
+        [InlineData("buildings building polygons", "buildings_building_polygons")]
+        [InlineData("base/land-use", "base_land_use")]
+        [InlineData("division_area (polygons)", "division_area_polygons")]
+        public void ToFileGeodatabaseFeatureClassName_SanitizesThemeAndTypeNames(string input, string expected)
+        {
+            Assert.Equal(expected, ArcGisNameSanitizer.ToFileGeodatabaseFeatureClassName(input));
+        }
+
+        [Fact]
+        public void ToFileGeodatabaseFeatureClassName_TruncatesToMaxLength()
+        {
+            string result = ArcGisNameSanitizer.ToFileGeodatabaseFeatureClassName(
+                "transportation_division_boundary_multilines_extra_detail", maxLength: 50);
+
+            Assert.True(result.Length <= 50);
+            Assert.False(result.EndsWith('_'));
+        }
     }
 }

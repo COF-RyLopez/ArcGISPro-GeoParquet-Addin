@@ -7,6 +7,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 ## [Unreleased]
 
 ### Added
+- Optional **Save to file geodatabase** output setting on the download wizard (GeoParquet remains the default). After local GeoParquet files are written, the add-in runs ArcGIS Pro's Export Features tool (`conversion.ExportFeatures`) into a user-chosen `.gdb` or `Overture.gdb` under the data output folder, names feature classes from theme and type, overwrites or suffixes existing names to match current replace/skip behavior, and adds those feature classes to the map instead of Parquet layers. Geoprocessing failures are reported in the log and the GeoParquet files are kept. Attribute domains are applied for file geodatabase layers (they remain skipped only for Parquet).
 - DuckDB `httpfs` now applies `http_proxy`, `http_proxy_username`, and `http_proxy_password` so S3 and Overture reads work behind corporate proxies. The Windows system proxy is auto-detected for the Overture S3 URL (`WebRequest.GetSystemWebProxy` / WinHTTP); an optional manual proxy can be set under Add-in Settings. Proxy passwords are never written to logs.
 - `memory_limit` and `max_memory` are configurable in Add-in Settings (defaults remain `2GB` / `4GB`).
 
