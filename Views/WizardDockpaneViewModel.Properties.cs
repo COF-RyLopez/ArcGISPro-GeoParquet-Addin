@@ -336,6 +336,26 @@ namespace DuckDBGeoparquet.Views
             set => SetProperty(ref _selectedCompression, value);
         }
 
+        public const string GeoParquetVersion1xOption = "1.x (default)";
+        public const string GeoParquetVersion2Option = "2.0";
+
+        private string _selectedGeoParquetVersion = GeoParquetVersion1xOption;
+        public string SelectedGeoParquetVersion
+        {
+            get => _selectedGeoParquetVersion;
+            set => SetProperty(ref _selectedGeoParquetVersion, value);
+        }
+
+        public List<string> GeoParquetVersionOptions => new List<string>
+        {
+            GeoParquetVersion1xOption,
+            GeoParquetVersion2Option
+        };
+
+        /// <summary>DuckDB COPY GEOPARQUET_VERSION token for the current UI selection.</summary>
+        public string SelectedGeoParquetCopyVersion =>
+            GeoParquetSql.NormalizeGeoParquetVersion(_selectedGeoParquetVersion);
+
         private bool _addSourceProvenanceFields;
         public bool AddSourceProvenanceFields
         {

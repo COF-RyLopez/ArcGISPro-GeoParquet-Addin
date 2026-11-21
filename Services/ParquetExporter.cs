@@ -68,7 +68,7 @@ namespace DuckDBGeoparquet.Services
         /// Exports the current_table to GeoParquet file(s) using DuckDB's Parquet export.
         /// All exported files are placed in a single output folder per session.
         /// </summary>
-        public async Task CreateFeatureLayersAsync(string layerNameBase, IProgress<string> progress, string parentS3Theme, string actualS3Type, string dataOutputPathRoot, string outputSessionSuffix, string compression = "ZSTD", CancellationToken cancellationToken = default)
+        public async Task CreateFeatureLayersAsync(string layerNameBase, IProgress<string> progress, string parentS3Theme, string actualS3Type, string dataOutputPathRoot, string outputSessionSuffix, string compression = "ZSTD", string geoParquetVersion = null, CancellationToken cancellationToken = default)
         {
             System.Diagnostics.Debug.WriteLine($"CreateFeatureLayersAsync called for: {layerNameBase}, ParentS3Theme: {parentS3Theme}, ActualS3Type: {actualS3Type}, DataOutputPathRoot: {dataOutputPathRoot}");
             progress?.Report($"Starting layer creation for {layerNameBase}");
@@ -85,6 +85,11 @@ namespace DuckDBGeoparquet.Services
                 return;
             }
 
+            string copyVersion = GeoParquetSql.NormalizeGeoParquetVersion(geoParquetVersion);
+            GeoParquetSql.EnsureGeoParquetVersionWritable(copyVersion, _duckDb.ParsedLibraryVersion, _duckDb.LibraryVersion);
+            if (copyVersion == GeoParquetSql.GeoParquetVersion2)
+                progress?.Report("Exporting GeoParquet 2.0 (native Parquet geometry types). ArcGIS Pro may not read these files yet.");
+
             string themeTypeSpecificFolder = Path.Combine(dataOutputPathRoot, actualS3Type);
 
             if (!Directory.Exists(dataOutputPathRoot))
@@ -98,7 +103,7 @@ namespace DuckDBGeoparquet.Services
 
             try
             {
-                await ExportByGeometryType(layerNameBase, themeTypeSpecificFolder, parentS3Theme, actualS3Type, outputSessionSuffix, progress, compression, cancellationToken);
+                await ExportByGeometryType(layerNameBase, themeTypeSpecificFolder, parentS3Theme, actualS3Type, outputSessionSuffix, progress, compression, geoParquetVersion, cancellationToken);
                 exportStopwatch.Stop();
                 System.Diagnostics.Debug.WriteLine(
                     $"[perf][export:{actualS3Type}] geometry-export output={DescribeOutputPathKind(dataOutputPathRoot)} elapsed={FormatElapsed(exportStopwatch.Elapsed)}");
@@ -111,7 +116,7 @@ namespace DuckDBGeoparquet.Services
             }
         }
 
-        private async Task ExportByGeometryType(string layerNameBase, string themeTypeSpecificOutputFolder, string parentS3Theme, string actualS3Type, string outputSessionSuffix, IProgress<string> progress = null, string compression = "ZSTD", CancellationToken cancellationToken = default)
+        private async Task ExportByGeometryType(string layerNameBase, string themeTypeSpecificOutputFolder, string parentS3Theme, string actualS3Type, string outputSessionSuffix, IProgress<string> progress = null, string compression = "ZSTD", string geoParquetVersion = null, CancellationToken cancellationToken = default)
         {
             progress?.Report($"Processing geometry types for {layerNameBase} with optimal layer stacking");
 
@@ -181,7 +186,7 @@ namespace DuckDBGeoparquet.Services
 
                     string exportSelect = GeoParquetSql.BuildGeometryExportSelect(geomType, currentTableHasBbox, hasCachedGeometryType);
 
-                    string targetPath = await ExportToGeoParquet(exportSelect, finalOutputPath, finalLayerName, progress, compression, cancellationToken);
+                    string targetPath = await ExportToGeoParquet(exportSelect, finalOutputPath, finalLayerName, progress, compression, geoParquetVersion, cancellationToken);
 
                     var layerInfo = new LayerCreationInfo
                     {
@@ -206,14 +211,14 @@ namespace DuckDBGeoparquet.Services
             progress?.Report($"Finished processing all geometry types for {layerNameBase}.");
         }
 
-        private async Task<string> ExportToGeoParquet(string query, string outputPath, string layerName, IProgress<string> progress = null, string compression = "ZSTD", CancellationToken cancellationToken = default)
+        private async Task<string> ExportToGeoParquet(string query, string outputPath, string layerName, IProgress<string> progress = null, string compression = "ZSTD", string geoParquetVersion = null, CancellationToken cancellationToken = default)
         {
             progress?.Report($"Exporting data for {layerName} to {Path.GetFileName(outputPath)}");
 
             if (File.Exists(outputPath))
                 throw new IOException($"Output already exists; create a new snapshot: {outputPath}");
             using var command = _connection.CreateCommand();
-            command.CommandText = GeoParquetSql.BuildCopyCommand(query, outputPath, compression);
+            command.CommandText = GeoParquetSql.BuildCopyCommand(query, outputPath, compression, geoParquetVersion);
             await command.ExecuteNonQueryAsync(cancellationToken);
             progress?.Report($"Exported {layerName}.");
             return outputPath;

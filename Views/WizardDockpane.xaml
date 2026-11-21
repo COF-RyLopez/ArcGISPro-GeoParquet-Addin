@@ -191,6 +191,21 @@
                                     <Run Text="SNAPPY: Fast compression, larger files. "/>
                                     <Run Text="GZIP: Good balance of speed and size."/>
                                 </TextBlock>
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="GeoParquet version:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <ComboBox Grid.Column="1"
+                                              ItemsSource="{Binding GeoParquetVersionOptions}"
+                                              SelectedItem="{Binding SelectedGeoParquetVersion}"
+                                              VerticalAlignment="Center"
+                                              ToolTip="GeoParquet 1.x is the default. ArcGIS Pro may not read GeoParquet 2.0 files yet."/>
+                                </Grid>
+                                <TextBlock TextWrapping="Wrap" Margin="0,2,0,0" Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+                                    1.x stays the default for Pro compatibility. 2.0 writes native Parquet geometry types; Pro may not read those files yet.
+                                </TextBlock>
                                 <CheckBox Content="Save to file geodatabase"
                                           IsChecked="{Binding SaveToFileGeodatabase, Mode=TwoWay}"
                                           Margin="0,8,0,0"

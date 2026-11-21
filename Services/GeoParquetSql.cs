@@ -1,5 +1,7 @@
 using DuckDBGeoparquet.Models;
+using System;
 using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace DuckDBGeoparquet.Services
 {
@@ -21,6 +23,26 @@ namespace DuckDBGeoparquet.Services
         public const int RowGroupSize = 100000;
 
         /// <summary>
+        /// DuckDB COPY option that selects GeoParquet metadata + storage.
+        /// Documented for DuckDB 1.5: NONE | V1 | V2 | BOTH (default V1).
+        /// V2 writes native Parquet GEOMETRY/GEOGRAPHY logical types and
+        /// geo metadata version 2.0.0.
+        /// </summary>
+        public const string GeoParquetVersionCopyOption = "GEOPARQUET_VERSION";
+
+        /// <summary>DuckDB COPY value for GeoParquet 1.x (WKB BYTE_ARRAY + geo metadata).</summary>
+        public const string GeoParquetVersion1x = "V1";
+
+        /// <summary>DuckDB COPY value for GeoParquet 2.0 (native Parquet GEOMETRY types).</summary>
+        public const string GeoParquetVersion2 = "V2";
+
+        /// <summary>
+        /// DuckDB 1.4.1 added GEOPARQUET_VERSION including V2 (PR 19246).
+        /// The add-in ships DuckDB.NET 1.5.3, which is well above this floor.
+        /// </summary>
+        public static readonly Version MinimumDuckDbVersionForGeoParquetV2 = new Version(1, 4, 1);
+
+        /// <summary>
         /// Normalizes a user-supplied compression name to one DuckDB accepts,
         /// defaulting to ZSTD for anything unrecognized.
         /// </summary>
@@ -34,18 +56,92 @@ namespace DuckDBGeoparquet.Services
             };
 
         /// <summary>
-        /// Builds the COPY … TO … (FORMAT 'PARQUET') statement that exports a
-        /// query result as GeoParquet.
+        /// Maps UI / caller values onto DuckDB COPY GEOPARQUET_VERSION tokens.
+        /// Unrecognized or empty input is GeoParquet 1.x (the default).
         /// </summary>
-        public static string BuildCopyCommand(string selectQuery, string outputPath, string compression = "ZSTD")
+        public static string NormalizeGeoParquetVersion(string version)
         {
+            if (string.IsNullOrWhiteSpace(version))
+                return GeoParquetVersion1x;
+
+            string compact = version.Trim().Replace(" ", string.Empty).ToUpperInvariant();
+            if (compact is "V2" or "2" or "2.0" or "2.0.0")
+                return GeoParquetVersion2;
+
+            return GeoParquetVersion1x;
+        }
+
+        /// <summary>
+        /// Parses DuckDB <c>version()</c> strings such as "v1.5.3" or "v1.5.3-dev123".
+        /// </summary>
+        public static bool TryParseDuckDbVersion(string versionText, out Version version)
+        {
+            version = null;
+            if (string.IsNullOrWhiteSpace(versionText))
+                return false;
+
+            var match = Regex.Match(versionText.Trim(), @"v?(\d+)\.(\d+)\.(\d+)", RegexOptions.IgnoreCase);
+            if (!match.Success)
+                return false;
+
+            version = new Version(
+                int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture),
+                int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture),
+                int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture));
+            return true;
+        }
+
+        /// <summary>
+        /// True when this DuckDB build can write GeoParquet 2.0 via
+        /// <c>GEOPARQUET_VERSION 'V2'</c> (native Parquet GEOMETRY types).
+        /// </summary>
+        public static bool SupportsGeoParquetV2(Version duckDbVersion) =>
+            duckDbVersion != null && duckDbVersion >= MinimumDuckDbVersionForGeoParquetV2;
+
+        public static bool SupportsGeoParquetV2(string duckDbVersionText) =>
+            TryParseDuckDbVersion(duckDbVersionText, out var parsed) && SupportsGeoParquetV2(parsed);
+
+        /// <summary>
+        /// Throws if the caller asked for GeoParquet 2.0 on a DuckDB that cannot
+        /// write it. Does not silently fall back to 1.x.
+        /// </summary>
+        public static void EnsureGeoParquetVersionWritable(string requestedVersion, Version duckDbVersion, string duckDbVersionText = null)
+        {
+            if (NormalizeGeoParquetVersion(requestedVersion) != GeoParquetVersion2)
+                return;
+
+            if (SupportsGeoParquetV2(duckDbVersion))
+                return;
+
+            string running = !string.IsNullOrWhiteSpace(duckDbVersionText)
+                ? duckDbVersionText
+                : duckDbVersion?.ToString() ?? "unknown";
+
+            throw new InvalidOperationException(
+                "GeoParquet 2.0 export requires DuckDB 1.4.1 or later, which added the COPY option " +
+                $"{GeoParquetVersionCopyOption} '{GeoParquetVersion2}' (native Parquet GEOMETRY logical types). " +
+                $"This session is running DuckDB {running}.");
+        }
+
+        /// <summary>
+        /// Builds the COPY … TO … (FORMAT 'PARQUET') statement that exports a
+        /// query result as GeoParquet. GeoParquet 1.x is the default and omits
+        /// GEOPARQUET_VERSION so DuckDB keeps its V1 writer path. Version 2.0
+        /// adds GEOPARQUET_VERSION 'V2' (native Parquet GEOMETRY types).
+        /// </summary>
+        public static string BuildCopyCommand(string selectQuery, string outputPath, string compression = "ZSTD", string geoParquetVersion = null)
+        {
+            string version = NormalizeGeoParquetVersion(geoParquetVersion) == GeoParquetVersion2
+                ? GeoParquetVersion2
+                : "V1";
+
             return $@"
                 COPY (
                     {selectQuery}
                 ) TO '{EscapeSqlLiteral(outputPath.Replace('\\', '/'))}'
                 WITH (
                     FORMAT 'PARQUET',
-                    GEOPARQUET_VERSION 'V1',
+                    {GeoParquetVersionCopyOption} '{version}',
                     ROW_GROUP_SIZE {RowGroupSize},
                     COMPRESSION '{ValidateCompression(compression)}'
                 );";

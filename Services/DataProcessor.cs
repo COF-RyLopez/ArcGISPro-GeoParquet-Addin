@@ -217,7 +217,7 @@ namespace DuckDBGeoparquet.Services
         public Task<DatasetLoadResult> PrepareDatasetAsync(string sourceUri, string theme, string type,
             string layerName, string stagingPath, ExtentBounds extent, string compression,
             bool displayProvenance, IProgress<string> progress, CancellationToken token, IReadOnlyList<string> files = null,
-            string geometryColumn = null, bool geometryIsWkb = false)
+            string geometryColumn = null, bool geometryIsWkb = false, string geoParquetVersion = null)
             => _duckDb.RunAsync(async () =>
             {
                 bool hasRows = files?.Count == 0 ? false : await IngestFileCoreAsync(sourceUri, extent, type, progress, token, false, true, files, geometryColumn, geometryIsWkb);
@@ -229,13 +229,13 @@ namespace DuckDBGeoparquet.Services
                 using var command = _connection.CreateCommand();
                 progress?.Report($"Preserving original {type} geometry, attributes and provenance...");
                 command.CommandText = GeoParquetSql.BuildCopyCommand(
-                    $"SELECT * EXCLUDE({GeoParquetSql.InternalGeometryTypeColumn}) FROM current_table", archive, compression);
+                    $"SELECT * EXCLUDE({GeoParquetSql.InternalGeometryTypeColumn}) FROM current_table", archive, compression, geoParquetVersion);
                 await command.ExecuteNonQueryAsync(token);
                 var displayColumns = _lastSourceColumns.Append(GeoParquetSql.InternalGeometryTypeColumn).ToList();
                 command.CommandText = S3Ingester.BuildDisplayTableCommand(type, displayColumns, displayProvenance);
                 await command.ExecuteNonQueryAsync(token);
                 await ParquetExporter.CreateFeatureLayersAsync(layerName, progress, theme, type,
-                    stagingPath, _outputSessionSuffix, compression, token);
+                    stagingPath, _outputSessionSuffix, compression, geoParquetVersion, token);
                 var displayFiles = LayerManager.GetPendingLayers().Where(l => l.ActualType == type)
                     .Select(l => Path.GetRelativePath(stagingPath, l.FilePath)).ToList();
                 if (displayFiles.Count == 0) throw new InvalidOperationException($"No usable geometry was exported for {type}.");
@@ -425,8 +425,8 @@ namespace DuckDBGeoparquet.Services
         /// <param name="parentS3Theme">The S3 parent theme key (e.g., 'buildings').</param>
         /// <param name="actualS3Type">The specific S3 data type (e.g., 'building', 'building_part').</param>
         /// <param name="dataOutputPathRoot">The root directory where data for the current release is stored (e.g., C:\...\ProjectHome\OvertureProAddinData\Data\{ReleaseVersion})</param>
-        public Task CreateFeatureLayerAsync(string layerNameBase, IProgress<string> progress, string parentS3Theme, string actualS3Type, string dataOutputPathRoot, string compression = "ZSTD", CancellationToken cancellationToken = default)
-            => _duckDb.RunAsync(() => ParquetExporter.CreateFeatureLayersAsync(layerNameBase, progress, parentS3Theme, actualS3Type, dataOutputPathRoot, _outputSessionSuffix, compression, cancellationToken), cancellationToken);
+        public Task CreateFeatureLayerAsync(string layerNameBase, IProgress<string> progress, string parentS3Theme, string actualS3Type, string dataOutputPathRoot, string compression = "ZSTD", string geoParquetVersion = null, CancellationToken cancellationToken = default)
+            => _duckDb.RunAsync(() => ParquetExporter.CreateFeatureLayersAsync(layerNameBase, progress, parentS3Theme, actualS3Type, dataOutputPathRoot, _outputSessionSuffix, compression, geoParquetVersion, cancellationToken), cancellationToken);
 
         /// <summary>
         /// After GeoParquet files are written, optionally export them into a file

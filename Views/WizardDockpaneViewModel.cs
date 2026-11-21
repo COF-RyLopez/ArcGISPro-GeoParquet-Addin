@@ -606,7 +606,7 @@ namespace DuckDBGeoparquet.Views
                         var result = await _dataProcessor.PrepareDatasetAsync(uri, item.ParentThemeForS3,
                             item.ActualType, layerName,
                             snapshot.StagingPath, bounds, compression, provenance, progress, token, files,
-                            customSource?.GeometryColumn, customSource?.GeometryIsWkb ?? false);
+                            customSource?.GeometryColumn, customSource?.GeometryIsWkb ?? false, SelectedGeoParquetCopyVersion);
                         snapshot.Manifest.Datasets.Add(result);
                         AddToLog(result.Status == DatasetLoadStatus.Empty
                             ? $"{item.DisplayName}: no features in this area."
