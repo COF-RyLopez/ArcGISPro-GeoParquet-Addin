@@ -13,6 +13,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Downloads and preview samples now fail with a clear discovery error instead of building `s3://.../release/latest/...` when no release can be resolved. The "release has been removed" message names the newest available folder.
 
 ### Changed
+- Bumped DuckDB.NET.Data.Full from 1.5.3 to 1.5.6.1 (DuckDB engine v1.5.6; stays on the 1.5 line, not 2.0). CI and `Extensions/README.txt` now fetch bundled `spatial` and `httpfs` from `https://extensions.duckdb.org/v1.5.6/...`. Patch-line notes between 1.5.3 and 1.5.6 report no breaking changes to the add-in's SQL (`ST_*` spatial functions, `read_parquet`, `SET s3_region` / httpfs settings).
 - **Overture Maps Schema v2 Support**: Updated to support Overture Maps schema v2 (releases 2026-09-23 and later)
   - Place `categories` field renamed to `taxonomy` with structured `primary`, `hierarchy`, and `alternates` fields
   - Added support for new `basic_category` field in Places
