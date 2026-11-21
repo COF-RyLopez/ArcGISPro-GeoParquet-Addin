@@ -41,6 +41,13 @@ namespace DuckDBGeoparquet.Views
             set => SetProperty(ref _latestRelease, value);
         }
 
+        private string _releaseStatusText = "Checking published releases...";
+        public string ReleaseStatusText
+        {
+            get => _releaseStatusText;
+            set => SetProperty(ref _releaseStatusText, value);
+        }
+
         private bool _isManualReleaseEntryVisible;
         public bool IsManualReleaseEntryVisible
         {
@@ -76,6 +83,7 @@ namespace DuckDBGeoparquet.Views
             {
                 SetProperty(ref _selectedTheme, value);
                 (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                (RefreshReleaseCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 (ShowThemeInfoCommand as RelayCommand)?.RaiseCanExecuteChanged();
 
                 if (value != null && ThemeIcons.TryGetValue(value, out string iconText))
@@ -100,11 +108,14 @@ namespace DuckDBGeoparquet.Views
                 if (SetProperty(ref _selectedTabIndex, value))
                 {
                     UpdateNavigation();
+                    NotifyPropertyChanged(nameof(IsSelectDataTab));
                 }
             }
         }
 
-        private string _nextButtonText = "Next >";
+        public bool IsSelectDataTab => SelectedTabIndex == (int)WizardTab.SelectData;
+
+        private string _nextButtonText = "Preview >";
         public string NextButtonText
         {
             get => _nextButtonText;
@@ -132,7 +143,7 @@ namespace DuckDBGeoparquet.Views
                 case WizardTab.SelectData:
                     IsBackButtonVisible = false;
                     IsNextButtonVisible = true;
-                    NextButtonText = "Next >";
+                    NextButtonText = "Preview >";
                     break;
                 case WizardTab.Preview:
                     IsBackButtonVisible = true;
@@ -226,7 +237,13 @@ namespace DuckDBGeoparquet.Views
         public bool IsLoading
         {
             get => _isLoading;
-            set => SetProperty(ref _isLoading, value);
+            set
+            {
+                SetProperty(ref _isLoading, value);
+                (NextCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                RaisePreviewCommandsCanExecuteChanged();
+            }
         }
 
         private Envelope _customExtent;

@@ -25,7 +25,8 @@ namespace DuckDBGeoparquet.Tests
 
             Assert.Contains("CAST(names.primary AS VARCHAR)", sql);
             Assert.Contains("coalesce('', '') AS overture_address", sql);
-            Assert.Contains("bbox.xmin <= -119", sql);
+            Assert.Contains("bbox.xmin <=", sql);
+            Assert.DoesNotContain("bbox.xmin <= -119\n", sql);
             Assert.Contains("read_parquet('/data/release/place/*.parquet', hive_partitioning=1, union_by_name=1)", sql);
             Assert.DoesNotContain("unnest(addresses)", sql);
             Assert.Contains("jaro_winkler_similarity", sql);
@@ -195,7 +196,7 @@ namespace DuckDBGeoparquet.Tests
                 "fresno_addresses",
                 "addresses",
                 "address",
-                "2026-06-17.0",
+                "2026-10-21.0",
                 "County_Addresses");
 
             Assert.Contains("'fresno_addresses' AS dataset", sql);
@@ -205,7 +206,7 @@ namespace DuckDBGeoparquet.Tests
             Assert.Contains("'authoritative_local' AS source_geometry_policy", sql);
             Assert.Contains("CAST(a.match_strategy AS VARCHAR) AS match_strategy", sql);
             Assert.Contains("CAST(a.gers_match_score AS VARCHAR) AS match_score", sql);
-            Assert.Contains("'2026-06-17.0' AS overture_release", sql);
+            Assert.Contains("'2026-10-21.0' AS overture_release", sql);
             Assert.Contains("'County_Addresses' AS source_layer", sql);
             Assert.Contains("'arcgis_pro_gersify' AS linkage_tool", sql);
             Assert.Contains("u.source_record_key", sql);
@@ -218,7 +219,7 @@ namespace DuckDBGeoparquet.Tests
             var options = new TraceSourcesOptions
             {
                 BridgeRoot = "s3://overturemaps-us-west-2/bridgefiles",
-                Release = "2026-06-17.0",
+                Release = "2026-10-21.0",
                 Theme = "places",
                 Type = "place",
                 InputCsvPath = "/tmp/input.csv",
@@ -228,7 +229,7 @@ namespace DuckDBGeoparquet.Tests
             string glob = GersSql.BuildBridgeGlob(options.BridgeRoot, options.Release);
             string sql = GersSql.BuildTraceSourcesCommand(options, "/tmp/output.csv");
 
-            Assert.Equal("s3://overturemaps-us-west-2/bridgefiles/2026-06-17.0/**/*.parquet", glob);
+            Assert.Equal("s3://overturemaps-us-west-2/bridgefiles/2026-10-21.0/**/*.parquet", glob);
             Assert.Contains("theme = 'places'", sql);
             Assert.Contains("type = 'place'", sql);
             Assert.Contains("BuildOsmUrl", sql);

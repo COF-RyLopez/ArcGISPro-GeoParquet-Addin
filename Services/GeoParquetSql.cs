@@ -141,9 +141,10 @@ namespace DuckDBGeoparquet.Services
             return $@"
                 COPY (
                     {selectQuery}
-                ) TO '{outputPath.Replace('\\', '/')}'
+                ) TO '{EscapeSqlLiteral(outputPath.Replace('\\', '/'))}'
                 WITH (
                     FORMAT 'PARQUET',
+                    GEOPARQUET_VERSION 'V1',
                     ROW_GROUP_SIZE {RowGroupSize},
                     COMPRESSION '{ValidateCompression(compression)}'{versionOption}
                 );";

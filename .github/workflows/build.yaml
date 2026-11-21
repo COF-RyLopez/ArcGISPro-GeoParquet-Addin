@@ -47,8 +47,10 @@ jobs:
     - name: Bundle DuckDB extensions (spatial, httpfs)
       shell: powershell
       run: |
-        # Must match the DuckDB.NET.Data.Full package version in the csproj.
-        $duckdbVersion = "1.5.3"
+        # Must match the DuckDB engine version shipped by DuckDB.NET.Data.Full
+        # in DuckDBGeoparquet.csproj (package 1.5.6.1 is built on DuckDB v1.5.6).
+        # Do not use the NuGet patch suffix — v1.5.6.1 is not a DuckDB extension path.
+        $duckdbVersion = "1.5.6"
         $platform = "windows_amd64"
         New-Item -Path "Extensions" -ItemType Directory -Force | Out-Null
         foreach ($ext in @("spatial", "httpfs")) {
