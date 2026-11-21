@@ -232,7 +232,11 @@ namespace DuckDBGeoparquet.Tests
 
             Assert.Contains("SET memory_limit='8GB';", sql);
             Assert.Contains("SET max_memory='16GB';", sql);
-            Assert.DoesNotContain("http_proxy", sql);
+            // Unconfigured proxy clears any stale session values instead of leaving them.
+            Assert.Contains("RESET http_proxy;", sql);
+            Assert.Contains("RESET http_proxy_username;", sql);
+            Assert.Contains("RESET http_proxy_password;", sql);
+            Assert.DoesNotContain("SET http_proxy=", sql);
         }
     }
 

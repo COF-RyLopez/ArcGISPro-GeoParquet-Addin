@@ -221,8 +221,12 @@ namespace DuckDBGeoparquet.Services
             string tempDir = GeoParquetSql.EscapeSqlLiteral(
                 (tempDirectory ?? string.Empty).Replace('\\', '/'));
 
+            // RESET first so clearing the proxy (or just its username/password)
+            // takes effect in an already-open DuckDB session, not only after a
+            // Pro restart; RESET of a never-set setting is a no-op.
             string proxySql = BuildDuckDbSetSql(proxy);
-            string prefix = string.IsNullOrEmpty(proxySql) ? string.Empty : proxySql + "\n";
+            string prefix = "RESET http_proxy;\nRESET http_proxy_username;\nRESET http_proxy_password;\n"
+                + (string.IsNullOrEmpty(proxySql) ? string.Empty : proxySql + "\n");
 
             return prefix +
                    $@"SET s3_region='us-west-2';
