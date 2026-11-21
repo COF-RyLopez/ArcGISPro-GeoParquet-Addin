@@ -16,6 +16,30 @@ namespace DuckDBGeoparquet.Views
         public WizardDockpaneView()
         {
             InitializeComponent();
+            DataContextChanged += WizardDockpaneView_DataContextChanged;
+            Loaded += (_, _) => ApplyProxyPasswordToBox();
+        }
+
+        private void WizardDockpaneView_DataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            ApplyProxyPasswordToBox();
+        }
+
+        private void ApplyProxyPasswordToBox()
+        {
+            if (HttpProxyPasswordBox == null)
+                return;
+            if (DataContext is WizardDockpaneViewModel vm)
+                HttpProxyPasswordBox.Password = vm.HttpProxyPassword ?? string.Empty;
+        }
+
+        private void HttpProxyPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
+        {
+            if (DataContext is WizardDockpaneViewModel vm && sender is PasswordBox box)
+            {
+                if (vm.HttpProxyPassword != box.Password)
+                    vm.HttpProxyPassword = box.Password;
+            }
         }
 
         /// <summary>

@@ -53,7 +53,15 @@ namespace DuckDBGeoparquet.Services
                     LIMIT {maxFeatures}
                 ) TO '{normalizedOutput}' WITH (FORMAT GDAL, DRIVER 'GeoJSON');
             ";
-            await command.ExecuteNonQueryAsync(cancellationToken);
+            try
+            {
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Preview sample S3 read failed: {ex.Message}");
+                throw new Exception(DuckDbNetworkErrors.ToUserFacingMessage(ex.Message), ex);
+            }
         }
 
         /// <summary>
