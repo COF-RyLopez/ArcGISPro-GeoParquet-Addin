@@ -39,7 +39,7 @@ namespace DuckDBGeoparquet.Tests
             Assert.Contains($"ROW_GROUP_SIZE {GeoParquetSql.RowGroupSize}", sql);
             Assert.Contains("FORMAT 'PARQUET'", sql);
             Assert.Contains("SELECT 1", sql);
-            Assert.DoesNotContain(GeoParquetSql.GeoParquetVersionCopyOption, sql);
+            Assert.Contains($"{GeoParquetSql.GeoParquetVersionCopyOption} 'V1'", sql);
         }
 
         [Theory]
@@ -57,11 +57,12 @@ namespace DuckDBGeoparquet.Tests
         }
 
         [Fact]
-        public void BuildCopyCommand_OmitsGeoParquetVersionFor1xDefault()
+        public void BuildCopyCommand_PinsV1For1xDefault()
         {
             string sql = GeoParquetSql.BuildCopyCommand("SELECT 1", "/tmp/out.parquet", "ZSTD", "V1");
 
-            Assert.DoesNotContain(GeoParquetSql.GeoParquetVersionCopyOption, sql);
+            Assert.Contains($"{GeoParquetSql.GeoParquetVersionCopyOption} 'V1'", sql);
+            Assert.DoesNotContain("'V2'", sql);
         }
 
         [Fact]

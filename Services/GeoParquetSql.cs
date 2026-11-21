@@ -131,12 +131,9 @@ namespace DuckDBGeoparquet.Services
         /// </summary>
         public static string BuildCopyCommand(string selectQuery, string outputPath, string compression = "ZSTD", string geoParquetVersion = null)
         {
-            string versionOption = string.Empty;
-            if (NormalizeGeoParquetVersion(geoParquetVersion) == GeoParquetVersion2)
-            {
-                versionOption = $@",
-                    {GeoParquetVersionCopyOption} '{GeoParquetVersion2}'";
-            }
+            string version = NormalizeGeoParquetVersion(geoParquetVersion) == GeoParquetVersion2
+                ? GeoParquetVersion2
+                : "V1";
 
             return $@"
                 COPY (
@@ -144,9 +141,9 @@ namespace DuckDBGeoparquet.Services
                 ) TO '{EscapeSqlLiteral(outputPath.Replace('\\', '/'))}'
                 WITH (
                     FORMAT 'PARQUET',
-                    GEOPARQUET_VERSION 'V1',
+                    {GeoParquetVersionCopyOption} '{version}',
                     ROW_GROUP_SIZE {RowGroupSize},
-                    COMPRESSION '{ValidateCompression(compression)}'{versionOption}
+                    COMPRESSION '{ValidateCompression(compression)}'
                 );";
         }
 
