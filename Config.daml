@@ -28,7 +28,10 @@
 					<button refID="DuckDBGeoparquet_Views_MfcDockpane_ShowButton" size="large" />
 				</group>
 				<group id="DuckDBGeoparquet_Group_Sources" caption="Data Sources" appearsOnAddInTab="false" keytip="S">
-					<menu refID="DuckDBGeoparquet_DownloadProviderMenu" size="large" />
+					<button refID="DuckDBGeoparquet_DownloadOvertureButton" size="large" />
+					<button refID="DuckDBGeoparquet_DownloadOsmButton" size="large" />
+					<button refID="DuckDBGeoparquet_DownloadSourceCoopButton" size="large" />
+					<button refID="DuckDBGeoparquet_DownloadCustomButton" size="large" />
 					<button refID="DuckDBGeoparquet_AddSourceButton" size="large" />
 				</group>
 			</groups>
@@ -65,7 +68,7 @@
                         Open the GeoParquet Data Loader with the Overture Maps themes
 						<disabledText>Unable to launch GeoParquet Data Loader at this time</disabledText></tooltip>
 				</button>
-				<button id="DuckDBGeoparquet_DownloadOsmButton" caption="OpenStreetMap (LayerCake)" className="DuckDBGeoparquet.Views.DownloadOsmButton" loadOnClick="true" smallImage="Images\OsmProvider16.png" largeImage="Images\OsmProvider32.png" keytip="N" extendedCaption="Download OpenStreetMap LayerCake Extracts">
+				<button id="DuckDBGeoparquet_DownloadOsmButton" caption="OpenStreetMap" className="DuckDBGeoparquet.Views.DownloadOsmButton" loadOnClick="true" smallImage="Images\OsmProvider16.png" largeImage="Images\OsmProvider32.png" keytip="N" extendedCaption="Download OpenStreetMap LayerCake Extracts">
 					<tooltip heading="OpenStreetMap (LayerCake)">
                         Open the GeoParquet Data Loader focused on the OpenStreetMap (LayerCake) community extracts
 						<disabledText>Unable to launch GeoParquet Data Loader at this time</disabledText></tooltip>
@@ -93,16 +96,6 @@
 						<disabledText>A map must be open to use this tool</disabledText></tooltip>
 				</tool>
 			</controls>
-			<menus>
-				<menu id="DuckDBGeoparquet_DownloadProviderMenu" caption="Download by Provider" smallImage="Images\DownloadProviders16.png" largeImage="Images\DownloadProviders32.png" keytip="D">
-					<tooltip heading="Download by Provider">
-                        Open the GeoParquet Data Loader focused on a specific data provider</tooltip>
-					<button refID="DuckDBGeoparquet_DownloadOvertureButton" />
-					<button refID="DuckDBGeoparquet_DownloadOsmButton" />
-					<button refID="DuckDBGeoparquet_DownloadSourceCoopButton" />
-					<button refID="DuckDBGeoparquet_DownloadCustomButton" />
-				</menu>
-			</menus>
 			<dockPanes>
 				<dockPane id="DuckDBGeoparquet_Views_WizardDockpane_V2" caption="GeoParquet Data Loader" className="DuckDBGeoparquet.Views.WizardDockpaneViewModel" dock="right">
 					<content className="DuckDBGeoparquet.Views.WizardDockpaneView" />

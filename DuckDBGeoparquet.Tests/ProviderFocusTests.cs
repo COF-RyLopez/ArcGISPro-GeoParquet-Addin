@@ -59,6 +59,58 @@ namespace DuckDBGeoparquet.Tests
             Assert.Null(SelectableThemeItem.FindGroup(Tree(), ""));
         }
 
+        private static SelectableThemeItem WithSource(SelectableThemeItem leaf)
+        {
+            leaf.UserSource = new DuckDBGeoparquet.Models.UserDataSource { Name = leaf.DisplayName, Url = "https://example.test/x.parquet" };
+            return leaf;
+        }
+
+        private static ObservableCollection<SelectableThemeItem> MixedTree()
+        {
+            var tree = Tree();
+            foreach (var parent in tree)
+                if (parent.ParentThemeForS3 is "osm" or "sourcecoop" or "custom")
+                    foreach (var leaf in parent.SubItems) WithSource(leaf);
+            return tree;
+        }
+
+        [Fact]
+        public void ReleaseVisible_WhenOvertureLeafSelected()
+        {
+            var tree = MixedTree();
+            tree[0].SubItems[0].IsSelected = true; // Overture leaf
+            tree[1].SubItems[0].IsSelected = true; // preset leaf too
+            Assert.True(SelectableThemeItem.DecideOvertureReleaseVisible(tree, current: false));
+        }
+
+        [Fact]
+        public void ReleaseHidden_WhenOnlyPresetOrCustomLeavesSelected()
+        {
+            var tree = MixedTree();
+            tree[1].SubItems[0].IsSelected = true; // OSM preset
+            tree[3].SubItems[0].IsSelected = true; // custom source
+            Assert.False(SelectableThemeItem.DecideOvertureReleaseVisible(tree, current: true));
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void ReleaseVisibility_EmptySelectionKeepsCurrentState(bool current)
+        {
+            Assert.Equal(current, SelectableThemeItem.DecideOvertureReleaseVisible(MixedTree(), current));
+            Assert.Equal(current, SelectableThemeItem.DecideOvertureReleaseVisible(null, current));
+        }
+
+        [Fact]
+        public void ReleaseVisible_WhenSelectedTopLevelLeafIsOverture()
+        {
+            var tree = MixedTree();
+            // A parent that is itself a leaf (e.g. an Overture theme with no sub-types)
+            var leafParent = new SelectableThemeItem("Addresses", "address", "addresses", true) { IsSelected = true };
+            tree.Add(leafParent);
+            Assert.True(SelectableThemeItem.DecideOvertureReleaseVisible(tree, current: false));
+        }
+
         [Fact]
         public void ExpandingFoundGroup_DoesNotChangeSelection()
         {

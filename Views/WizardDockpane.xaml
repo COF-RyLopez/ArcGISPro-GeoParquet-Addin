@@ -28,8 +28,8 @@
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <!-- Header with title and version info -->
-        <StackPanel Grid.Row="0" Margin="16,12,16,0">
+        <!-- Header with title and version info (Overture-only: hidden while another provider has focus) -->
+        <StackPanel Grid.Row="0" Margin="16,12,16,0" Visibility="{Binding IsOvertureReleaseVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
             <TextBlock Text="{Binding LatestRelease, StringFormat='Overture Release: {0}'}" Style="{DynamicResource Esri_TextBlockH2}" Foreground="{DynamicResource Esri_TextCaptionActiveBrush}"/>
             <TextBlock Text="{Binding ReleaseStatusText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
             <Button Content="Refresh releases" Command="{Binding RefreshReleaseCommand}" Style="{DynamicResource Esri_Button}" HorizontalAlignment="Left" Margin="0,4,0,0"/>

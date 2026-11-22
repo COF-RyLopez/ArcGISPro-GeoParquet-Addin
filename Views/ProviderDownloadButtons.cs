@@ -3,9 +3,10 @@ using ArcGIS.Desktop.Framework.Contracts;
 namespace DuckDBGeoparquet.Views
 {
     /// <summary>
-    /// Ribbon "Download by Provider" menu entries. Each opens the GeoParquet
-    /// Data Loader and expands that provider's group in the theme tree.
-    /// Overture themes are the top-level nodes, so its entry just shows the pane.
+    /// Per-provider ribbon buttons in the Data Sources group. Each opens the
+    /// GeoParquet Data Loader and expands that provider's group in the theme
+    /// tree. Overture themes are the top-level nodes, so its button just shows
+    /// the pane (and restores the Overture release header).
     /// </summary>
     internal abstract class ProviderDownloadButton : Button
     {

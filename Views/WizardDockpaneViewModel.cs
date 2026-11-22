@@ -787,6 +787,7 @@ namespace DuckDBGeoparquet.Views
         private void ResetState()
         {
             if (IsWorking || _isPreviewSampling) return;
+            IsOvertureReleaseVisible = true; // selections are cleared; a provider button may hide it again
             // Clear theme selections
             foreach (var themeItem in Themes)
             {
@@ -987,6 +988,7 @@ namespace DuckDBGeoparquet.Views
             (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
             NotifyPropertyChanged(nameof(SelectedLeafItemCount));
             NotifyPropertyChanged(nameof(AllSelectedLeafItemsForPreview));
+            UpdateOvertureReleaseVisibility();
             // UpdateIsSelectAllCheckedStatus(); // Explicitly call to ensure status is current
         }
 
@@ -1030,6 +1032,7 @@ namespace DuckDBGeoparquet.Views
             (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
             NotifyPropertyChanged(nameof(SelectedLeafItemCount));
             NotifyPropertyChanged(nameof(AllSelectedLeafItemsForPreview));
+            UpdateOvertureReleaseVisibility();
             // UpdateIsSelectAllCheckedStatus(); // Called by UpdateThemePreview indirectly, but call directly for safety
         }
 
