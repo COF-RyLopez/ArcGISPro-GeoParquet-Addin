@@ -62,7 +62,9 @@ namespace DuckDBGeoparquet.Services
             Preset("Foursquare Open Source Places", "s3://us-west-2.opendata.source.coop/fused/fsq-os-places/2025-02-06/places/*.parquet"),
             Preset("US Structures from ORNL", "s3://us-west-2.opendata.source.coop/wherobots/usa-structures/geoparquet/*.parquet"),
             Preset("Planet EU Field Boundaries (2022)", "https://data.source.coop/planet/eu-field-boundaries/field_boundaries.parquet"),
-            Preset("USDA Crop Sequence Boundaries", "https://data.source.coop/fiboa/us-usda-cropland/us_usda_cropland.parquet"),
+            // Upstream's USDA Crop Sequence Boundaries is excluded: it ships
+            // Albers-projected geometry (no EPSG id), so the WGS84 bbox filter
+            // can never match it. Add back if the pipeline learns ST_Transform.
         };
     }
 }
