@@ -168,6 +168,46 @@ namespace DuckDBGeoparquet.Views
             return anyOther ? false : current;
         }
 
+        private bool _isVisible = true;
+
+        /// <summary>
+        /// Whether this top-level node is shown in the theme tree under the
+        /// current provider filter (see DecideProviderVisible). Sub-items are
+        /// always visible; their parent's visibility hides them.
+        /// </summary>
+        public bool IsVisible
+        {
+            get => _isVisible;
+            set
+            {
+                if (_isVisible != value)
+                {
+                    _isVisible = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        /// <summary>Filter key meaning "Overture themes only" (the non-group top-level nodes).</summary>
+        public const string OvertureFilterKey = "overture";
+
+        /// <summary>
+        /// Provider filter rule for a top-level tree node: null shows everything,
+        /// "overture" shows only the Overture theme nodes, and a group key
+        /// ("osm", "sourcecoop", "custom") shows only that provider's group.
+        /// </summary>
+        public static bool DecideProviderVisible(SelectableThemeItem item, string filterKey)
+        {
+            if (item == null) return false;
+            if (string.IsNullOrEmpty(filterKey)) return true;
+            // "custom" mirrors WizardDockpaneViewModel.CustomSourcesThemeKey; the VM
+            // is not linked into the ArcGIS-free test build, so the literal lives here.
+            bool isProviderGroup = item.ParentThemeForS3 == Services.PresetCatalog.OsmThemeKey
+                || item.ParentThemeForS3 == Services.PresetCatalog.SourceCoopThemeKey
+                || item.ParentThemeForS3 == "custom";
+            return filterKey == OvertureFilterKey ? !isProviderGroup : item.ParentThemeForS3 == filterKey;
+        }
+
         /// <summary>
         /// Folder-safe provider tag for a download's selected leaves:
         /// "Overture", "OSM", "SourceCoop", "Custom", or "Mixed" when the

@@ -928,6 +928,7 @@ namespace DuckDBGeoparquet.Views
             AppendCustomSourcesNode(themesCollection);
             Themes = themesCollection; // Assign to the public property
             NotifyPropertyChanged(nameof(Themes));
+            ApplyProviderFilter(_providerFilterKey); // rebuilt nodes default to visible
             UpdateIsSelectAllCheckedStatus(); // Set initial state of SelectAll checkbox
             (SelectAllCommand as RelayCommand)?.RaiseCanExecuteChanged(); // Update command state
         }

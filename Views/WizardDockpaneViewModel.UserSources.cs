@@ -107,15 +107,59 @@ namespace DuckDBGeoparquet.Views
         {
             if (string.IsNullOrEmpty(themeKey))
             {
+                ApplyProviderFilter(SelectableThemeItem.OvertureFilterKey);
                 IsOvertureReleaseVisible = true; // Overture entry: the release header applies
                 return;
             }
+            ApplyProviderFilter(themeKey);
             var group = SelectableThemeItem.FindGroup(Themes, themeKey);
             if (group != null) group.IsExpanded = true;
             // The Overture release header is noise while another provider has
             // focus — hide it unless Overture themes are also selected.
             IsOvertureReleaseVisible = SelectableThemeItem.DecideOvertureReleaseVisible(Themes, current: false);
         }
+
+        /// <summary>Download Data entry point: the pane with every provider visible.</summary>
+        internal static void ShowAllProviders()
+        {
+            Show();
+            Instance?.ApplyProviderFilter(null);
+        }
+
+        private string _providerFilterKey;
+
+        /// <summary>
+        /// Scopes the theme tree to one provider (null = show everything).
+        /// Hiding is per top-level node; selections are untouched, so Select All
+        /// is hidden while a filter is active to avoid selecting unseen themes.
+        /// </summary>
+        internal void ApplyProviderFilter(string filterKey)
+        {
+            _providerFilterKey = filterKey;
+            if (Themes != null)
+                foreach (var item in Themes)
+                    item.IsVisible = SelectableThemeItem.DecideProviderVisible(item, filterKey);
+            NotifyPropertyChanged(nameof(IsProviderFiltered));
+            NotifyPropertyChanged(nameof(IsSelectAllVisible));
+            NotifyPropertyChanged(nameof(ProviderFilterLabel));
+        }
+
+        public bool IsProviderFiltered => _providerFilterKey != null;
+
+        public bool IsSelectAllVisible => _providerFilterKey == null;
+
+        public string ProviderFilterLabel => _providerFilterKey switch
+        {
+            SelectableThemeItem.OvertureFilterKey => "Showing Overture Maps themes only",
+            PresetCatalog.OsmThemeKey => "Showing OpenStreetMap (LayerCake) only",
+            PresetCatalog.SourceCoopThemeKey => "Showing Source Cooperative only",
+            CustomSourcesThemeKey => "Showing Custom Sources only",
+            _ => null
+        };
+
+        private ICommand _showAllProvidersCommand;
+        public ICommand ShowAllProvidersCommand =>
+            _showAllProvidersCommand ??= new RelayCommand(() => ApplyProviderFilter(null));
 
         private bool _isOvertureReleaseVisible = true;
 
@@ -173,6 +217,7 @@ namespace DuckDBGeoparquet.Views
             var existing = Themes.FirstOrDefault(t => t.ParentThemeForS3 == CustomSourcesThemeKey);
             if (existing != null) Themes.Remove(existing);
             AppendCustomSourcesNode(Themes);
+            ApplyProviderFilter(_providerFilterKey); // the rebuilt node defaults to visible
             UpdateIsSelectAllCheckedStatus();
             (LoadDataCommand as RelayCommand)?.RaiseCanExecuteChanged();
         }

@@ -35,8 +35,8 @@ namespace DuckDBGeoparquet.Views
                 // Log that button was clicked
                 System.Diagnostics.Debug.WriteLine("Overture Maps wizard button clicked");
 
-                // Show the dockpane
-                WizardDockpaneViewModel.Show();
+                // Show the dockpane with every provider visible
+                WizardDockpaneViewModel.ShowAllProviders();
             }
             catch (Exception ex)
             {
