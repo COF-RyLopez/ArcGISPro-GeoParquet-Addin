@@ -92,6 +92,48 @@ namespace DuckDBGeoparquet.Views
             themes.Add(parent);
         }
 
+        /// <summary>
+        /// Shows the dockpane and expands the given provider's parent node in
+        /// the theme tree. Null themeKey = Overture (the top-level themes).
+        /// Expands only — collapses nothing, selects nothing.
+        /// </summary>
+        internal static void ShowFocused(string themeKey)
+        {
+            Show();
+            Instance?.FocusThemeGroup(themeKey);
+        }
+
+        internal void FocusThemeGroup(string themeKey)
+        {
+            if (string.IsNullOrEmpty(themeKey))
+            {
+                IsOvertureReleaseVisible = true; // Overture entry: the release header applies
+                return;
+            }
+            var group = SelectableThemeItem.FindGroup(Themes, themeKey);
+            if (group != null) group.IsExpanded = true;
+            // The Overture release header is noise while another provider has
+            // focus — hide it unless Overture themes are also selected.
+            IsOvertureReleaseVisible = SelectableThemeItem.DecideOvertureReleaseVisible(Themes, current: false);
+        }
+
+        private bool _isOvertureReleaseVisible = true;
+
+        /// <summary>
+        /// Whether the Overture release header (release label, status, refresh)
+        /// is shown. Only Overture downloads use the release; the header hides
+        /// when a non-Overture provider has focus or only preset/custom leaves
+        /// are selected.
+        /// </summary>
+        public bool IsOvertureReleaseVisible
+        {
+            get => _isOvertureReleaseVisible;
+            set => SetProperty(ref _isOvertureReleaseVisible, value);
+        }
+
+        internal void UpdateOvertureReleaseVisibility() =>
+            IsOvertureReleaseVisible = SelectableThemeItem.DecideOvertureReleaseVisible(Themes, IsOvertureReleaseVisible);
+
         /// <summary>True for the built-in preset parent nodes (PresetCatalog).</summary>
         private static bool IsPresetThemeKey(string themeKey) =>
             themeKey == PresetCatalog.OsmThemeKey || themeKey == PresetCatalog.SourceCoopThemeKey;

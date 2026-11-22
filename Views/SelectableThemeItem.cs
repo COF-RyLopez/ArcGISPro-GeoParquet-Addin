@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
@@ -132,6 +133,39 @@ namespace DuckDBGeoparquet.Views
             IsSelectable = isLeafNode;
             _isSelected = false;
             _isExpanded = false;
+        }
+
+        /// <summary>
+        /// Finds the expandable parent node for a provider theme key ("osm",
+        /// "sourcecoop", "custom"). Null when absent (e.g. no custom sources saved).
+        /// </summary>
+        public static SelectableThemeItem FindGroup(IEnumerable<SelectableThemeItem> themes, string themeKey)
+        {
+            if (themes == null || string.IsNullOrEmpty(themeKey)) return null;
+            return themes.FirstOrDefault(t => t.IsExpandable && t.ParentThemeForS3 == themeKey);
+        }
+
+        /// <summary>
+        /// Whether the Overture release header should be visible for the given
+        /// selection: any selected Overture leaf (no UserSource) shows it, a
+        /// selection of only preset/custom leaves hides it, and an empty
+        /// selection keeps the current state.
+        /// </summary>
+        public static bool DecideOvertureReleaseVisible(IEnumerable<SelectableThemeItem> themes, bool current)
+        {
+            if (themes == null) return current;
+            bool anyOther = false;
+            foreach (var parent in themes)
+            {
+                var leaves = parent.IsSelectable ? new[] { parent } : (IEnumerable<SelectableThemeItem>)parent.SubItems;
+                foreach (var leaf in leaves)
+                {
+                    if (leaf.IsSelected != true) continue;
+                    if (leaf.UserSource == null) return true; // Overture leaf selected
+                    anyOther = true;
+                }
+            }
+            return anyOther ? false : current;
         }
 
         internal void UpdateSelectionStateFromChildren()

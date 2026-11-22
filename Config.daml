@@ -2,7 +2,7 @@
 <ArcGIS defaultAssembly="DuckDBGeoparquet.dll" defaultNamespace="DuckDBGeoparquet" xmlns="http://schemas.esri.com/DADF/Registry" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://schemas.esri.com/DADF/Registry file:///C:/Program%20Files/ArcGIS/Pro/bin/ArcGIS.Desktop.Framework.xsd">
 	<AddInInfo id="{9e44d8fc-6e1a-4513-9992-85c2de3e2d61}" version="0.9.1" desktopVersion="3.7">
 		<Name>DuckDBGeoparquet</Name>
-		<Description>Export Overture Maps data to GeoParquet format for use in ArcGIS Pro 3.7</Description>
+		<Description>Download GeoParquet data from Overture Maps, OpenStreetMap, Source Cooperative, and custom sources into ArcGIS Pro 3.7</Description>
 		<Image>Images\AddinDesktop32.png</Image>
 		<Author>rylopez</Author>
 		<Company>County of Fresno</Company>
@@ -14,13 +14,13 @@
 	<modules>
 		<insertModule id="DuckDBGeoparquet_Module" className="DuckDBGeoparquet.DuckDBGeoparquetModule" autoLoad="false" caption="DuckDBGeoparquet Module">
 			<tabs>
-				<tab id="DuckDBGeoparquet_Tab" caption="Overture Maps" keytip="O">
+				<tab id="DuckDBGeoparquet_Tab" caption="GeoParquet" keytip="O">
 					<group refID="DuckDBGeoparquet_Group2" />
 					<group refID="DuckDBGeoparquet_Group_Sources" />
 				</tab>
 			</tabs>
 			<groups>
-				<group id="DuckDBGeoparquet_Group2" caption="Overture Maps" appearsOnAddInTab="false" keytip="M">
+				<group id="DuckDBGeoparquet_Group2" caption="GeoParquet" appearsOnAddInTab="false" keytip="M">
 					<labelControl refID="DuckDBGeoparquet_OvertureMapDescription" />
 					<button refID="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" size="large" />
 					<button refID="DuckDBGeoparquet_Views_OvertureGeocoderDockpane_ShowButton" size="large" />
@@ -28,15 +28,19 @@
 					<button refID="DuckDBGeoparquet_Views_MfcDockpane_ShowButton" size="large" />
 				</group>
 				<group id="DuckDBGeoparquet_Group_Sources" caption="Data Sources" appearsOnAddInTab="false" keytip="S">
+					<button refID="DuckDBGeoparquet_DownloadOvertureButton" size="large" />
+					<button refID="DuckDBGeoparquet_DownloadOsmButton" size="large" />
+					<button refID="DuckDBGeoparquet_DownloadSourceCoopButton" size="large" />
+					<button refID="DuckDBGeoparquet_DownloadCustomButton" size="large" />
 					<button refID="DuckDBGeoparquet_AddSourceButton" size="large" />
 				</group>
 			</groups>
 			<controls>
 				<labelControl id="DuckDBGeoparquet_OvertureMapDescription" caption="Import and explore GeoParquet data" />
-				<button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" caption="Download Overture" className="DuckDBGeoparquet.Views.WizardDockpaneShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="L" extendedCaption="Download Overture Maps Data">
-					<tooltip heading="Overture Maps Data Loader">
-                        Download Overture Maps data as GeoParquet files
-						<disabledText>Unable to launch Overture Maps Data Loader at this time</disabledText></tooltip>
+				<button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" caption="Download Data" className="DuckDBGeoparquet.Views.WizardDockpaneShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="L" extendedCaption="Download GeoParquet Data">
+					<tooltip heading="GeoParquet Data Loader">
+                        Download GeoParquet data from Overture Maps, OpenStreetMap, Source Cooperative, or your own custom sources
+						<disabledText>Unable to launch GeoParquet Data Loader at this time</disabledText></tooltip>
 				</button>
 				<button id="DuckDBGeoparquet_Views_OvertureGeocoderDockpane_ShowButton" caption="Overture Geocoder" className="DuckDBGeoparquet.Views.OvertureGeocoderShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="G" extendedCaption="Search Loaded Overture Address and Place Data">
 					<tooltip heading="Overture Geocoder">
@@ -55,8 +59,29 @@
 				</button>
 				<button id="DuckDBGeoparquet_AddSourceButton" caption="Add Data Source" className="DuckDBGeoparquet.Views.AddSourceButton" loadOnClick="true" smallImage="Images\AddInDesktop16.png" largeImage="Images\AddInDesktop32.png" keytip="A" extendedCaption="Add any GeoParquet URL as a data source">
 					<tooltip heading="Add GeoParquet Data Source">
-                        Save any http(s) or s3 GeoParquet URL as a reusable data source. Added sources appear under Custom Sources in the Overture Maps Data Loader.
+                        Save any http(s) or s3 GeoParquet URL as a reusable data source. Added sources appear under Custom Sources in the GeoParquet Data Loader.
 						<disabledText>Unable to open Add Data Source at this time</disabledText></tooltip>
+				</button>
+				<!-- Per-provider entry points: each opens the GeoParquet Data Loader focused on that provider's group -->
+				<button id="DuckDBGeoparquet_DownloadOvertureButton" caption="Overture Maps" className="DuckDBGeoparquet.Views.DownloadOvertureButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="V" extendedCaption="Download Overture Maps Data">
+					<tooltip heading="Overture Maps">
+                        Open the GeoParquet Data Loader with the Overture Maps themes
+						<disabledText>Unable to launch GeoParquet Data Loader at this time</disabledText></tooltip>
+				</button>
+				<button id="DuckDBGeoparquet_DownloadOsmButton" caption="OpenStreetMap" className="DuckDBGeoparquet.Views.DownloadOsmButton" loadOnClick="true" smallImage="Images\OsmProvider16.png" largeImage="Images\OsmProvider32.png" keytip="N" extendedCaption="Download OpenStreetMap LayerCake Extracts">
+					<tooltip heading="OpenStreetMap (LayerCake)">
+                        Open the GeoParquet Data Loader focused on the OpenStreetMap (LayerCake) community extracts
+						<disabledText>Unable to launch GeoParquet Data Loader at this time</disabledText></tooltip>
+				</button>
+				<button id="DuckDBGeoparquet_DownloadSourceCoopButton" caption="Source Cooperative" className="DuckDBGeoparquet.Views.DownloadSourceCoopButton" loadOnClick="true" smallImage="Images\SourceCoopProvider16.png" largeImage="Images\SourceCoopProvider32.png" keytip="R" extendedCaption="Download Source Cooperative Datasets">
+					<tooltip heading="Source Cooperative">
+                        Open the GeoParquet Data Loader focused on the Source Cooperative datasets
+						<disabledText>Unable to launch GeoParquet Data Loader at this time</disabledText></tooltip>
+				</button>
+				<button id="DuckDBGeoparquet_DownloadCustomButton" caption="Custom Sources" className="DuckDBGeoparquet.Views.DownloadCustomSourcesButton" loadOnClick="true" smallImage="Images\FolderWithGISData16.png" largeImage="Images\FolderWithGISData32.png" keytip="U" extendedCaption="Download From Your Custom Sources">
+					<tooltip heading="Custom Sources">
+                        Open the GeoParquet Data Loader focused on your saved custom sources
+						<disabledText>Unable to launch GeoParquet Data Loader at this time</disabledText></tooltip>
 				</button>
 				<!-- Custom Extent Tool -->
 				<tool id="DuckDBGeoparquet_CustomExtentTool" className="DuckDBGeoparquet.Views.CustomExtentTool" caption="Draw Custom Extent" loadOnClick="true" smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool16.png" largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool32.png" condition="esri_mapping_mapPane" keytip="E">
@@ -72,7 +97,7 @@
 				</tool>
 			</controls>
 			<dockPanes>
-				<dockPane id="DuckDBGeoparquet_Views_WizardDockpane_V2" caption="Overture Maps Data Loader" className="DuckDBGeoparquet.Views.WizardDockpaneViewModel" dock="right">
+				<dockPane id="DuckDBGeoparquet_Views_WizardDockpane_V2" caption="GeoParquet Data Loader" className="DuckDBGeoparquet.Views.WizardDockpaneViewModel" dock="right">
 					<content className="DuckDBGeoparquet.Views.WizardDockpaneView" />
 				</dockPane>
 				<dockPane id="DuckDBGeoparquet_Views_OvertureGeocoderDockpane_V2" caption="Overture Geocoder" className="DuckDBGeoparquet.Views.OvertureGeocoderDockpaneViewModel" dock="group" dockWith="DuckDBGeoparquet_Views_WizardDockpane_V2">
