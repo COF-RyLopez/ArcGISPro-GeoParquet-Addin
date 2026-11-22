@@ -32,16 +32,18 @@ namespace DuckDBGeoparquet.Services
         /// selected: flat columns keep the GDAL GeoJSON writer happy and the
         /// output small.
         /// </summary>
-        public async Task ExportPreviewSampleAsync(string s3Path, string outputGeoJsonPath, ExtentBounds extent = null, int maxFeatures = 2000, CancellationToken cancellationToken = default)
+        public async Task ExportPreviewSampleAsync(string s3Path, string outputGeoJsonPath, ExtentBounds extent = null, int maxFeatures = 2000, CancellationToken cancellationToken = default, string attributeFilter = null)
         {
             if (!_isInitialized)
                 throw new InvalidOperationException("DuckDB is not initialized yet.");
 
-            string spatialFilter = "";
+            string attributePredicate = GeoParquetSql.BuildAttributeFilterPredicate(attributeFilter);
+            var predicates = new List<string>();
             if (extent != null)
-            {
-                spatialFilter = $"WHERE {GeoParquetSql.BuildBboxOverlapPredicate(extent)}";
-            }
+                predicates.Add(GeoParquetSql.BuildBboxOverlapPredicate(extent));
+            if (attributePredicate != null)
+                predicates.Add(attributePredicate);
+            string spatialFilter = predicates.Count == 0 ? "" : "WHERE " + string.Join(" AND ", predicates);
 
             string normalizedOutput = GeoParquetSql.EscapeSqlLiteral(outputGeoJsonPath.Replace('\\', '/'));
             using var command = _connection.CreateCommand();

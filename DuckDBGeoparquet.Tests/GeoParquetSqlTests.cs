@@ -191,6 +191,65 @@ namespace DuckDBGeoparquet.Tests
             Assert.Contains("10 20, 30 20, 30 40, 10 40, 10 20", polygon);
         }
 
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("   ")]
+        [InlineData("subtype = 'road'")]
+        [InlineData("WHERE subtype = 'road'")]
+        [InlineData("class IN ('motorway', 'primary') AND num_floors > 10")]
+        [InlineData("names.primary LIKE '%Main%'")]
+        [InlineData("name = 'select'")] // banned word inside a string literal is fine
+        [InlineData("\"class\" = 'x'")] // quoted identifier
+        [InlineData("extract(year FROM update_time) = 2026")]
+        [InlineData("height IS NOT NULL")]
+        public void ValidateAttributeFilter_AcceptsPlainConditions(string filter)
+        {
+            Assert.Null(GeoParquetSql.ValidateAttributeFilter(filter));
+        }
+
+        [Theory]
+        [InlineData("1=1; DROP TABLE current_table", ";")]
+        [InlineData("id IN (SELECT id FROM other)", "SELECT")]
+        [InlineData("id in (sElEcT 1)", "sElEcT")]
+        [InlineData("read_parquet('C:/secrets.parquet') IS NOT NULL", "read_parquet")]
+        [InlineData("getenv('PATH') = 'x'", "getenv")]
+        [InlineData("read_text('C:/secrets.txt') = 'x'", "read_text")]
+        [InlineData("glob('C:/*') IS NOT NULL", "glob")]
+        [InlineData("a = 1 -- comment", "comment")]
+        [InlineData("a = 1 /* comment */", "comment")]
+        [InlineData("a = 1 UNION ALL SELECT 2", "UNION")]
+        [InlineData("name = 'unterminated", "quote")]
+        [InlineData("a = $tag$x$tag$", "$")]
+        public void ValidateAttributeFilter_RejectsDangerousInput(string filter, string _)
+        {
+            Assert.NotNull(GeoParquetSql.ValidateAttributeFilter(filter));
+        }
+
+        [Fact]
+        public void ValidateAttributeFilter_RejectsOverlongFilter()
+        {
+            string filter = "a = 1 AND " + new string('x', GeoParquetSql.MaxAttributeFilterLength);
+            Assert.NotNull(GeoParquetSql.ValidateAttributeFilter(filter));
+        }
+
+        [Fact]
+        public void NormalizeAttributeFilter_StripsLeadingWhereAndWhitespace()
+        {
+            Assert.Equal("subtype = 'road'", GeoParquetSql.NormalizeAttributeFilter("  WHERE subtype = 'road'  "));
+            Assert.Equal("wherever = 1", GeoParquetSql.NormalizeAttributeFilter("wherever = 1"));
+            Assert.Null(GeoParquetSql.NormalizeAttributeFilter("   "));
+            Assert.Null(GeoParquetSql.NormalizeAttributeFilter(null));
+        }
+
+        [Fact]
+        public void BuildAttributeFilterPredicate_WrapsValidFilter_ThrowsOnInvalid()
+        {
+            Assert.Equal("(subtype = 'road')", GeoParquetSql.BuildAttributeFilterPredicate("WHERE subtype = 'road'"));
+            Assert.Null(GeoParquetSql.BuildAttributeFilterPredicate(" "));
+            Assert.Throws<System.ArgumentException>(() => GeoParquetSql.BuildAttributeFilterPredicate("1=1; DROP TABLE x"));
+        }
+
         [Fact]
         public void BuildGeometryExportSelect_UsesCachedGeometryTypeAndExcludesInternalColumn()
         {

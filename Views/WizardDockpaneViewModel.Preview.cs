@@ -142,6 +142,14 @@ namespace DuckDBGeoparquet.Views
             (PreviewSampleCommand as RelayCommand)?.RaiseCanExecuteChanged();
             try
             {
+                string attributeFilter = GeoParquetSql.NormalizeAttributeFilter(AttributeFilter);
+                string filterError = GeoParquetSql.ValidateAttributeFilter(attributeFilter);
+                if (filterError != null)
+                {
+                    AddToLog($"Preview: {filterError}");
+                    return;
+                }
+
                 Envelope extent = await GetConfiguredWgs84ExtentAsync();
                 ExtentBounds extentBounds = extent == null
                     ? null
@@ -182,7 +190,7 @@ namespace DuckDBGeoparquet.Views
                             s3Path,
                             samplePath,
                             extentBounds,
-                            PreviewSampleMaxFeatures, token);
+                            PreviewSampleMaxFeatures, token, attributeFilter);
                         // Send the GeoJSON text through the bridge; the page
                         // renders it via a blob URL (worker-safe, no fetch).
                         string geoJsonText = await File.ReadAllTextAsync(samplePath);

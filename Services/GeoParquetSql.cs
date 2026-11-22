@@ -151,6 +151,116 @@ namespace DuckDBGeoparquet.Services
         public static string FormatCoordinate(double value) =>
             value.ToString("G", CultureInfo.InvariantCulture);
 
+        public const int MaxAttributeFilterLength = 2000;
+
+        // Statement/DDL keywords and file-, network- or environment-reading
+        // functions a WHERE fragment must never contain. SELECT alone already
+        // blocks every subquery and table function. Checked word-by-word on
+        // text with string literals and quoted identifiers stripped.
+        private static readonly string[] AttributeFilterDeniedWords =
+        {
+            "select", "insert", "update", "delete", "drop", "create", "alter",
+            "attach", "detach", "copy", "install", "load", "call", "pragma",
+            "set", "reset", "export", "import", "union", "intersect", "except",
+            "grant", "execute", "prepare", "vacuum", "checkpoint", "begin",
+            "commit", "rollback", "transaction", "use", "summarize", "describe", "show", "with",
+            "read_parquet", "parquet_scan", "read_csv", "read_csv_auto",
+            "read_json", "read_json_auto", "read_json_objects", "read_text",
+            "read_blob", "read_xlsx", "st_read", "glob", "getenv", "sniff_csv",
+            "parquet_metadata", "parquet_schema", "parquet_kv_metadata",
+            "parquet_file_metadata", "database_size", "current_setting"
+        };
+
+        /// <summary>Trims a user-typed attribute filter and strips one leading
+        /// WHERE keyword. Returns null when there is no filter.</summary>
+        public static string NormalizeAttributeFilter(string filter)
+        {
+            filter = filter?.Trim();
+            if (string.IsNullOrEmpty(filter)) return null;
+            if (filter.Length > 6 && filter.StartsWith("where", StringComparison.OrdinalIgnoreCase) &&
+                char.IsWhiteSpace(filter[5]))
+                filter = filter.Substring(6).Trim();
+            return filter.Length == 0 ? null : filter;
+        }
+
+        /// <summary>
+        /// Validates a user-supplied WHERE-clause fragment before it is embedded
+        /// in a download query. This is a trust boundary: the fragment is typed
+        /// free-form, so refuse statement chaining, comments, subqueries, and
+        /// DuckDB functions that read files, the network, or the environment.
+        /// Returns a user-facing error message, or null when the filter is
+        /// acceptable (empty filters are acceptable: they mean "no filter").
+        /// </summary>
+        public static string ValidateAttributeFilter(string filter)
+        {
+            filter = NormalizeAttributeFilter(filter);
+            if (filter == null) return null;
+
+            if (filter.Length > MaxAttributeFilterLength)
+                return $"Attribute filter is too long (over {MaxAttributeFilterLength} characters).";
+
+            // Strip single-quoted string literals ('' escapes a quote) and
+            // double-quoted identifiers so their contents aren't scanned.
+            var stripped = new System.Text.StringBuilder(filter.Length);
+            for (int i = 0; i < filter.Length; i++)
+            {
+                char c = filter[i];
+                if (c == '\'' || c == '"')
+                {
+                    char quote = c;
+                    int j = i + 1;
+                    while (j < filter.Length)
+                    {
+                        if (filter[j] == quote)
+                        {
+                            if (j + 1 < filter.Length && filter[j + 1] == quote) { j += 2; continue; }
+                            break;
+                        }
+                        j++;
+                    }
+                    if (j >= filter.Length)
+                        return quote == '\''
+                            ? "Attribute filter has an unclosed string quote (')."
+                            : "Attribute filter has an unclosed identifier quote (\").";
+                    stripped.Append(quote).Append(quote);
+                    i = j;
+                    continue;
+                }
+                stripped.Append(c);
+            }
+
+            string text = stripped.ToString();
+            if (text.Contains(';')) return "Attribute filter can't contain ';'.";
+            if (text.Contains("--") || text.Contains("/*") || text.Contains("*/"))
+                return "Attribute filter can't contain SQL comments.";
+            if (text.Contains('$'))
+                return "Attribute filter can't contain '$'.";
+
+            foreach (System.Text.RegularExpressions.Match m in
+                System.Text.RegularExpressions.Regex.Matches(text, @"[A-Za-z_][A-Za-z0-9_]*"))
+            {
+                string word = m.Value.ToLowerInvariant();
+                if (System.Array.IndexOf(AttributeFilterDeniedWords, word) >= 0)
+                    return $"Attribute filter can't use '{m.Value}'. Use a plain condition like subtype = 'road'.";
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Wraps a validated attribute filter in parentheses for embedding in a
+        /// WHERE clause. Throws when the filter fails validation — callers show
+        /// the validation message to the user before queries are built, so this
+        /// throw is the backstop, not the UX.
+        /// </summary>
+        public static string BuildAttributeFilterPredicate(string filter)
+        {
+            string error = ValidateAttributeFilter(filter);
+            if (error != null) throw new ArgumentException(error, nameof(filter));
+            filter = NormalizeAttributeFilter(filter);
+            return filter == null ? null : $"({filter})";
+        }
+
         /// <summary>Escapes a value for embedding in a single-quoted SQL literal.</summary>
         public static string EscapeSqlLiteral(string value) =>
             string.IsNullOrEmpty(value) ? string.Empty : value.Replace("'", "''");
