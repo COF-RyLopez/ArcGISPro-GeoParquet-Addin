@@ -7,6 +7,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 ## [Unreleased]
 
 ### Planned
+- **Selected-feature download area** (next): a "Selected Feature(s)" option in Select Area — select a boundary polygon on the map (city, county, state, parcel), and the download uses its exact geometry through the existing polygon pipeline (`ST_Intersects` + optional clip), with large boundaries generalized before querying. Pairs with the Overture Administrative Divisions and OSM Boundaries datasets already in the tree. A named-boundary search (type "Fresno County") is deliberately deferred.
 - **Settings page**: move the add-in settings (proxy, memory limits) from the wizard's Save options expander to an ArcGIS Pro Options property page (Settings → Options → GeoParquet), committing on OK instead of per keystroke.
 - **Self-bundling DuckDB extensions**: an MSBuild target that fetches the matching `spatial`/`httpfs` extensions when missing, so local builds bundle them like CI does, with the engine version declared once.
 - **SQL console**: a "Query Data (SQL)" dockpane for power users — DuckDB SQL against the live snapshot GeoParquet files through the add-in's existing native engine (DuckDB.NET), results grid with CSV/Parquet export, read-only against snapshots.
