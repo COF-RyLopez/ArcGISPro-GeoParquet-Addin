@@ -348,14 +348,18 @@
                             </StackPanel>
                         </Border>
                         </Expander>
-                        <!-- 4. Choose Map Purpose -->
-                        <TextBlock Text="4. Choose Map Purpose" Margin="0,0,0,4"/>
-                        <Border 
+                        <!-- 4. Choose Map Purpose: the purpose styles are tuned to the
+                             Overture schema, so the section hides with the release header
+                             when no Overture data is in play. -->
+                        <TextBlock Text="4. Choose Map Purpose" Margin="0,0,0,4"
+                                   Visibility="{Binding IsMapPurposeVisible, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                        <Border
                                 BorderBrush="{DynamicResource Esri_BorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="2"
                                 Padding="8"
-                                Margin="0,0,0,12">
+                                Margin="0,0,0,12"
+                                Visibility="{Binding IsMapPurposeVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <StackPanel>
                                 <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
                                            Style="{DynamicResource Esri_TextBlockH7}">

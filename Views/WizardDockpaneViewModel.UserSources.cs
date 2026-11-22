@@ -172,8 +172,18 @@ namespace DuckDBGeoparquet.Views
         public bool IsOvertureReleaseVisible
         {
             get => _isOvertureReleaseVisible;
-            set => SetProperty(ref _isOvertureReleaseVisible, value);
+            set
+            {
+                if (SetProperty(ref _isOvertureReleaseVisible, value))
+                    NotifyPropertyChanged(nameof(IsMapPurposeVisible));
+            }
         }
+
+        /// <summary>
+        /// The Choose Map Purpose styles are tuned to the Overture schema, so
+        /// the section shows exactly when the Overture release header does.
+        /// </summary>
+        public bool IsMapPurposeVisible => _isOvertureReleaseVisible;
 
         internal void UpdateOvertureReleaseVisibility() =>
             IsOvertureReleaseVisible = SelectableThemeItem.DecideOvertureReleaseVisible(Themes, IsOvertureReleaseVisible);
