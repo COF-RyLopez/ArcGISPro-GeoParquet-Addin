@@ -922,6 +922,7 @@ namespace DuckDBGeoparquet.Views
                 }
                 themesCollection.Add(parentItem);
             }
+            AppendPresetNodes(themesCollection);
             AppendCustomSourcesNode(themesCollection);
             Themes = themesCollection; // Assign to the public property
             NotifyPropertyChanged(nameof(Themes));
@@ -998,6 +999,9 @@ namespace DuckDBGeoparquet.Views
             {
                 foreach (var themeItem in Themes)
                 {
+                    // Built-in presets are hand-picked, never bulk-selected;
+                    // unchecking Select All still clears them.
+                    if (select && IsPresetThemeKey(themeItem.ParentThemeForS3)) continue;
                     if (themeItem.IsSelectable) // Parent is a leaf
                     {
                         themeItem.IsSelected = select;
@@ -1071,6 +1075,9 @@ namespace DuckDBGeoparquet.Views
 
             foreach (var themeItem in Themes)
             {
+                // Preset leaves are excluded from Select All, so they don't
+                // count toward its checked state either.
+                if (IsPresetThemeKey(themeItem.ParentThemeForS3)) continue;
                 if (themeItem.IsSelectable) // It's a leaf parent (e.g., Places)
                 {
                     leafItems.Add(themeItem);
