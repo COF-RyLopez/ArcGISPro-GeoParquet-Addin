@@ -13,7 +13,9 @@ namespace DuckDBGeoparquet.Views
         {
             if (PropertySheet.IsVisible)
                 return;
-            PropertySheet.ShowDialog(SheetId, PageId, null);
+            // Typed empty array: a bare null is ambiguous between the
+            // ShowDialog overloads (CS0121).
+            PropertySheet.ShowDialog(SheetId, PageId, System.Array.Empty<object>());
         }
     }
 }
