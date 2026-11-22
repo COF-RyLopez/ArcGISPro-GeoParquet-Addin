@@ -621,7 +621,8 @@ namespace DuckDBGeoparquet.Views
                     StatusText = $"Checking availability of release {release}...";
                     await new OvertureReleaseDiscovery().EnsureAvailableAsync(release, token);
                 }
-                snapshot = new DownloadSnapshot(dataDirectory, release, bounds, compression);
+                string providerTag = SelectableThemeItem.ComputeProviderTag(selected);
+                snapshot = new DownloadSnapshot(dataDirectory, release, bounds, compression, providerTag);
                 _dataProcessor.ClearPendingLayers();
                 _dataProcessor.BeginNewOutputSession();
                 _dataProcessor.SelectedCartographicProfile = SelectedCartographicProfile;

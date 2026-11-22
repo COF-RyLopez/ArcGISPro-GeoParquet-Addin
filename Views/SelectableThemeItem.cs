@@ -168,6 +168,27 @@ namespace DuckDBGeoparquet.Views
             return anyOther ? false : current;
         }
 
+        /// <summary>
+        /// Folder-safe provider tag for a download's selected leaves:
+        /// "Overture", "OSM", "SourceCoop", "Custom", or "Mixed" when the
+        /// selection spans providers. Snapshot folders and Contents group
+        /// layers are named from this (see DownloadSnapshot).
+        /// </summary>
+        public static string ComputeProviderTag(IEnumerable<SelectableThemeItem> selectedLeaves)
+        {
+            string tag = null;
+            foreach (var leaf in selectedLeaves ?? Enumerable.Empty<SelectableThemeItem>())
+            {
+                string leafTag = leaf.UserSource == null ? "Overture"
+                    : leaf.ParentThemeForS3 == Services.PresetCatalog.OsmThemeKey ? "OSM"
+                    : leaf.ParentThemeForS3 == Services.PresetCatalog.SourceCoopThemeKey ? "SourceCoop"
+                    : "Custom";
+                if (tag == null) tag = leafTag;
+                else if (tag != leafTag) return "Mixed";
+            }
+            return tag ?? "Overture";
+        }
+
         internal void UpdateSelectionStateFromChildren()
         {
             if (!IsExpandable || _isUpdatingSubItems)

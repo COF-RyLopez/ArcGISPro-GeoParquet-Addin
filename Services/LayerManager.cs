@@ -104,7 +104,7 @@ namespace DuckDBGeoparquet.Services
                     GroupLayer group = null;
                     if (sorted.Count > 0)
                     {
-                        string name = snapshotPath == null ? "Overture data" : "Overture " + Path.GetFileName(snapshotPath);
+                        string name = snapshotPath == null ? "GeoParquet data" : DownloadSnapshot.DescribeFolder(Path.GetFileName(snapshotPath));
                         group = LayerFactory.Instance.CreateGroupLayer(map, 0, name);
                         group.SetVisibility(false);
                     }

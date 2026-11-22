@@ -32,16 +32,51 @@ namespace DuckDBGeoparquet.Services
         public string FinalPath { get; }
         public SnapshotManifest Manifest { get; }
 
-        public DownloadSnapshot(string dataDirectory, string release, ExtentBounds area, string compression)
+        public DownloadSnapshot(string dataDirectory, string release, ExtentBounds area, string compression, string providerTag = "Overture")
         {
-            if (!Regex.IsMatch(release ?? "", @"^\d{4}-\d{2}-\d{2}\.\d+$"))
+            // Folder-name safety backstop; real tags come from SelectableThemeItem.ComputeProviderTag.
+            providerTag = Regex.Replace(providerTag ?? "", "[^A-Za-z0-9]", "");
+            if (providerTag.Length == 0) providerTag = "Overture";
+            bool usesOverture = providerTag is "Overture" or "Mixed";
+            if (usesOverture && !Regex.IsMatch(release ?? "", ReleasePattern))
                 throw new ArgumentException("Choose a dated Overture release before downloading.", nameof(release));
             _dataDirectory = Path.GetFullPath(dataDirectory);
-            _id = release + "_" + DateTime.UtcNow.ToString("yyyyMMddHHmmss") + "_" + Guid.NewGuid().ToString("N")[..8];
+            string stamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+            string hash = Guid.NewGuid().ToString("N")[..8];
+            _id = usesOverture ? $"{providerTag}_{release}_{stamp}_{hash}" : $"{providerTag}_{stamp}_{hash}";
             StagingPath = Path.Combine(_dataDirectory, ".staging", _id);
             FinalPath = Path.Combine(_dataDirectory, _id);
             Directory.CreateDirectory(StagingPath);
-            Manifest = new SnapshotManifest { Release = release, Area = area, Compression = compression };
+            Manifest = new SnapshotManifest { Release = usesOverture ? release : null, Area = area, Compression = compression };
+        }
+
+        private const string ReleasePattern = @"^\d{4}-\d{2}-\d{2}\.\d+$";
+
+        /// <summary>
+        /// Human name for a snapshot folder, e.g. "OSM — 2026-11-22 04:34" or
+        /// "Overture 2026-11-18.0 — 2026-11-22 04:34" (UTC, same stamp as the
+        /// folder). Pre-provider-tag folders ({release}_{stamp}_{hash}) read as
+        /// Overture; unrecognized names return unchanged.
+        /// </summary>
+        public static string DescribeFolder(string folderName)
+        {
+            if (string.IsNullOrWhiteSpace(folderName)) return folderName;
+            string[] parts = folderName.Split('_');
+            int stampIndex = Array.FindIndex(parts, p => p.Length == 14 && p.All(char.IsDigit));
+            if (stampIndex < 1 || !DateTime.TryParseExact(parts[stampIndex], "yyyyMMddHHmmss",
+                    System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var stamp))
+                return folderName;
+
+            string label;
+            if (Regex.IsMatch(parts[0], ReleasePattern))
+                label = "Overture " + parts[0];
+            else
+            {
+                label = parts[0] == "SourceCoop" ? "Source Coop" : parts[0];
+                if (stampIndex > 1 && Regex.IsMatch(parts[1], ReleasePattern))
+                    label += " " + parts[1];
+            }
+            return $"{label} — {stamp:yyyy-MM-dd HH:mm}";
         }
 
         public string Commit()

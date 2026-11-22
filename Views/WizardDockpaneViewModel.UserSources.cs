@@ -103,6 +103,28 @@ namespace DuckDBGeoparquet.Views
             Instance?.FocusThemeGroup(themeKey);
         }
 
+        /// <summary>
+        /// Shows the dockpane, expands the provider's group, and checks exactly
+        /// the named dataset leaf (ribbon gallery entry point). Existing
+        /// selections are left alone.
+        /// </summary>
+        internal static void ShowFocusedDataset(string themeKey, string datasetName)
+        {
+            Show();
+            Instance?.FocusThemeDataset(themeKey, datasetName);
+        }
+
+        internal void FocusThemeDataset(string themeKey, string datasetName)
+        {
+            var group = SelectableThemeItem.FindGroup(Themes, themeKey);
+            if (group == null) return;
+            group.IsExpanded = true;
+            var leaf = group.SubItems.FirstOrDefault(l => l.DisplayName == datasetName);
+            if (leaf != null && leaf.IsSelected != true)
+                leaf.IsSelected = true;
+            UpdateOvertureReleaseVisibility();
+        }
+
         internal void FocusThemeGroup(string themeKey)
         {
             if (string.IsNullOrEmpty(themeKey))

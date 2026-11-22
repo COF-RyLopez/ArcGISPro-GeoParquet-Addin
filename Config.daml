@@ -16,28 +16,37 @@
 			<tabs>
 				<tab id="DuckDBGeoparquet_Tab" caption="GeoParquet" keytip="O">
 					<group refID="DuckDBGeoparquet_Group2" />
-					<group refID="DuckDBGeoparquet_Group_Sources" />
+					<group refID="DuckDBGeoparquet_Group_Overture" />
+					<group refID="DuckDBGeoparquet_Group_Osm" />
+					<group refID="DuckDBGeoparquet_Group_SourceCoop" />
+					<group refID="DuckDBGeoparquet_Group_Custom" />
 				</tab>
 			</tabs>
 			<groups>
 				<group id="DuckDBGeoparquet_Group2" caption="GeoParquet" appearsOnAddInTab="false" keytip="M">
 					<labelControl refID="DuckDBGeoparquet_OvertureMapDescription" />
 					<button refID="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" size="large" />
+				</group>
+				<group id="DuckDBGeoparquet_Group_Overture" caption="Overture Maps" appearsOnAddInTab="false" keytip="T">
+					<button refID="DuckDBGeoparquet_DownloadOvertureButton" size="large" />
 					<button refID="DuckDBGeoparquet_Views_OvertureGeocoderDockpane_ShowButton" size="large" />
 					<button refID="DuckDBGeoparquet_Views_GersifyDockpane_ShowButton" size="large" />
 					<button refID="DuckDBGeoparquet_Views_MfcDockpane_ShowButton" size="large" />
 				</group>
-				<group id="DuckDBGeoparquet_Group_Sources" caption="Data Sources" appearsOnAddInTab="false" keytip="S">
-					<button refID="DuckDBGeoparquet_DownloadOvertureButton" size="large" />
-					<button refID="DuckDBGeoparquet_DownloadOsmButton" size="large" />
-					<button refID="DuckDBGeoparquet_DownloadSourceCoopButton" size="large" />
+				<group id="DuckDBGeoparquet_Group_Osm" caption="OpenStreetMap" appearsOnAddInTab="false" keytip="Y">
+					<gallery refID="DuckDBGeoparquet_OsmDatasetGallery" inline="true" size="large" />
+				</group>
+				<group id="DuckDBGeoparquet_Group_SourceCoop" caption="Source Cooperative" appearsOnAddInTab="false" keytip="J">
+					<gallery refID="DuckDBGeoparquet_SourceCoopDatasetGallery" inline="true" size="large" />
+				</group>
+				<group id="DuckDBGeoparquet_Group_Custom" caption="Custom Sources" appearsOnAddInTab="false" keytip="K">
 					<button refID="DuckDBGeoparquet_DownloadCustomButton" size="large" />
 					<button refID="DuckDBGeoparquet_AddSourceButton" size="large" />
 				</group>
 			</groups>
 			<controls>
 				<labelControl id="DuckDBGeoparquet_OvertureMapDescription" caption="Import and explore GeoParquet data" />
-				<button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" caption="Download Data" className="DuckDBGeoparquet.Views.WizardDockpaneShowButton" loadOnClick="true" smallImage="Images\Overture16.png" largeImage="Images\Overture32.png" keytip="L" extendedCaption="Download GeoParquet Data">
+				<button id="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" caption="Download Data" className="DuckDBGeoparquet.Views.WizardDockpaneShowButton" loadOnClick="true" smallImage="Images\GeoParquetDownload16.png" largeImage="Images\GeoParquetDownload32.png" keytip="L" extendedCaption="Download GeoParquet Data">
 					<tooltip heading="GeoParquet Data Loader">
                         Download GeoParquet data from Overture Maps, OpenStreetMap, Source Cooperative, or your own custom sources
 						<disabledText>Unable to launch GeoParquet Data Loader at this time</disabledText></tooltip>
@@ -96,6 +105,15 @@
 						<disabledText>A map must be open to use this tool</disabledText></tooltip>
 				</tool>
 			</controls>
+			<galleries>
+				<!-- Inline per-dataset galleries; items come from PresetCatalog at runtime -->
+				<gallery id="DuckDBGeoparquet_OsmDatasetGallery" caption="OSM LayerCake" className="DuckDBGeoparquet.Views.OsmDatasetGallery" itemsInRow="5" keytip="1" dataTemplateFile="pack://application:,,,/DuckDBGeoparquet;component/Views/GalleryItemTemplate.xaml" templateID="ProviderDatasetItemTemplate" resizable="true" largeImage="Images\OsmProvider32.png" smallImage="Images\OsmProvider16.png">
+					<tooltip heading="OpenStreetMap (LayerCake)">Pick a LayerCake community extract to download; opens the GeoParquet Data Loader with it selected<disabledText /></tooltip>
+				</gallery>
+				<gallery id="DuckDBGeoparquet_SourceCoopDatasetGallery" caption="Source Cooperative" className="DuckDBGeoparquet.Views.SourceCoopDatasetGallery" itemsInRow="4" keytip="2" dataTemplateFile="pack://application:,,,/DuckDBGeoparquet;component/Views/GalleryItemTemplate.xaml" templateID="ProviderDatasetItemTemplate" resizable="true" largeImage="Images\SourceCoopProvider32.png" smallImage="Images\SourceCoopProvider16.png">
+					<tooltip heading="Source Cooperative">Pick a Source Cooperative dataset to download; opens the GeoParquet Data Loader with it selected<disabledText /></tooltip>
+				</gallery>
+			</galleries>
 			<dockPanes>
 				<dockPane id="DuckDBGeoparquet_Views_WizardDockpane_V2" caption="GeoParquet Data Loader" className="DuckDBGeoparquet.Views.WizardDockpaneViewModel" dock="right">
 					<content className="DuckDBGeoparquet.Views.WizardDockpaneView" />
