@@ -236,7 +236,8 @@ SET enable_progress_bar=true;
 SET memory_limit='{GeoParquetSql.EscapeSqlLiteral(memoryLimit)}';
 SET max_memory='{GeoParquetSql.EscapeSqlLiteral(maxMemory)}';
 SET temp_directory='{tempDir}';
-SET threads={Math.Max(1, threads)};";
+SET threads={Math.Max(1, threads)};
+{PresetCatalog.SourceCoopSecretSql}";
         }
 
         /// <summary>

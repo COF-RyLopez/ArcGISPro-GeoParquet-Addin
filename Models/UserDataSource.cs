@@ -20,5 +20,12 @@ namespace DuckDBGeoparquet.Models
         /// GEOMETRY-typed column, and needs ST_GeomFromWKB on read.
         /// </summary>
         public bool GeometryIsWkb { get; set; }
+
+        /// <summary>
+        /// True for built-in preset sources (PresetCatalog): shown in the theme
+        /// tree but never saved to user_sources.json and not removable.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool IsBuiltIn { get; set; }
     }
 }

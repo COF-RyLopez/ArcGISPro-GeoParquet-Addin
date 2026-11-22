@@ -66,7 +66,7 @@ namespace DuckDBGeoparquet.Views
                 () => !_isValidatingSource && !IsWorking &&
                       !string.IsNullOrWhiteSpace(NewSourceName) && !string.IsNullOrWhiteSpace(NewSourceUrl));
             RemoveUserSourceCommand = new RelayCommand(() => RemoveSelectedUserSource(),
-                () => SelectedItemForPreview?.UserSource != null);
+                () => SelectedItemForPreview?.UserSource is { IsBuiltIn: false });
         }
 
         /// <summary>
@@ -82,6 +82,39 @@ namespace DuckDBGeoparquet.Views
             foreach (var source in _userSources)
             {
                 var leaf = new SelectableThemeItem(source.Name, UserSourceStore.SanitizeTypeName(source.Name), CustomSourcesThemeKey, true)
+                {
+                    Parent = parent,
+                    UserSource = source
+                };
+                leaf.SelectionChanged += OnLeafThemeSelectionChanged;
+                parent.SubItems.Add(leaf);
+            }
+            themes.Add(parent);
+        }
+
+        /// <summary>True for the built-in preset parent nodes (PresetCatalog).</summary>
+        private static bool IsPresetThemeKey(string themeKey) =>
+            themeKey == PresetCatalog.OsmThemeKey || themeKey == PresetCatalog.SourceCoopThemeKey;
+
+        /// <summary>
+        /// Appends the built-in preset groups (OpenStreetMap LayerCake, Source
+        /// Cooperative) to the theme tree. Presets are UserDataSource instances
+        /// with shipped geometry metadata, so they download through the same
+        /// pipeline as user-defined custom sources — no probe, no persistence.
+        /// </summary>
+        private void AppendPresetNodes(ObservableCollection<SelectableThemeItem> themes)
+        {
+            AppendPresetGroup(themes, PresetCatalog.OsmDisplayName, PresetCatalog.OsmThemeKey, PresetCatalog.OpenStreetMap);
+            AppendPresetGroup(themes, PresetCatalog.SourceCoopDisplayName, PresetCatalog.SourceCoopThemeKey, PresetCatalog.SourceCooperative);
+        }
+
+        private void AppendPresetGroup(ObservableCollection<SelectableThemeItem> themes,
+            string displayName, string themeKey, IReadOnlyList<UserDataSource> presets)
+        {
+            var parent = new SelectableThemeItem(displayName, themeKey, themeKey, false);
+            foreach (var source in presets)
+            {
+                var leaf = new SelectableThemeItem(source.Name, UserSourceStore.SanitizeTypeName(source.Name), themeKey, true)
                 {
                     Parent = parent,
                     UserSource = source
@@ -144,7 +177,7 @@ namespace DuckDBGeoparquet.Views
         private void RemoveSelectedUserSource()
         {
             var source = SelectedItemForPreview?.UserSource;
-            if (source == null) return;
+            if (source == null || source.IsBuiltIn) return;
             _userSources.RemoveAll(s => ReferenceEquals(s, source) ||
                 string.Equals(s.Name, source.Name, StringComparison.OrdinalIgnoreCase));
             UserSourceStore.Save(UserSourceStorePath, _userSources);
