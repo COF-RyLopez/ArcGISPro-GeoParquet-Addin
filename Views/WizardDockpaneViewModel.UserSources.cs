@@ -92,6 +92,23 @@ namespace DuckDBGeoparquet.Views
             themes.Add(parent);
         }
 
+        /// <summary>
+        /// Shows the dockpane and expands the given provider's parent node in
+        /// the theme tree. Null themeKey (Overture: the top-level themes) just
+        /// shows the pane. Expands only — collapses nothing, selects nothing.
+        /// </summary>
+        internal static void ShowFocused(string themeKey)
+        {
+            Show();
+            if (themeKey != null) Instance?.FocusThemeGroup(themeKey);
+        }
+
+        internal void FocusThemeGroup(string themeKey)
+        {
+            var group = SelectableThemeItem.FindGroup(Themes, themeKey);
+            if (group != null) group.IsExpanded = true;
+        }
+
         /// <summary>True for the built-in preset parent nodes (PresetCatalog).</summary>
         private static bool IsPresetThemeKey(string themeKey) =>
             themeKey == PresetCatalog.OsmThemeKey || themeKey == PresetCatalog.SourceCoopThemeKey;

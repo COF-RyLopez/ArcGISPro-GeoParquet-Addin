@@ -45,8 +45,8 @@ namespace DuckDBGeoparquet.Views
 
                 // Show a friendly error message
                 ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
-                    "Unable to open the Overture Maps Data Loader. Please check ArcGIS Pro logs for details.",
-                    "Error Opening Overture Maps",
+                    "Unable to open the GeoParquet Data Loader. Please check ArcGIS Pro logs for details.",
+                    "Error Opening GeoParquet Data Loader",
                     System.Windows.MessageBoxButton.OK,
                     System.Windows.MessageBoxImage.Error);
             }

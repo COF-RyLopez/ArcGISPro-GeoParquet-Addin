@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
@@ -132,6 +133,16 @@ namespace DuckDBGeoparquet.Views
             IsSelectable = isLeafNode;
             _isSelected = false;
             _isExpanded = false;
+        }
+
+        /// <summary>
+        /// Finds the expandable parent node for a provider theme key ("osm",
+        /// "sourcecoop", "custom"). Null when absent (e.g. no custom sources saved).
+        /// </summary>
+        public static SelectableThemeItem FindGroup(IEnumerable<SelectableThemeItem> themes, string themeKey)
+        {
+            if (themes == null || string.IsNullOrEmpty(themeKey)) return null;
+            return themes.FirstOrDefault(t => t.IsExpandable && t.ParentThemeForS3 == themeKey);
         }
 
         internal void UpdateSelectionStateFromChildren()
