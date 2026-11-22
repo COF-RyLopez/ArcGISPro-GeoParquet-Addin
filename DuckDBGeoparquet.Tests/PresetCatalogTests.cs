@@ -15,7 +15,7 @@ namespace DuckDBGeoparquet.Tests
         public void Catalog_HasExpectedGroups()
         {
             Assert.Equal(9, PresetCatalog.OpenStreetMap.Count);
-            Assert.Equal(8, PresetCatalog.SourceCooperative.Count);
+            Assert.Equal(7, PresetCatalog.SourceCooperative.Count);
         }
 
         [Fact]
