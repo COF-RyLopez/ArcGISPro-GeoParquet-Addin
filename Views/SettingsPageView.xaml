@@ -1,0 +1,67 @@
+<UserControl x:Class="DuckDBGeoparquet.Views.SettingsPageView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:local="clr-namespace:DuckDBGeoparquet.Views"
+    xmlns:extensions="clr-namespace:ArcGIS.Desktop.Extensions;assembly=ArcGIS.Desktop.Extensions"
+    mc:Ignorable="d"
+    d:DataContext="{d:DesignInstance Type=local:SettingsPageViewModel, IsDesignTimeCreatable=False}">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <extensions:DesignOnlyResourceDictionary Source="pack://application:,,,/ArcGIS.Desktop.Framework;component\Themes\Default.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+    <StackPanel Margin="12">
+        <TextBlock Text="Network proxy" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,0,0,4"/>
+        <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+            S3 and Overture reads use DuckDB httpfs. Leave the proxy blank to auto-detect the Windows system proxy. Fill it in only when you need a manual corporate proxy.
+        </TextBlock>
+        <TextBlock Text="{Binding DetectedProxyDisplay}" TextWrapping="Wrap" Margin="0,0,0,8" Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+        <Grid Margin="0,4,0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="110"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="HTTP proxy:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox Grid.Column="1" Text="{Binding HttpProxy, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center"
+                     ToolTip="Optional. Examples: proxy.corp.example:8080 or http://proxy.corp.example:8080"/>
+        </Grid>
+        <Grid Margin="0,4,0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="110"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Proxy username:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox Grid.Column="1" Text="{Binding HttpProxyUsername, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center"/>
+        </Grid>
+        <Grid Margin="0,4,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="110"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Proxy password:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <PasswordBox Grid.Column="1" x:Name="ProxyPasswordBox" PasswordChanged="ProxyPasswordBox_PasswordChanged" VerticalAlignment="Center"/>
+        </Grid>
+        <TextBlock Text="DuckDB memory" Style="{DynamicResource Esri_TextBlockH3}" Margin="0,8,0,4"/>
+        <Grid Margin="0,4,0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="110"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Memory limit:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox Grid.Column="1" Text="{Binding MemoryLimit, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center" Margin="0,0,8,0"
+                     ToolTip="DuckDB memory_limit. Default 2GB. Sizes like 512MB, 2GB, 1.5GB."/>
+            <TextBlock Grid.Column="2" Text="Max memory:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox Grid.Column="3" Text="{Binding MaxMemory, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center"
+                     ToolTip="DuckDB max_memory. Default 4GB."/>
+        </Grid>
+        <TextBlock TextWrapping="Wrap" Margin="0,4,0,0" Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}">
+            Changes apply when you click OK. Invalid sizes fall back to the defaults.
+        </TextBlock>
+    </StackPanel>
+</UserControl>
