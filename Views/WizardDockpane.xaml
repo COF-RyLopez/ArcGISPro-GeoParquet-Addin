@@ -75,14 +75,24 @@
                                 Padding="8"
                                 Margin="0,0,0,12">
                             <StackPanel>
-                                <CheckBox Content="Select All Themes" 
-                                          IsChecked="{Binding IsSelectAllChecked, Mode=TwoWay}" 
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8"
+                                            Visibility="{Binding IsProviderFiltered, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <TextBlock Text="{Binding ProviderFilterLabel}" VerticalAlignment="Center"
+                                               Style="{DynamicResource Esri_TextBlockH7}"
+                                               Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                    <Button Content="Show all providers" Command="{Binding ShowAllProvidersCommand}"
+                                            Margin="8,0,0,0" Padding="6,1"/>
+                                </StackPanel>
+                                <CheckBox Content="Select All Themes"
+                                          IsChecked="{Binding IsSelectAllChecked, Mode=TwoWay}"
                                           Margin="0,0,0,8"
+                                          Visibility="{Binding IsSelectAllVisible, Converter={StaticResource BooleanToVisibilityConverter}}"
                                           />
                                 <ItemsControl ItemsSource="{Binding Themes}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="{x:Type local:SelectableThemeItem}">
-                                            <Expander Style="{DynamicResource Esri_Expander}" Header="{Binding DisplayName}" IsExpanded="{Binding IsExpanded, Mode=TwoWay}" Margin="0,2">
+                                            <Expander Style="{DynamicResource Esri_Expander}" Header="{Binding DisplayName}" IsExpanded="{Binding IsExpanded, Mode=TwoWay}" Margin="0,2"
+                                                      Visibility="{Binding IsVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                 <Expander.HeaderTemplate>
                                                     <DataTemplate>
                                                         <StackPanel Orientation="Horizontal">
@@ -338,14 +348,18 @@
                             </StackPanel>
                         </Border>
                         </Expander>
-                        <!-- 4. Choose Map Purpose -->
-                        <TextBlock Text="4. Choose Map Purpose" Margin="0,0,0,4"/>
-                        <Border 
+                        <!-- 4. Choose Map Purpose: the purpose styles are tuned to the
+                             Overture schema, so the section hides with the release header
+                             when no Overture data is in play. -->
+                        <TextBlock Text="4. Choose Map Purpose" Margin="0,0,0,4"
+                                   Visibility="{Binding IsMapPurposeVisible, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                        <Border
                                 BorderBrush="{DynamicResource Esri_BorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="2"
                                 Padding="8"
-                                Margin="0,0,0,12">
+                                Margin="0,0,0,12"
+                                Visibility="{Binding IsMapPurposeVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <StackPanel>
                                 <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"
                                            Style="{DynamicResource Esri_TextBlockH7}">

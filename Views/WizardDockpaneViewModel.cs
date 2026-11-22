@@ -621,7 +621,8 @@ namespace DuckDBGeoparquet.Views
                     StatusText = $"Checking availability of release {release}...";
                     await new OvertureReleaseDiscovery().EnsureAvailableAsync(release, token);
                 }
-                snapshot = new DownloadSnapshot(dataDirectory, release, bounds, compression);
+                string providerTag = SelectableThemeItem.ComputeProviderTag(selected);
+                snapshot = new DownloadSnapshot(dataDirectory, release, bounds, compression, providerTag);
                 _dataProcessor.ClearPendingLayers();
                 _dataProcessor.BeginNewOutputSession();
                 _dataProcessor.SelectedCartographicProfile = SelectedCartographicProfile;
@@ -927,6 +928,7 @@ namespace DuckDBGeoparquet.Views
             AppendCustomSourcesNode(themesCollection);
             Themes = themesCollection; // Assign to the public property
             NotifyPropertyChanged(nameof(Themes));
+            ApplyProviderFilter(_providerFilterKey); // rebuilt nodes default to visible
             UpdateIsSelectAllCheckedStatus(); // Set initial state of SelectAll checkbox
             (SelectAllCommand as RelayCommand)?.RaiseCanExecuteChanged(); // Update command state
         }
