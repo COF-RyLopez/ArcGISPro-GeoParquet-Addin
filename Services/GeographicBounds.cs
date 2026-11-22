@@ -1,10 +1,57 @@
 using DuckDBGeoparquet.Models;
 using System;
+using System.Globalization;
 
 namespace DuckDBGeoparquet.Services
 {
     public static class GeographicBounds
     {
+        /// <summary>
+        /// Parses a user-typed coordinate. Always accepts '.' as the decimal
+        /// separator; a lone ',' with no '.' is treated as a decimal comma so
+        /// values pasted from comma-decimal locales work. Thousands separators
+        /// are never accepted — "1,234" means 1.234, not 1234.
+        /// </summary>
+        public static bool TryParseCoordinate(string text, out double value)
+        {
+            value = 0;
+            text = text?.Trim();
+            if (string.IsNullOrEmpty(text)) return false;
+            if (!text.Contains('.') && CountChar(text, ',') == 1)
+                text = text.Replace(',', '.');
+            return double.TryParse(text,
+                NumberStyles.Float & ~NumberStyles.AllowThousands,
+                CultureInfo.InvariantCulture, out value) && double.IsFinite(value);
+        }
+
+        private static int CountChar(string text, char c)
+        {
+            int count = 0;
+            foreach (char ch in text) if (ch == c) count++;
+            return count;
+        }
+
+        /// <summary>
+        /// Parses the four typed bbox fields into a validated WGS84 extent.
+        /// Returns a user-facing error message, or null on success.
+        /// </summary>
+        public static string TryParseBbox(string west, string south, string east, string north, out ExtentBounds bounds)
+        {
+            bounds = null;
+            if (!TryParseCoordinate(west, out double xMin)) return "West must be a number (decimal degrees).";
+            if (!TryParseCoordinate(south, out double yMin)) return "South must be a number (decimal degrees).";
+            if (!TryParseCoordinate(east, out double xMax)) return "East must be a number (decimal degrees).";
+            if (!TryParseCoordinate(north, out double yMax)) return "North must be a number (decimal degrees).";
+            if (xMin < -180 || xMin > 180 || xMax < -180 || xMax > 180)
+                return "West and East must be between -180 and 180.";
+            if (yMin < -90 || yMin > 90 || yMax < -90 || yMax > 90)
+                return "South and North must be between -90 and 90.";
+            if (xMin >= xMax) return "West must be less than East.";
+            if (yMin >= yMax) return "South must be less than North.";
+            bounds = new ExtentBounds(xMin, yMin, xMax, yMax);
+            return null;
+        }
+
         public static void Validate(ExtentBounds bounds)
         {
             if (bounds == null || !double.IsFinite(bounds.XMin) || !double.IsFinite(bounds.XMax) ||

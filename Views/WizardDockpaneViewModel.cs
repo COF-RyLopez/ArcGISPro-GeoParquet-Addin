@@ -213,6 +213,8 @@ namespace DuckDBGeoparquet.Views
             ClearCacheCommand = new RelayCommand(() => ClearCache(), () => ArcGISProVersionHelper.IsPro36OrLater);
             ShowThemeInfoCommand = new RelayCommand(() => ShowThemeInfo(), () => SelectedItemForPreview != null);
             SetCustomExtentCommand = new RelayCommand(() => SetCustomExtent(), () => UseCustomExtent);
+            DrawPolygonCommand = new RelayCommand(() => SetPolygonExtent(), () => UsePolygonExtent);
+            RefreshExtentLayersCommand = new RelayCommand(async () => await RefreshExtentLayersAsync());
             BrowseDataLocationCommand = new RelayCommand(() => BrowseDataLocation());
             BrowseFileGeodatabaseCommand = new RelayCommand(() => BrowseFileGeodatabase(), () => SaveToFileGeodatabase);
             ApplyManualReleaseCommand = new RelayCommand(() => ApplyManualRelease(), () => !string.IsNullOrWhiteSpace(ManualReleaseText));
@@ -257,6 +259,7 @@ namespace DuckDBGeoparquet.Views
             InitializeUserSourceCommands();
 
             CustomExtentTool.ExtentCreatedStatic += OnExtentCreated;
+            CustomPolygonTool.PolygonCreatedStatic += OnAoiPolygonCreated;
 
             Themes = new ObservableCollection<SelectableThemeItem>();
             LogOutput = new StringBuilder();
@@ -465,7 +468,10 @@ namespace DuckDBGeoparquet.Views
             {
                 SpatialReference wgs84 = SpatialReferenceBuilder.CreateSpatialReference(ExtentResolution.Wgs84Wkid);
 
-                switch (ExtentResolution.ChooseSource(UseCurrentMapExtent, view != null, UseCustomExtent, CustomExtent != null))
+                switch (ExtentResolution.ChooseSource(UseCurrentMapExtent, view != null, UseCustomExtent, CustomExtent != null,
+                    UseTypedExtent, GetTypedExtentOrNull() != null,
+                    UseLayerExtent, SelectedExtentLayer != null,
+                    UsePolygonExtent, _aoiPolygonEnvelope != null))
                 {
                     case ExtentSource.Map:
                     {
@@ -512,6 +518,42 @@ namespace DuckDBGeoparquet.Views
                         AddToLog($"Using custom WGS84 extent: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
                         System.Diagnostics.Debug.WriteLine($"Using custom WGS84 extent: {extent.XMin}, {extent.YMin}, {extent.XMax}, {extent.YMax}");
                         break;
+                    case ExtentSource.Typed:
+                    {
+                        var typed = GetTypedExtentOrNull();
+                        extent = EnvelopeBuilderEx.CreateEnvelope(typed.XMin, typed.YMin, typed.XMax, typed.YMax, wgs84);
+                        AddToLog($"Using typed WGS84 extent: {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
+                        break;
+                    }
+                    case ExtentSource.Layer:
+                    {
+                        var layer = SelectedExtentLayer;
+                        Envelope layerExtent = null;
+                        try { layerExtent = layer.QueryExtent(); }
+                        catch (Exception ex)
+                        {
+                            AddToLog($"Could not read the extent of layer '{layer.Name}': {ex.Message}");
+                            throw new InvalidOperationException($"Could not read the extent of layer '{layer.Name}'. Refresh the layer list and pick another layer.", ex);
+                        }
+                        if (layerExtent == null || layerExtent.IsEmpty)
+                            throw new InvalidOperationException($"Layer '{layer.Name}' has no extent. Pick another layer.");
+                        if (ExtentResolution.NeedsProjectionToWgs84(layerExtent.SpatialReference?.Wkid))
+                        {
+                            extent = GeometryEngine.Instance.Project(layerExtent, wgs84) as Envelope;
+                            if (extent == null)
+                                throw new InvalidOperationException($"Could not project the extent of layer '{layer.Name}' to WGS84.");
+                        }
+                        else
+                        {
+                            extent = layerExtent;
+                        }
+                        AddToLog($"Using extent of layer '{layer.Name}' (WGS84): {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
+                        break;
+                    }
+                    case ExtentSource.Polygon:
+                        extent = _aoiPolygonEnvelope;
+                        AddToLog($"Using drawn polygon area (WGS84 envelope): {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
+                        break;
                     default:
                         AddToLog("No extent specified or available for filtering.");
                         break;
@@ -554,12 +596,23 @@ namespace DuckDBGeoparquet.Views
                 string attributeFilter = GeoParquetSql.NormalizeAttributeFilter(AttributeFilter);
                 string filterError = GeoParquetSql.ValidateAttributeFilter(attributeFilter);
                 if (filterError != null) throw new InvalidOperationException(filterError);
+                if (UseTypedExtent)
+                {
+                    string bboxError = GeographicBounds.TryParseBbox(TypedExtentWest, TypedExtentSouth, TypedExtentEast, TypedExtentNorth, out _);
+                    if (bboxError != null) throw new InvalidOperationException(bboxError);
+                }
+                if (UseLayerExtent && SelectedExtentLayer == null)
+                    throw new InvalidOperationException("Pick a layer for the download area, or refresh the layer list.");
+                if (UsePolygonExtent && _aoiPolygonWkt == null)
+                    throw new InvalidOperationException("Draw a polygon on the map before downloading.");
+                string aoiPolygonWkt = UsePolygonExtent ? _aoiPolygonWkt : null;
+                bool clipToAoi = UsePolygonExtent && ClipToAoiPolygon;
                 string dataDirectory = Path.GetFullPath(DataOutputPath);
                 var targetView = MapView.Active;
                 var targetMap = targetView?.Map;
                 if (targetMap == null) throw new InvalidOperationException("Open a map before adding data.");
                 var extent = await GetLoadExtentAsync(targetView);
-                if (extent == null) throw new InvalidOperationException("Choose a map or custom area before downloading.");
+                if (extent == null) throw new InvalidOperationException("Choose a download area (map extent, custom extent, coordinates, layer, or polygon) before downloading.");
                 var bounds = new ExtentBounds(extent.XMin, extent.YMin, extent.XMax, extent.YMax);
                 GeographicBounds.Validate(bounds);
                 bool anyOverture = selected.Any(i => i.UserSource == null);
@@ -610,7 +663,7 @@ namespace DuckDBGeoparquet.Views
                             item.ActualType, layerName,
                             snapshot.StagingPath, bounds, compression, provenance, progress, token, files,
                             customSource?.GeometryColumn, customSource?.GeometryIsWkb ?? false, SelectedGeoParquetCopyVersion,
-                            attributeFilter);
+                            attributeFilter, aoiPolygonWkt, clipToAoi);
                         snapshot.Manifest.Datasets.Add(result);
                         AddToLog(result.Status == DatasetLoadStatus.Empty
                             ? $"{item.DisplayName}: no features in this area."
@@ -712,6 +765,7 @@ namespace DuckDBGeoparquet.Views
             // Cleanup by unsubscribing from static events
             System.Diagnostics.Debug.WriteLine("WizardDockpaneViewModel cleaning up, unsubscribing from static events");
             CustomExtentTool.ExtentCreatedStatic -= OnExtentCreated;
+            CustomPolygonTool.PolygonCreatedStatic -= OnAoiPolygonCreated;
 
             // Dispose of the DataProcessor (closes DuckDB connection)
             _dataProcessor?.Dispose();
@@ -758,8 +812,15 @@ namespace DuckDBGeoparquet.Views
 
             // Reset extent options
             UseCurrentMapExtent = true;
-            UseCustomExtent = false;
             CustomExtent = null;
+            TypedExtentWest = "";
+            TypedExtentSouth = "";
+            TypedExtentEast = "";
+            TypedExtentNorth = "";
+            SelectedExtentLayer = null;
+            AvailableExtentLayers = new ObservableCollection<Layer>();
+            ClipToAoiPolygon = false;
+            ClearAoiPolygon();
 
             // Reset data and MFC options
             var defaultBasePath = DeterminedDefaultMfcBasePath;

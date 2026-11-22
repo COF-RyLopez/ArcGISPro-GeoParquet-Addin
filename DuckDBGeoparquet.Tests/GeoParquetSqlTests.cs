@@ -251,6 +251,46 @@ namespace DuckDBGeoparquet.Tests
         }
 
         [Fact]
+        public void BuildPolygonWkt_ClosesOpenRing_InvariantCulture()
+        {
+            var previous = System.Globalization.CultureInfo.CurrentCulture;
+            try
+            {
+                System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("de-DE");
+                string wkt = GeoParquetSql.BuildPolygonWkt(new[] { (-119.9, 36.6), (-119.6, 36.6), (-119.75, 36.9) });
+                Assert.Equal("POLYGON((-119.9 36.6, -119.6 36.6, -119.75 36.9, -119.9 36.6))", wkt);
+            }
+            finally
+            {
+                System.Globalization.CultureInfo.CurrentCulture = previous;
+            }
+        }
+
+        [Fact]
+        public void BuildPolygonWkt_KeepsAlreadyClosedRing()
+        {
+            string wkt = GeoParquetSql.BuildPolygonWkt(new[] { (0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 0.0) });
+            Assert.Equal("POLYGON((0 0, 1 0, 1 1, 0 0))", wkt);
+        }
+
+        [Fact]
+        public void BuildPolygonWkt_RejectsDegenerateInput()
+        {
+            Assert.Throws<System.ArgumentException>(() => GeoParquetSql.BuildPolygonWkt(null));
+            Assert.Throws<System.ArgumentException>(() => GeoParquetSql.BuildPolygonWkt(new[] { (0.0, 0.0), (1.0, 1.0) }));
+            // Closed pair = only 2 distinct vertices.
+            Assert.Throws<System.ArgumentException>(() => GeoParquetSql.BuildPolygonWkt(new[] { (0.0, 0.0), (1.0, 1.0), (0.0, 0.0) }));
+            Assert.Throws<System.ArgumentException>(() => GeoParquetSql.BuildPolygonWkt(new[] { (0.0, 0.0), (double.NaN, 1.0), (1.0, 1.0) }));
+        }
+
+        [Fact]
+        public void BuildAoiPolygonExpression_WrapsWktAsGeometry()
+        {
+            Assert.Equal("ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 0))')",
+                GeoParquetSql.BuildAoiPolygonExpression("POLYGON((0 0, 1 0, 1 1, 0 0))"));
+        }
+
+        [Fact]
         public void BuildGeometryExportSelect_UsesCachedGeometryTypeAndExcludesInternalColumn()
         {
             string sql = GeoParquetSql.BuildGeometryExportSelect("MULTIPOLYGON", currentTableHasBbox: true, hasCachedGeometryType: true);

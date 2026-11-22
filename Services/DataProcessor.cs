@@ -105,7 +105,8 @@ namespace DuckDBGeoparquet.Services
             IProgress<string> progress = null,
             CancellationToken cancellationToken = default,
             bool includeSourceProvenance = false, bool preserveSource = false, IReadOnlyList<string> files = null,
-            string geometryColumn = null, bool geometryIsWkb = false, string attributeFilter = null)
+            string geometryColumn = null, bool geometryIsWkb = false, string attributeFilter = null,
+            string aoiPolygonWkt = null, bool clipToAoi = false)
         {
             try
             {
@@ -154,7 +155,7 @@ namespace DuckDBGeoparquet.Services
                 // Build query with optional column projection and geometry clipping.
                 // The pure builder trims heavy structs/arrays when safe and applies
                 // the bbox pushdown + ST_Intersects filter and clipping (see S3Ingester).
-                string query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions, preserveSource: preserveSource, files: files, geometryColumn: geometryColumn, geometryIsWkb: geometryIsWkb, attributeFilter: attributeFilter);
+                string query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions, clipGeometry: clipToAoi, preserveSource: preserveSource, files: files, geometryColumn: geometryColumn, geometryIsWkb: geometryIsWkb, attributeFilter: attributeFilter, aoiPolygonWkt: aoiPolygonWkt);
 
                 // Clear command text before setting new query to ensure clean state
                 command.CommandText = string.Empty;
@@ -171,7 +172,7 @@ namespace DuckDBGeoparquet.Services
                     System.Diagnostics.Debug.WriteLine($"[{typeLabel}] Fast data load failed, retrying with union_by_name: {ex.Message}");
                     readParquetOptions = S3Ingester.S3ReadParquetOptions;
                     columnNames = await LoadS3SchemaAsync(command, s3Path, typeLabel, readParquetOptions, cancellationToken, files, geometryColumn, geometryIsWkb);
-                    query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions, preserveSource: preserveSource, files: files, geometryColumn: geometryColumn, geometryIsWkb: geometryIsWkb, attributeFilter: attributeFilter);
+                    query = S3Ingester.BuildLoadQuery(s3Path, actualS3Type, columnNames, extent, includeSourceProvenance, readParquetOptions, clipGeometry: clipToAoi, preserveSource: preserveSource, files: files, geometryColumn: geometryColumn, geometryIsWkb: geometryIsWkb, attributeFilter: attributeFilter, aoiPolygonWkt: aoiPolygonWkt);
                     command.CommandText = query;
                     await command.ExecuteNonQueryAsync(cancellationToken);
                 }
@@ -218,10 +219,10 @@ namespace DuckDBGeoparquet.Services
             string layerName, string stagingPath, ExtentBounds extent, string compression,
             bool displayProvenance, IProgress<string> progress, CancellationToken token, IReadOnlyList<string> files = null,
             string geometryColumn = null, bool geometryIsWkb = false, string geoParquetVersion = null,
-            string attributeFilter = null)
+            string attributeFilter = null, string aoiPolygonWkt = null, bool clipToAoi = false)
             => _duckDb.RunAsync(async () =>
             {
-                bool hasRows = files?.Count == 0 ? false : await IngestFileCoreAsync(sourceUri, extent, type, progress, token, false, true, files, geometryColumn, geometryIsWkb, attributeFilter);
+                bool hasRows = files?.Count == 0 ? false : await IngestFileCoreAsync(sourceUri, extent, type, progress, token, false, true, files, geometryColumn, geometryIsWkb, attributeFilter, aoiPolygonWkt, clipToAoi);
                 if (!hasRows)
                     return new DatasetLoadResult { Theme = theme, Type = type, SourceUri = sourceUri, SourceAssets = files?.ToList() ?? new(), Status = DatasetLoadStatus.Empty };
 

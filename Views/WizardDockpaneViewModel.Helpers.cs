@@ -366,6 +366,120 @@ namespace DuckDBGeoparquet.Views
             // Thus, the explicit calls previously here are redundant.
         }
 
+        private void SetPolygonExtent()
+        {
+            UsePolygonExtent = true;
+            QueuedTask.Run(async () =>
+            {
+                var mapView = MapView.Active;
+                if (mapView == null)
+                {
+                    AddToLog("Unable to draw a polygon area: no active map view.");
+                    ArcGIS.Desktop.Framework.Dialogs.MessageBox.Show(
+                        "Please open a map before drawing a polygon area.",
+                        "No Active Map");
+                    return;
+                }
+                try
+                {
+                    await FrameworkApplication.SetCurrentToolAsync("DuckDBGeoparquet_CustomPolygonTool");
+                    AddToLog("Draw a polygon on the map (double-click to finish) to set the download area...");
+                }
+                catch (Exception ex)
+                {
+                    AddToLog($"Error activating the polygon tool: {ex.Message}");
+                }
+            });
+        }
+
+        // Handler for when the polygon tool completes a sketch
+        private void OnAoiPolygonCreated(Geometry geometry)
+        {
+            try
+            {
+                if (geometry is not Polygon polygon || polygon.IsEmpty)
+                {
+                    AddToLog("Polygon sketch was empty; draw again.");
+                    return;
+                }
+
+                if (geometry.SpatialReference == null || geometry.SpatialReference.Wkid != ExtentResolution.Wgs84Wkid)
+                {
+                    SpatialReference wgs84 = SpatialReferenceBuilder.CreateSpatialReference(ExtentResolution.Wgs84Wkid);
+                    polygon = GeometryEngine.Instance.Project(polygon, wgs84) as Polygon;
+                    if (polygon == null || polygon.IsEmpty)
+                    {
+                        AddToLog("ERROR: Could not project the drawn polygon to WGS84. Draw again on a map with a known coordinate system.");
+                        return;
+                    }
+                }
+
+                // ponytail: sketches are single-part; a multipart polygon would need
+                // MULTIPOLYGON WKT — add if a workflow ever produces one.
+                if (polygon.PartCount > 1)
+                    AddToLog($"Polygon has {polygon.PartCount} parts; only the outer ring of the first part is used.");
+
+                var ring = polygon.Parts[0]
+                    .Select(segment => (segment.StartPoint.X, segment.StartPoint.Y))
+                    .ToList();
+                _aoiPolygonWkt = GeoParquetSql.BuildPolygonWkt(ring);
+                _aoiPolygonEnvelope = polygon.Extent;
+                HasAoiPolygon = true;
+                AoiPolygonDisplay = $"{ring.Count} vertices; extent {polygon.Extent.XMin:F4}, {polygon.Extent.YMin:F4} to {polygon.Extent.XMax:F4}, {polygon.Extent.YMax:F4}";
+                UsePolygonExtent = true;
+                AddToLog($"Polygon area set ({AoiPolygonDisplay}).");
+
+                QueuedTask.Run(async () =>
+                {
+                    try
+                    {
+                        MapView.Active?.CancelDrawing();
+                        await FrameworkApplication.SetCurrentToolAsync("esri_mapping_exploreTool");
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Polygon tool deactivation: {ex.Message}");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"Error setting the polygon area: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"OnAoiPolygonCreated: {ex}");
+            }
+        }
+
+        private void ClearAoiPolygon()
+        {
+            _aoiPolygonWkt = null;
+            _aoiPolygonEnvelope = null;
+            HasAoiPolygon = false;
+            AoiPolygonDisplay = "No polygon drawn";
+        }
+
+        private async Task RefreshExtentLayersAsync()
+        {
+            try
+            {
+                var mapView = MapView.Active;
+                if (mapView?.Map == null)
+                {
+                    AvailableExtentLayers = new ObservableCollection<Layer>();
+                    SelectedExtentLayer = null;
+                    AddToLog("No active map view; open a map to list its layers.");
+                    return;
+                }
+                var layers = await QueuedTask.Run(() => mapView.Map.GetLayersAsFlattenedList().ToList());
+                var previous = SelectedExtentLayer;
+                AvailableExtentLayers = new ObservableCollection<Layer>(layers);
+                SelectedExtentLayer = previous != null && layers.Contains(previous) ? previous : layers.FirstOrDefault();
+            }
+            catch (Exception ex)
+            {
+                AddToLog($"Could not list map layers: {ex.Message}");
+            }
+        }
+
         private void BrowseMfcLocation()
         {
             var dialog = new System.Windows.Forms.FolderBrowserDialog

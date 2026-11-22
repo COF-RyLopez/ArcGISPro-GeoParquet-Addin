@@ -146,12 +146,58 @@
                             <StackPanel>
                                 <TextBlock Text="Data Extent:" Margin="0,0,0,4"/>
                                 <RadioButton Content="Current Map Extent" IsChecked="{Binding UseCurrentMapExtent}" Margin="0,2,0,0" />
-                                <RadioButton Content="Custom Extent" IsChecked="{Binding UseCustomExtent}"  Margin="0,2,0,0"/>
+                                <RadioButton Content="Custom Extent (draw a rectangle)" IsChecked="{Binding UseCustomExtent}"  Margin="0,2,0,0"/>
                                 <Button Content="Set Custom Extent..." HorizontalAlignment="Left" Margin="16,4,0,0" Command="{Binding SetCustomExtentCommand}" Style="{DynamicResource Esri_Button}" IsEnabled="{Binding UseCustomExtent}"/>
                                 <Border  BorderBrush="{DynamicResource Esri_BorderBrush}" BorderThickness="1" Padding="6" Margin="16,4,0,0" Visibility="{Binding HasCustomExtent, Converter={StaticResource BooleanToVisibilityConverter}}">
                                     <StackPanel>
                                         <TextBlock Text="Custom Extent Coordinates:"   FontWeight="SemiBold" Margin="0,0,0,2" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
                                         <TextBlock Text="{Binding CustomExtentDisplay}"  TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
+                                    </StackPanel>
+                                </Border>
+                                <RadioButton Content="Enter Coordinates (WGS84)" IsChecked="{Binding UseTypedExtent}" Margin="0,8,0,0"/>
+                                <Grid Margin="16,4,0,0" IsEnabled="{Binding UseTypedExtent}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition/>
+                                        <RowDefinition/>
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="West" VerticalAlignment="Center" Margin="0,0,6,4"/>
+                                    <TextBox Grid.Column="1" Margin="0,0,8,4" Text="{Binding TypedExtentWest, UpdateSourceTrigger=PropertyChanged}" ToolTip="Minimum longitude in decimal degrees, -180 to 180"/>
+                                    <TextBlock Grid.Column="2" Text="East" VerticalAlignment="Center" Margin="0,0,6,4"/>
+                                    <TextBox Grid.Column="3" Margin="0,0,0,4" Text="{Binding TypedExtentEast, UpdateSourceTrigger=PropertyChanged}" ToolTip="Maximum longitude in decimal degrees, -180 to 180"/>
+                                    <TextBlock Grid.Row="1" Text="South" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                    <TextBox Grid.Row="1" Grid.Column="1" Margin="0,0,8,0" Text="{Binding TypedExtentSouth, UpdateSourceTrigger=PropertyChanged}" ToolTip="Minimum latitude in decimal degrees, -90 to 90"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Text="North" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                    <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding TypedExtentNorth, UpdateSourceTrigger=PropertyChanged}" ToolTip="Maximum latitude in decimal degrees, -90 to 90"/>
+                                </Grid>
+                                <TextBlock Text="{Binding TypedExtentStatus}" TextWrapping="Wrap" Margin="16,2,0,0"
+                                           Visibility="{Binding UseTypedExtent, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                           Style="{DynamicResource Esri_TextBlockH7}" Foreground="{DynamicResource Esri_TextStyleSubduedBrush}"/>
+                                <RadioButton Content="Layer Extent" IsChecked="{Binding UseLayerExtent}" Margin="0,8,0,0"/>
+                                <Grid Margin="16,4,0,0" IsEnabled="{Binding UseLayerExtent}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox ItemsSource="{Binding AvailableExtentLayers}" SelectedItem="{Binding SelectedExtentLayer}"
+                                              DisplayMemberPath="Name" VerticalAlignment="Center" Margin="0,0,4,0"
+                                              ToolTip="The download area is this layer's full extent, projected to WGS84"/>
+                                    <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshExtentLayersCommand}" Style="{DynamicResource Esri_Button}" Width="70"/>
+                                </Grid>
+                                <RadioButton Content="Drawn Polygon" IsChecked="{Binding UsePolygonExtent}" Margin="0,8,0,0"/>
+                                <Button Content="Draw Polygon..." HorizontalAlignment="Left" Margin="16,4,0,0" Command="{Binding DrawPolygonCommand}" Style="{DynamicResource Esri_Button}" IsEnabled="{Binding UsePolygonExtent}"
+                                        ToolTip="Draw a polygon on the map (double-click to finish). Only features intersecting the polygon are downloaded."/>
+                                <CheckBox Content="Clip features to the polygon" IsChecked="{Binding ClipToAoiPolygon, Mode=TwoWay}" Margin="16,6,0,0" IsEnabled="{Binding UsePolygonExtent}"
+                                          ToolTip="Clip downloaded geometries to the drawn polygon (ST_Intersection). Applies to the snapshot's _source files and display layers. When off, whole intersecting features are kept."/>
+                                <Border BorderBrush="{DynamicResource Esri_BorderBrush}" BorderThickness="1" Padding="6" Margin="16,4,0,0" Visibility="{Binding HasAoiPolygon, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel>
+                                        <TextBlock Text="Polygon Area:" FontWeight="SemiBold" Margin="0,0,0,2" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
+                                        <TextBlock Text="{Binding AoiPolygonDisplay}" TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
                                     </StackPanel>
                                 </Border>
                                 <TextBlock Text="Attribute filter (optional):" Margin="0,10,0,2"/>

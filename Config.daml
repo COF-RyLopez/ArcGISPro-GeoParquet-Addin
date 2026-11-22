@@ -64,6 +64,12 @@
 						Draw a rectangle on the map to define a custom data extent
 						<disabledText>A map must be open to use this tool</disabledText></tooltip>
 				</tool>
+				<!-- Custom Polygon AOI Tool -->
+				<tool id="DuckDBGeoparquet_CustomPolygonTool" className="DuckDBGeoparquet.Views.CustomPolygonTool" caption="Draw Polygon Area" loadOnClick="true" smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool16.png" largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool32.png" condition="esri_mapping_mapPane" keytip="P">
+					<tooltip heading="Draw Polygon Area">
+						Draw a polygon on the map to define the download area
+						<disabledText>A map must be open to use this tool</disabledText></tooltip>
+				</tool>
 			</controls>
 			<dockPanes>
 				<dockPane id="DuckDBGeoparquet_Views_WizardDockpane_V2" caption="Overture Maps Data Loader" className="DuckDBGeoparquet.Views.WizardDockpaneViewModel" dock="right">
