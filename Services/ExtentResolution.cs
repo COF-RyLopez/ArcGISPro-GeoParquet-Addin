@@ -5,7 +5,10 @@ namespace DuckDBGeoparquet.Services
     {
         None,
         Map,
-        Custom
+        Custom,
+        Typed,
+        Layer,
+        Polygon
     }
 
     /// <summary>
@@ -21,14 +24,24 @@ namespace DuckDBGeoparquet.Services
         public const int Wgs84Wkid = 4326;
 
         /// <summary>
-        /// Mirrors the ViewModel's precedence: the current map extent wins when
-        /// "use current map extent" is on and a map is active; otherwise the
-        /// custom extent is used when one is set; otherwise there is no extent.
+        /// Mirrors the ViewModel's precedence: each AOI option counts only when
+        /// its radio is on and its prerequisite exists (an active map, a drawn
+        /// rectangle, a parseable typed bbox, a chosen layer, a drawn polygon).
+        /// The radio buttons are mutually exclusive in the UI, so at most one
+        /// use* flag is true; the ordering here is just a stable tie-break.
         /// </summary>
-        public static ExtentSource ChooseSource(bool useCurrentMapExtent, bool hasActiveMap, bool useCustomExtent, bool hasCustomExtent)
+        public static ExtentSource ChooseSource(
+            bool useCurrentMapExtent, bool hasActiveMap,
+            bool useCustomExtent, bool hasCustomExtent,
+            bool useTypedExtent = false, bool hasTypedExtent = false,
+            bool useLayerExtent = false, bool hasLayerExtent = false,
+            bool usePolygonExtent = false, bool hasPolygonExtent = false)
         {
             if (useCurrentMapExtent && hasActiveMap) return ExtentSource.Map;
             if (useCustomExtent && hasCustomExtent) return ExtentSource.Custom;
+            if (useTypedExtent && hasTypedExtent) return ExtentSource.Typed;
+            if (useLayerExtent && hasLayerExtent) return ExtentSource.Layer;
+            if (usePolygonExtent && hasPolygonExtent) return ExtentSource.Polygon;
             return ExtentSource.None;
         }
 

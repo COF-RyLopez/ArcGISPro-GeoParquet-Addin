@@ -86,6 +86,11 @@ namespace DuckDBGeoparquet.Services
         /// Applies the type-specific column projection, and — when an extent is
         /// supplied — the bbox pushdown + ST_Intersects spatial filter and
         /// ST_Intersection clipping (preserving the bbox struct when present).
+        /// When <paramref name="aoiPolygonWkt"/> is supplied (an internally
+        /// built WKT from a drawn polygon AOI, see
+        /// <see cref="GeoParquetSql.BuildPolygonWkt"/>), ST_Intersects and
+        /// clipping use that polygon while the bbox pushdown keeps using the
+        /// polygon's envelope in <paramref name="extent"/>.
         /// </summary>
         public static string BuildLoadQuery(
             string s3Path,
@@ -96,7 +101,8 @@ namespace DuckDBGeoparquet.Services
             string readParquetOptions = null,
             bool clipGeometry = false,
             bool preserveSource = false, IReadOnlyList<string> files = null,
-            string geometryColumn = null, bool geometryIsWkb = false, string attributeFilter = null)
+            string geometryColumn = null, bool geometryIsWkb = false, string attributeFilter = null,
+            string aoiPolygonWkt = null)
         {
             var projectedColumns = preserveSource ? null : BuildColumnProjection(actualS3Type, columnNames);
             string readParquet = WrapGeometryColumn(
@@ -110,7 +116,9 @@ namespace DuckDBGeoparquet.Services
             string extentPolygon = "";
             if (extent != null)
             {
-                extentPolygon = GeoParquetSql.BuildExtentPolygon(extent);
+                extentPolygon = string.IsNullOrWhiteSpace(aoiPolygonWkt)
+                    ? GeoParquetSql.BuildExtentPolygon(extent)
+                    : GeoParquetSql.BuildAoiPolygonExpression(aoiPolygonWkt);
 
                 // Bbox overlap first (pushdown), then ST_Intersects so only features whose geometry
                 // actually intersects the extent are kept — prevents data extending beyond the frame.
@@ -127,7 +135,12 @@ namespace DuckDBGeoparquet.Services
             // Determine which columns to project (if any) while always retaining geometry
             var projectedColumnList = preserveSource ? "*" : AppendDownloadDerivedColumns(projectedColumns ?? "*", actualS3Type, columnNames, includeSourceProvenance);
             bool hasBboxColumn = columnNames != null && columnNames.Any(c => c.Equals(BboxColumn, StringComparison.OrdinalIgnoreCase));
-            bool preservesOriginalGeometry = !clipGeometry || preserveSource || IsPointOnlyType(actualS3Type);
+            // Clipping an intersecting point to the AOI is a no-op, so point-only
+            // types always keep their original geometry. preserveSource no longer
+            // suppresses clipping: a clip request applies to the ingest, so both
+            // the _source archive and display layers reflect it (same contract as
+            // the attribute filter).
+            bool preservesOriginalGeometry = !clipGeometry || IsPointOnlyType(actualS3Type);
             var projectedColumnsWithoutGeometry = projectedColumns != null
                 ? string.Join(", ", projectedColumns.Split(',').Select(c => c.Trim()).Where(c => !c.Equals("geometry", StringComparison.OrdinalIgnoreCase)))
                 : "* EXCLUDE(geometry)";
@@ -140,8 +153,11 @@ namespace DuckDBGeoparquet.Services
                 projectedColumnsWithoutGeometry = "* EXCLUDE(geometry)";
             if (string.IsNullOrWhiteSpace(projectedColumnsWithoutGeometryOrBbox))
                 projectedColumnsWithoutGeometryOrBbox = hasBboxColumn ? "* EXCLUDE(geometry, bbox)" : "* EXCLUDE(geometry)";
-            projectedColumnsWithoutGeometry = AppendDownloadDerivedColumns(projectedColumnsWithoutGeometry, actualS3Type, columnNames, includeSourceProvenance);
-            projectedColumnsWithoutGeometryOrBbox = AppendDownloadDerivedColumns(projectedColumnsWithoutGeometryOrBbox, actualS3Type, columnNames, includeSourceProvenance);
+            if (!preserveSource)
+            {
+                projectedColumnsWithoutGeometry = AppendDownloadDerivedColumns(projectedColumnsWithoutGeometry, actualS3Type, columnNames, includeSourceProvenance);
+                projectedColumnsWithoutGeometryOrBbox = AppendDownloadDerivedColumns(projectedColumnsWithoutGeometryOrBbox, actualS3Type, columnNames, includeSourceProvenance);
+            }
 
             if (extent != null && !string.IsNullOrEmpty(extentPolygon))
             {

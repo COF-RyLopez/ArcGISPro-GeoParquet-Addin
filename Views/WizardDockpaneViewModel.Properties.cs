@@ -200,17 +200,29 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 SetProperty(ref _useCurrentMapExtent, value);
-                // Only update UseCustomExtent if setting UseCurrentMapExtent to true
-                if (value)
-                {
-                    UseCustomExtent = false;
-                }
-                // Always raise can execute changed for the command
-                (SetCustomExtentCommand as RelayCommand)?.RaiseCanExecuteChanged();
-
-                // Add debug info
-                System.Diagnostics.Debug.WriteLine($"UseCurrentMapExtent set to {value}, UseCustomExtent is now {_useCustomExtent}");
+                if (value) ClearOtherExtentSources();
+                RaiseExtentSourceCommandsCanExecuteChanged();
             }
+        }
+
+        /// <summary>
+        /// Keeps the five AOI radio options mutually exclusive. Setting a flag
+        /// to false never cascades (each setter only clears others on true), so
+        /// this cannot recurse.
+        /// </summary>
+        private void ClearOtherExtentSources([CallerMemberName] string keep = null)
+        {
+            if (keep != nameof(UseCurrentMapExtent)) UseCurrentMapExtent = false;
+            if (keep != nameof(UseCustomExtent)) UseCustomExtent = false;
+            if (keep != nameof(UseTypedExtent)) UseTypedExtent = false;
+            if (keep != nameof(UseLayerExtent)) UseLayerExtent = false;
+            if (keep != nameof(UsePolygonExtent)) UsePolygonExtent = false;
+        }
+
+        private void RaiseExtentSourceCommandsCanExecuteChanged()
+        {
+            (SetCustomExtentCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (DrawPolygonCommand as RelayCommand)?.RaiseCanExecuteChanged();
         }
 
         private string _attributeFilter = "";
@@ -230,18 +242,144 @@ namespace DuckDBGeoparquet.Views
             set
             {
                 SetProperty(ref _useCustomExtent, value);
-                // Only update UseCurrentMapExtent if setting UseCustomExtent to true
-                if (value)
-                {
-                    UseCurrentMapExtent = false;
-                }
-                // Always raise can execute changed for the command
-                (SetCustomExtentCommand as RelayCommand)?.RaiseCanExecuteChanged();
-
-                // Add debug info
-                System.Diagnostics.Debug.WriteLine($"UseCustomExtent set to {value}, UseCurrentMapExtent is now {_useCurrentMapExtent}");
+                if (value) ClearOtherExtentSources();
+                RaiseExtentSourceCommandsCanExecuteChanged();
             }
         }
+
+        private bool _useTypedExtent;
+        /// <summary>Typed WGS84 bounding box (four coordinate fields).</summary>
+        public bool UseTypedExtent
+        {
+            get => _useTypedExtent;
+            set
+            {
+                SetProperty(ref _useTypedExtent, value);
+                if (value) ClearOtherExtentSources();
+                RaiseExtentSourceCommandsCanExecuteChanged();
+            }
+        }
+
+        private string _typedExtentWest = "";
+        public string TypedExtentWest
+        {
+            get => _typedExtentWest;
+            set { if (SetProperty(ref _typedExtentWest, value ?? "")) NotifyPropertyChanged(nameof(TypedExtentStatus)); }
+        }
+
+        private string _typedExtentSouth = "";
+        public string TypedExtentSouth
+        {
+            get => _typedExtentSouth;
+            set { if (SetProperty(ref _typedExtentSouth, value ?? "")) NotifyPropertyChanged(nameof(TypedExtentStatus)); }
+        }
+
+        private string _typedExtentEast = "";
+        public string TypedExtentEast
+        {
+            get => _typedExtentEast;
+            set { if (SetProperty(ref _typedExtentEast, value ?? "")) NotifyPropertyChanged(nameof(TypedExtentStatus)); }
+        }
+
+        private string _typedExtentNorth = "";
+        public string TypedExtentNorth
+        {
+            get => _typedExtentNorth;
+            set { if (SetProperty(ref _typedExtentNorth, value ?? "")) NotifyPropertyChanged(nameof(TypedExtentStatus)); }
+        }
+
+        /// <summary>Live validation feedback for the typed bbox fields.</summary>
+        public string TypedExtentStatus
+        {
+            get
+            {
+                if (string.IsNullOrWhiteSpace(TypedExtentWest) && string.IsNullOrWhiteSpace(TypedExtentSouth) &&
+                    string.IsNullOrWhiteSpace(TypedExtentEast) && string.IsNullOrWhiteSpace(TypedExtentNorth))
+                    return "Enter decimal degrees (WGS84), e.g. West -119.9, South 36.6, East -119.6, North 36.9.";
+                string error = GeographicBounds.TryParseBbox(TypedExtentWest, TypedExtentSouth, TypedExtentEast, TypedExtentNorth, out var bounds);
+                return error ?? $"Valid extent: {bounds.XMin:F4}, {bounds.YMin:F4} to {bounds.XMax:F4}, {bounds.YMax:F4}";
+            }
+        }
+
+        /// <summary>The typed bbox when valid, else null.</summary>
+        internal ExtentBounds GetTypedExtentOrNull() =>
+            GeographicBounds.TryParseBbox(TypedExtentWest, TypedExtentSouth, TypedExtentEast, TypedExtentNorth, out var bounds) == null
+                ? bounds : null;
+
+        private bool _useLayerExtent;
+        /// <summary>Use a chosen map layer's full extent as the download area.</summary>
+        public bool UseLayerExtent
+        {
+            get => _useLayerExtent;
+            set
+            {
+                SetProperty(ref _useLayerExtent, value);
+                if (value)
+                {
+                    ClearOtherExtentSources();
+                    _ = RefreshExtentLayersAsync();
+                }
+                RaiseExtentSourceCommandsCanExecuteChanged();
+            }
+        }
+
+        private ObservableCollection<Layer> _availableExtentLayers = new();
+        public ObservableCollection<Layer> AvailableExtentLayers
+        {
+            get => _availableExtentLayers;
+            private set => SetProperty(ref _availableExtentLayers, value);
+        }
+
+        private Layer _selectedExtentLayer;
+        public Layer SelectedExtentLayer
+        {
+            get => _selectedExtentLayer;
+            set => SetProperty(ref _selectedExtentLayer, value);
+        }
+
+        private bool _usePolygonExtent;
+        /// <summary>Use a polygon drawn on the map as the download area.</summary>
+        public bool UsePolygonExtent
+        {
+            get => _usePolygonExtent;
+            set
+            {
+                SetProperty(ref _usePolygonExtent, value);
+                if (value) ClearOtherExtentSources();
+                RaiseExtentSourceCommandsCanExecuteChanged();
+            }
+        }
+
+        private bool _clipToAoiPolygon;
+        /// <summary>When true, downloaded geometries are clipped to the drawn
+        /// polygon (applies to the ingest, so the _source archive and display
+        /// layers both reflect it). Off by default: whole features are kept.</summary>
+        public bool ClipToAoiPolygon
+        {
+            get => _clipToAoiPolygon;
+            set => SetProperty(ref _clipToAoiPolygon, value);
+        }
+
+        private bool _hasAoiPolygon;
+        public bool HasAoiPolygon
+        {
+            get => _hasAoiPolygon;
+            private set => SetProperty(ref _hasAoiPolygon, value);
+        }
+
+        private string _aoiPolygonDisplay = "No polygon drawn";
+        public string AoiPolygonDisplay
+        {
+            get => _aoiPolygonDisplay;
+            private set => SetProperty(ref _aoiPolygonDisplay, value);
+        }
+
+        /// <summary>WGS84 WKT of the drawn AOI polygon (built by
+        /// GeoParquetSql.BuildPolygonWkt), or null when none is drawn.</summary>
+        private string _aoiPolygonWkt;
+
+        /// <summary>WGS84 envelope of the drawn AOI polygon.</summary>
+        private Envelope _aoiPolygonEnvelope;
 
         private bool _isLoading = true;
         public bool IsLoading

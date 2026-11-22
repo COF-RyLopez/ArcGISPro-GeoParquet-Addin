@@ -46,6 +46,72 @@ namespace DuckDBGeoparquet.Tests
         }
 
         [Fact]
+        public void BuildLoadQuery_WithAoiPolygon_IntersectsPolygonButPushesDownEnvelopeBbox()
+        {
+            string wkt = "POLYGON((1 2, 3 2, 2 4, 1 2))";
+            var sql = S3Ingester.BuildLoadQuery("roads.parquet", "segment",
+                new[] { "id", "geometry", "bbox" }, new ExtentBounds(1, 2, 3, 4),
+                aoiPolygonWkt: wkt);
+
+            // Exact filter uses the drawn polygon, not the envelope rectangle.
+            Assert.Contains($"ST_Intersects(geometry, ST_GeomFromText('{wkt}'))", sql);
+            Assert.DoesNotContain("POLYGON((1 2, 3 2, 3 4, 1 4, 1 2))", sql);
+            // The fast pushdown still uses the envelope's bbox overlap.
+            Assert.Contains("bbox.xmin <= 3", sql);
+            // No clip requested → whole geometries kept.
+            Assert.DoesNotContain("ST_Intersection(", sql);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_WithAoiPolygonAndClip_ClipsToPolygonEvenWithPreserveSource()
+        {
+            string wkt = "POLYGON((1 2, 3 2, 2 4, 1 2))";
+            var sql = S3Ingester.BuildLoadQuery("roads.parquet", "water",
+                new[] { "id", "geometry", "bbox", "sources" }, new ExtentBounds(1, 2, 3, 4),
+                clipGeometry: true, preserveSource: true, aoiPolygonWkt: wkt);
+
+            // The ingest runs with preserveSource (the _source archive), and an
+            // explicit clip request still clips — same contract as the
+            // attribute filter: it applies to source and display alike.
+            Assert.Contains($"ST_Intersection(geometry, ST_GeomFromText('{wkt}'))", sql);
+            // bbox struct is rebuilt from the clipped geometry.
+            Assert.Contains("struct_pack", sql);
+            // preserveSource must not add derived/provenance columns.
+            Assert.DoesNotContain("AS source_datasets", sql);
+            Assert.Contains("* EXCLUDE(geometry, bbox)", sql);
+        }
+
+        [Theory]
+        [InlineData("address")]
+        [InlineData("place")]
+        [InlineData("connector")]
+        public void BuildLoadQuery_PointOnlyTypes_NeverClipped(string actualType)
+        {
+            var sql = S3Ingester.BuildLoadQuery("data.parquet", actualType,
+                new[] { "id", "geometry", "bbox" }, new ExtentBounds(1, 2, 3, 4),
+                clipGeometry: true, aoiPolygonWkt: "POLYGON((1 2, 3 2, 2 4, 1 2))");
+
+            // Clipping an intersecting point is a no-op, so skip ST_Intersection
+            // but keep the exact polygon intersects filter.
+            Assert.DoesNotContain("ST_Intersection(", sql);
+            Assert.Contains("ST_Intersects(geometry, ST_GeomFromText(", sql);
+        }
+
+        [Fact]
+        public void BuildLoadQuery_PreserveSourceWithoutClip_Unchanged()
+        {
+            // The pre-AOI contract: preserveSource without a clip request keeps
+            // whole geometries and the full column set.
+            var sql = S3Ingester.BuildLoadQuery("roads.parquet", "segment",
+                new[] { "id", "geometry", "bbox", "sources" }, new ExtentBounds(1, 2, 3, 4),
+                preserveSource: true);
+
+            Assert.DoesNotContain("ST_Intersection(", sql);
+            Assert.DoesNotContain("AS source_datasets", sql);
+            Assert.Contains("ST_Intersects(geometry,", sql);
+        }
+
+        [Fact]
         public void BuildLoadQuery_InvalidAttributeFilter_Throws()
         {
             Assert.Throws<System.ArgumentException>(() => S3Ingester.BuildLoadQuery(

@@ -279,6 +279,42 @@ namespace DuckDBGeoparquet.Services
         }
 
         /// <summary>
+        /// Builds a WKT POLYGON from a drawn AOI's outer ring, closing the ring
+        /// when needed. Coordinates come from the add-in's own geometry (never
+        /// user text), are required to be finite, and are formatted with
+        /// invariant culture — so the resulting WKT is safe to embed in SQL.
+        /// Throws on fewer than 3 distinct vertices or non-finite coordinates.
+        /// </summary>
+        public static string BuildPolygonWkt(System.Collections.Generic.IReadOnlyList<(double X, double Y)> ring)
+        {
+            if (ring == null || ring.Count < 3)
+                throw new ArgumentException("A polygon area needs at least 3 vertices.", nameof(ring));
+            foreach (var (x, y) in ring)
+                if (!double.IsFinite(x) || !double.IsFinite(y))
+                    throw new ArgumentException("Polygon area has an invalid coordinate.", nameof(ring));
+
+            var points = new System.Collections.Generic.List<(double X, double Y)>(ring);
+            if (points[0] != points[^1]) points.Add(points[0]);
+            if (points.Count < 4)
+                throw new ArgumentException("A polygon area needs at least 3 distinct vertices.", nameof(ring));
+
+            var sb = new System.Text.StringBuilder("POLYGON((");
+            for (int i = 0; i < points.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append(FormatCoordinate(points[i].X)).Append(' ').Append(FormatCoordinate(points[i].Y));
+            }
+            return sb.Append("))").ToString();
+        }
+
+        /// <summary>
+        /// Wraps an internally built AOI polygon WKT (see BuildPolygonWkt) as a
+        /// DuckDB geometry expression for ST_Intersects / ST_Intersection.
+        /// </summary>
+        public static string BuildAoiPolygonExpression(string wkt) =>
+            $"ST_GeomFromText('{EscapeSqlLiteral(wkt)}')";
+
+        /// <summary>
         /// Builds the bbox-column overlap predicate (no WHERE keyword). This
         /// is the fast pushdown filter: DuckDB can skip row groups whose bbox
         /// statistics don't overlap the extent, so it runs before any
