@@ -214,6 +214,7 @@ namespace DuckDBGeoparquet.Views
             ShowThemeInfoCommand = new RelayCommand(() => ShowThemeInfo(), () => SelectedItemForPreview != null);
             SetCustomExtentCommand = new RelayCommand(() => SetCustomExtent(), () => UseCustomExtent);
             DrawPolygonCommand = new RelayCommand(() => SetPolygonExtent(), () => UsePolygonExtent);
+            UseSelectedFeaturesCommand = new RelayCommand(() => CaptureSelectedFeatures(), () => UseSelectedFeatureExtent);
             RefreshExtentLayersCommand = new RelayCommand(async () => await RefreshExtentLayersAsync());
             BrowseDataLocationCommand = new RelayCommand(() => BrowseDataLocation());
             BrowseFileGeodatabaseCommand = new RelayCommand(() => BrowseFileGeodatabase(), () => SaveToFileGeodatabase);
@@ -471,7 +472,8 @@ namespace DuckDBGeoparquet.Views
                 switch (ExtentResolution.ChooseSource(UseCurrentMapExtent, view != null, UseCustomExtent, CustomExtent != null,
                     UseTypedExtent, GetTypedExtentOrNull() != null,
                     UseLayerExtent, SelectedExtentLayer != null,
-                    UsePolygonExtent, _aoiPolygonEnvelope != null))
+                    UsePolygonExtent, _aoiPolygonEnvelope != null,
+                    UseSelectedFeatureExtent, _selectedFeatureEnvelope != null))
                 {
                     case ExtentSource.Map:
                     {
@@ -554,6 +556,10 @@ namespace DuckDBGeoparquet.Views
                         extent = _aoiPolygonEnvelope;
                         AddToLog($"Using drawn polygon area (WGS84 envelope): {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
                         break;
+                    case ExtentSource.SelectedFeature:
+                        extent = _selectedFeatureEnvelope;
+                        AddToLog($"Using selected-feature area (WGS84 envelope): {extent.XMin:F6}, {extent.YMin:F6}, {extent.XMax:F6}, {extent.YMax:F6}");
+                        break;
                     default:
                         AddToLog("No extent specified or available for filtering.");
                         break;
@@ -603,10 +609,13 @@ namespace DuckDBGeoparquet.Views
                 }
                 if (UseLayerExtent && SelectedExtentLayer == null)
                     throw new InvalidOperationException("Pick a layer for the download area, or refresh the layer list.");
+                if (UseSelectedFeatureExtent && _selectedFeatureWkt == null)
+                    throw new InvalidOperationException("Select polygon features on the map and click Use Selected Features before downloading.");
                 if (UsePolygonExtent && _aoiPolygonWkt == null)
                     throw new InvalidOperationException("Draw a polygon on the map before downloading.");
-                string aoiPolygonWkt = UsePolygonExtent ? _aoiPolygonWkt : null;
-                bool clipToAoi = UsePolygonExtent && ClipToAoiPolygon;
+                string aoiPolygonWkt = UsePolygonExtent ? _aoiPolygonWkt
+                    : UseSelectedFeatureExtent ? _selectedFeatureWkt : null;
+                bool clipToAoi = aoiPolygonWkt != null && ClipToAoiPolygon;
                 string dataDirectory = Path.GetFullPath(DataOutputPath);
                 var targetView = MapView.Active;
                 var targetMap = targetView?.Map;
@@ -823,6 +832,7 @@ namespace DuckDBGeoparquet.Views
             AvailableExtentLayers = new ObservableCollection<Layer>();
             ClipToAoiPolygon = false;
             ClearAoiPolygon();
+            ClearSelectedFeatureAoi();
 
             // Reset data and MFC options
             var defaultBasePath = DeterminedDefaultMfcBasePath;

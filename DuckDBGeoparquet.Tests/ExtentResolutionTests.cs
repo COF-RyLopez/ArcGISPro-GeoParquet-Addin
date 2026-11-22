@@ -60,7 +60,17 @@ namespace DuckDBGeoparquet.Tests
         public void ChooseSource_MapStillWinsOverNewSources()
         {
             Assert.Equal(ExtentSource.Map, ExtentResolution.ChooseSource(
-                true, true, true, true, true, true, true, true, true, true));
+                true, true, true, true, true, true, true, true, true, true, true, true));
+        }
+
+        [Theory]
+        [InlineData(true, true, ExtentSource.SelectedFeature)]
+        [InlineData(true, false, ExtentSource.None)]
+        [InlineData(false, true, ExtentSource.None)]
+        public void ChooseSource_SelectedFeatureExtent(bool use, bool has, ExtentSource expected)
+        {
+            Assert.Equal(expected, ExtentResolution.ChooseSource(
+                false, false, false, false, false, false, false, false, false, false, use, has));
         }
 
         [Theory]

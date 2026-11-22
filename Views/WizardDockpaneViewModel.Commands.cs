@@ -52,6 +52,7 @@ namespace DuckDBGeoparquet.Views
         public ICommand ShowThemeInfoCommand { get; private set; }
         public ICommand SetCustomExtentCommand { get; private set; }
         public ICommand DrawPolygonCommand { get; private set; }
+        public ICommand UseSelectedFeaturesCommand { get; private set; }
         public ICommand RefreshExtentLayersCommand { get; private set; }
         public ICommand BrowseMfcLocationCommand { get; private set; }
         public ICommand BrowseDataLocationCommand { get; private set; }

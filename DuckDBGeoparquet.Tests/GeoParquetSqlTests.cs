@@ -250,6 +250,28 @@ namespace DuckDBGeoparquet.Tests
             Assert.Throws<System.ArgumentException>(() => GeoParquetSql.BuildAttributeFilterPredicate("1=1; DROP TABLE x"));
         }
 
+        [Theory]
+        [InlineData("POLYGON((-119.9 36.6, -119.6 36.6, -119.75 36.9, -119.9 36.6))", true)]
+        [InlineData("MULTIPOLYGON(((-119.9 36.6, -119.6 36.6, -119.75 36.9, -119.9 36.6)), ((-120 37, -119 37, -119.5 38, -120 37)))", true)]
+        [InlineData("POLYGON ((1 2, 3 4, 5 6, 1 2))", true)]
+        [InlineData("POLYGON Z ((1 2 3, 4 5 6, 7 8 9, 1 2 3))", false)] // Z must be stripped before validation
+        [InlineData("POINT(1 2)", false)]
+        [InlineData("POLYGON((1 2, 3 4)); DROP TABLE x", false)]
+        [InlineData("POLYGON((1 2, 3 4, ST_Read('x')))", false)]
+        [InlineData("", false)]
+        [InlineData(null, false)]
+        public void IsValidAoiWkt_AcceptsOnly2DPolygonShapes(string wkt, bool expected)
+        {
+            Assert.Equal(expected, GeoParquetSql.IsValidAoiWkt(wkt));
+        }
+
+        [Fact]
+        public void BuildPolygonWkt_OutputPassesAoiWktValidation()
+        {
+            string wkt = GeoParquetSql.BuildPolygonWkt(new[] { (-119.9, 36.6), (-119.6, 36.6), (-119.75, 36.9) });
+            Assert.True(GeoParquetSql.IsValidAoiWkt(wkt));
+        }
+
         [Fact]
         public void BuildPolygonWkt_ClosesOpenRing_InvariantCulture()
         {
