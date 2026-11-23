@@ -42,7 +42,7 @@ namespace DuckDBGeoparquet.Models
         public string TargetDatasetType => TargetType == GersifyTargetType.Addresses ? "address" : "place";
         public string TargetLabel => TargetType == GersifyTargetType.Addresses ? "Overture Addresses" : "Overture Places";
 
-        public static string DefaultReleaseVersion => "2026-10-21.0";
+        public static string DefaultReleaseVersion => "2026-11-18.0";
 
         public static string BuildTimestampSuffix() =>
             DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", System.Globalization.CultureInfo.InvariantCulture);
