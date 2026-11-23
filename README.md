@@ -29,7 +29,7 @@ Watch the add-in in action loading Overture Maps data with incredible performanc
 
 ## Requirements
 
-- **ArcGIS Pro**: Version 3.7 or later
+- **ArcGIS Pro**: Version 3.8 or later
 - **.NET SDK**: Version 10.0 or later
 - **Storage**: Minimum 4GB free disk space for temporary data
 - **Memory**: Minimum 8GB RAM (16GB recommended for large datasets)
