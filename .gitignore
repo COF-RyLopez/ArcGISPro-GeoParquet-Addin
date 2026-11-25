@@ -369,8 +369,12 @@ Extensions/spatial.duckdb*
 # VS Code
 .vscode/
 
-# Cursor IDE
-.cursor/
+# Cursor IDE (keep shared agent skills/rules tracked; ignore the rest)
+.cursor/*
+!.cursor/skills/
+!.cursor/skills/**
+!.cursor/rules/
+!.cursor/rules/**
 
 # Local dev scratch scripts (not part of the add-in)
 scratch/
