@@ -261,16 +261,16 @@ namespace DuckDBGeoparquet.Services
             if (columnNames.Any(c => c.Equals("addresses", StringComparison.OrdinalIgnoreCase)))
             {
                 AddDerivedAddressColumn(derivedColumns, columnNames, "address_freeform",
-                    JoinListValues("addresses", AddressItem, "freeform", distinct: false));
+                    BuildAddressListField("freeform", distinct: false));
                 AddDerivedAddressColumn(derivedColumns, columnNames, "address_locality",
-                    JoinListValues("addresses", AddressItem, "locality", distinct: true));
+                    BuildAddressListField("locality", distinct: true));
                 AddDerivedAddressColumn(derivedColumns, columnNames, "address_region",
-                    JoinListValues("addresses", AddressItem, "region", distinct: true));
+                    BuildAddressListField("region", distinct: true));
                 AddDerivedAddressColumn(derivedColumns, columnNames, "address_postcode",
-                    JoinListValues("addresses", AddressItem, "postcode", distinct: true,
+                    BuildAddressListField("postcode", distinct: true,
                         valueExpression: $"left(CAST({AddressItem}.postcode AS VARCHAR), 5)"));
                 AddDerivedAddressColumn(derivedColumns, columnNames, "address_country",
-                    JoinListValues("addresses", AddressItem, "country", distinct: true));
+                    BuildAddressListField("country", distinct: true));
             }
 
             // Schema v2 (2026-09-23+): Derive taxonomy_primary from taxonomy struct (v2) or categories struct (v1).
@@ -331,7 +331,7 @@ namespace DuckDBGeoparquet.Services
         // download the display table went from minutes to seconds (see
         // DuckDBGeoparquet.Tests/PipelineBenchmarkTests.cs). Lambda parameter
         // names are distinctive so they never shadow a real column.
-        private const string AddressItem = "addr_item";
+        public const string AddressItem = "addr_item";
         private const string SourceItem = "src_item";
 
         /// <summary>Values of <paramref name="field"/> that are non-null and not blank, in list order.</summary>
@@ -350,6 +350,15 @@ namespace DuckDBGeoparquet.Services
                 values = $"list_filter({values}, lambda dv_item, dv_index: list_position({values}, dv_item) = dv_index)";
             return $"NULLIF(array_to_string({values}, ' | '), '')";
         }
+
+        /// <summary>
+        /// ' | '-joined non-blank values of one field of an Overture place's
+        /// <c>addresses</c> list (NULL when none). Shared with GERSify so both
+        /// derive address text the same way. In <paramref name="valueExpression"/>
+        /// refer to the list element as <see cref="AddressItem"/>.
+        /// </summary>
+        public static string BuildAddressListField(string field, bool distinct, string valueExpression = null) =>
+            JoinListValues("addresses", AddressItem, field, distinct, valueExpression);
 
         private static string PrimarySourceField(string fieldName) =>
             $"{NonBlankListValues("sources", SourceItem, fieldName)}[1]";

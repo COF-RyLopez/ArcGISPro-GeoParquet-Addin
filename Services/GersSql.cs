@@ -65,6 +65,11 @@ namespace DuckDBGeoparquet.Services
                   AND latitude IS NOT NULL;";
         }
 
+        // The user_prepared and overture_* CTEs are MATERIALIZED so NormalizeText and
+        // the address derivation run once per input row and once per Overture feature.
+        // Inlined, DuckDB evaluated them on joined candidate pairs instead: about 3x
+        // slower for 3,000 points against 63k add-in place files, 1.5x for 3,000
+        // points against 312k addresses (Fresno area, Overture 2026-11-18.0).
         public static string BuildPlacesCandidateTablesCommand(
             string placesParquetGlob,
             GersifyOptions options,
@@ -101,33 +106,33 @@ namespace DuckDBGeoparquet.Services
             string placeStreetAddressExpr = BuildFirstExistingExpression(
                 availableColumns,
                 ("address_freeform", "CAST(address_freeform AS VARCHAR)"),
-                ("addresses", "(SELECT string_agg(CAST(a.freeform AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.freeform IS NOT NULL AND trim(CAST(a.freeform AS VARCHAR)) <> '')"),
+                ("addresses", S3Ingester.BuildAddressListField("freeform", distinct: false)),
                 ("address", "CAST(address AS VARCHAR)"),
                 ("street", "CAST(street AS VARCHAR)"),
                 ("full_address", "CAST(full_address AS VARCHAR)"));
             string placeLocalityExpr = BuildFirstExistingExpression(
                 availableColumns,
                 ("address_locality", "CAST(address_locality AS VARCHAR)"),
-                ("addresses", "(SELECT string_agg(DISTINCT CAST(a.locality AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.locality IS NOT NULL AND trim(CAST(a.locality AS VARCHAR)) <> '')"),
+                ("addresses", S3Ingester.BuildAddressListField("locality", distinct: true)),
                 ("locality", "CAST(locality AS VARCHAR)"),
                 ("city", "CAST(city AS VARCHAR)"));
             string placeRegionExpr = BuildFirstExistingExpression(
                 availableColumns,
                 ("address_region", "CAST(address_region AS VARCHAR)"),
-                ("addresses", "(SELECT string_agg(DISTINCT CAST(a.region AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.region IS NOT NULL AND trim(CAST(a.region AS VARCHAR)) <> '')"),
+                ("addresses", S3Ingester.BuildAddressListField("region", distinct: true)),
                 ("region", "CAST(region AS VARCHAR)"),
                 ("state", "CAST(state AS VARCHAR)"));
             string placePostcodeExpr = BuildFirstExistingExpression(
                 availableColumns,
                 ("address_postcode", "left(CAST(address_postcode AS VARCHAR), 5)"),
-                ("addresses", "(SELECT string_agg(DISTINCT left(CAST(a.postcode AS VARCHAR), 5), ' | ') FROM unnest(addresses) AS t(a) WHERE a.postcode IS NOT NULL AND trim(CAST(a.postcode AS VARCHAR)) <> '')"),
+                ("addresses", S3Ingester.BuildAddressListField("postcode", distinct: true, $"left(CAST({S3Ingester.AddressItem}.postcode AS VARCHAR), 5)")),
                 ("postcode", "left(CAST(postcode AS VARCHAR), 5)"),
                 ("postal_code", "left(CAST(postal_code AS VARCHAR), 5)"),
                 ("zip", "left(CAST(zip AS VARCHAR), 5)"));
 
             return $@"
                 CREATE OR REPLACE TABLE {CandidateTable} AS
-                WITH user_prepared AS (
+                WITH user_prepared AS MATERIALIZED (
                     SELECT
                         record_id,
                         coalesce(name, '') AS user_name,
@@ -142,7 +147,7 @@ namespace DuckDBGeoparquet.Services
                         NormalizeText(trim(concat_ws(' ', coalesce(address, ''), coalesce(city, ''), coalesce(state, ''), coalesce(postcode, '')))) AS user_address_norm
                     FROM {UserInputTable}
                 ),
-                overture_places AS (
+                overture_places AS MATERIALIZED (
                     SELECT
                         CAST(id AS VARCHAR) AS overture_id,
                         coalesce({placeNameExpr}, '') AS overture_name,
@@ -345,7 +350,7 @@ namespace DuckDBGeoparquet.Services
 
             return $@"
                 CREATE OR REPLACE TABLE {CandidateTable} AS
-                WITH user_prepared AS (
+                WITH user_prepared AS MATERIALIZED (
                     SELECT
                         record_id,
                         coalesce(name, '') AS user_name,
@@ -361,7 +366,7 @@ namespace DuckDBGeoparquet.Services
                         left(regexp_replace(coalesce(postcode, ''), '[^0-9]', '', 'g'), 5) AS user_postcode_norm
                     FROM {UserInputTable}
                 ),
-                overture_addresses AS (
+                overture_addresses AS MATERIALIZED (
                     SELECT
                         CAST(id AS VARCHAR) AS overture_id,
                         trim(concat_ws(' ', nullif({numberExpr}, ''), nullif({streetExpr}, ''), nullif({unitExpr}, ''))) AS overture_address,
