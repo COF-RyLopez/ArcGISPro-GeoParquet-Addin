@@ -212,6 +212,41 @@ namespace DuckDBGeoparquet.Tests
             Assert.True(await first);
         }
 
+        [Fact]
+        public void DisplayTable_DerivedPlaceAndProvenanceColumns_MatchCorrelatedSubquerySemantics()
+        {
+            // Rows cover NULL lists, empty lists, blank/NULL members, duplicates and
+            // first-seen order. Expected values are what the previous correlated
+            // "(SELECT string_agg(...) FROM unnest(...))" expressions returned, except
+            // that DISTINCT lists are now in first-seen order (string_agg DISTINCT
+            // used hash order, e.g. "Fresno | Clovis").
+            Sql(@"CREATE OR REPLACE TABLE current_table AS SELECT * FROM (VALUES
+                (1, [{'freeform': '1 Main St', 'locality': 'Fresno', 'region': 'CA', 'postcode': '93721-1234', 'country': 'US'}],
+                    [{'dataset': 'OpenStreetMap', 'record_id': 'w123@4', 'update_time': '2026-01-01'}, {'dataset': 'meta', 'record_id': NULL, 'update_time': NULL}]),
+                (2, [{'freeform': ' ', 'locality': 'Clovis', 'region': NULL, 'postcode': '', 'country': 'US'},
+                     {'freeform': '2 Elm', 'locality': 'Fresno', 'region': 'CA', 'postcode': '93612', 'country': 'US'},
+                     {'freeform': '3 Oak', 'locality': 'Clovis', 'region': 'CA', 'postcode': '93612', 'country': 'US'}],
+                    [{'dataset': '', 'record_id': NULL, 'update_time': NULL}, {'dataset': 'Microsoft', 'record_id': 'm1', 'update_time': '2025-05-05'},
+                     {'dataset': 'meta', 'record_id': 'x', 'update_time': NULL}, {'dataset': 'Microsoft', 'record_id': 'm2', 'update_time': NULL}]),
+                (3, [], []),
+                (4, NULL, NULL)
+            ) AS t(id, addresses, sources)");
+            var columns = new[] { "id", "addresses", "sources" };
+            Sql(S3Ingester.BuildDisplayTableCommand("place", columns, provenance: true));
+
+            string Row(int id) => Convert.ToString(Scalar($@"SELECT concat_ws(' ; ',
+                coalesce(address_freeform, '∅'), coalesce(address_locality, '∅'), coalesce(address_region, '∅'),
+                coalesce(address_postcode, '∅'), coalesce(address_country, '∅'), source_count::VARCHAR,
+                coalesce(source_datasets, '∅'), coalesce(source_primary_dataset, '∅'), coalesce(source_primary_record_id, '∅'),
+                coalesce(source_primary_update_time, '∅'), coalesce(source_edit_url, '∅'), source_edit_platform)
+                FROM current_table WHERE id = {id}"));
+
+            Assert.Equal("1 Main St ; Fresno ; CA ; 93721 ; US ; 2 ; OpenStreetMap | meta ; OpenStreetMap ; w123@4 ; 2026-01-01 ; https://www.openstreetmap.org/edit?way=123 ; OpenStreetMap", Row(1));
+            Assert.Equal("2 Elm | 3 Oak ; Clovis | Fresno ; CA ; 93612 ; US ; 4 ; Microsoft | meta ; Microsoft ; m1 ; 2025-05-05 ; ∅ ; Microsoft", Row(2));
+            Assert.Equal("∅ ; ∅ ; ∅ ; ∅ ; ∅ ; 0 ; ∅ ; ∅ ; ∅ ; ∅ ; ∅ ; Unknown source", Row(3));
+            Assert.Equal("∅ ; ∅ ; ∅ ; ∅ ; ∅ ; 0 ; ∅ ; ∅ ; ∅ ; ∅ ; ∅ ; Unknown source", Row(4));
+        }
+
         public void Dispose() { _connection.Dispose(); Directory.Delete(_folder, true); }
     }
 }

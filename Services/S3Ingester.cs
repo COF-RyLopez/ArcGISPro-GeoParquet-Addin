@@ -261,15 +261,16 @@ namespace DuckDBGeoparquet.Services
             if (columnNames.Any(c => c.Equals("addresses", StringComparison.OrdinalIgnoreCase)))
             {
                 AddDerivedAddressColumn(derivedColumns, columnNames, "address_freeform",
-                    "(SELECT string_agg(CAST(a.freeform AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.freeform IS NOT NULL AND trim(CAST(a.freeform AS VARCHAR)) <> '')");
+                    JoinListValues("addresses", AddressItem, "freeform", distinct: false));
                 AddDerivedAddressColumn(derivedColumns, columnNames, "address_locality",
-                    "(SELECT string_agg(DISTINCT CAST(a.locality AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.locality IS NOT NULL AND trim(CAST(a.locality AS VARCHAR)) <> '')");
+                    JoinListValues("addresses", AddressItem, "locality", distinct: true));
                 AddDerivedAddressColumn(derivedColumns, columnNames, "address_region",
-                    "(SELECT string_agg(DISTINCT CAST(a.region AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.region IS NOT NULL AND trim(CAST(a.region AS VARCHAR)) <> '')");
+                    JoinListValues("addresses", AddressItem, "region", distinct: true));
                 AddDerivedAddressColumn(derivedColumns, columnNames, "address_postcode",
-                    "(SELECT string_agg(DISTINCT left(CAST(a.postcode AS VARCHAR), 5), ' | ') FROM unnest(addresses) AS t(a) WHERE a.postcode IS NOT NULL AND trim(CAST(a.postcode AS VARCHAR)) <> '')");
+                    JoinListValues("addresses", AddressItem, "postcode", distinct: true,
+                        valueExpression: $"left(CAST({AddressItem}.postcode AS VARCHAR), 5)"));
                 AddDerivedAddressColumn(derivedColumns, columnNames, "address_country",
-                    "(SELECT string_agg(DISTINCT CAST(a.country AS VARCHAR), ' | ') FROM unnest(addresses) AS t(a) WHERE a.country IS NOT NULL AND trim(CAST(a.country AS VARCHAR)) <> '')");
+                    JoinListValues("addresses", AddressItem, "country", distinct: true));
             }
 
             // Schema v2 (2026-09-23+): Derive taxonomy_primary from taxonomy struct (v2) or categories struct (v1).
@@ -301,9 +302,9 @@ namespace DuckDBGeoparquet.Services
 
             var derivedColumns = new List<string>();
             AddSourceColumn(derivedColumns, columnNames, "source_count",
-                "(SELECT COUNT(*) FROM unnest(sources) AS t(s) WHERE s.dataset IS NOT NULL OR s.record_id IS NOT NULL)");
+                $"COALESCE(len(list_filter(sources, lambda {SourceItem}: {SourceItem}.dataset IS NOT NULL OR {SourceItem}.record_id IS NOT NULL)), 0)");
             AddSourceColumn(derivedColumns, columnNames, "source_datasets",
-                "(SELECT string_agg(DISTINCT CAST(s.dataset AS VARCHAR), ' | ') FROM unnest(sources) AS t(s) WHERE s.dataset IS NOT NULL AND trim(CAST(s.dataset AS VARCHAR)) <> '')");
+                JoinListValues("sources", SourceItem, "dataset", distinct: true));
             AddSourceColumn(derivedColumns, columnNames, "source_primary_dataset", PrimarySourceField("dataset"));
             AddSourceColumn(derivedColumns, columnNames, "source_primary_record_id", PrimarySourceField("record_id"));
             AddSourceColumn(derivedColumns, columnNames, "source_primary_update_time", PrimarySourceField("update_time"));
@@ -324,8 +325,34 @@ namespace DuckDBGeoparquet.Services
                 : $"{projection}, {string.Join(", ", derivedColumns)}";
         }
 
+        // Per-row list functions instead of correlated "(SELECT ... FROM unnest(list))"
+        // subqueries: DuckDB evaluates these as vectorized expressions, where each
+        // correlated subquery became its own join. On a 250k-feature provenance
+        // download the display table went from minutes to seconds (see
+        // DuckDBGeoparquet.Tests/PipelineBenchmarkTests.cs). Lambda parameter
+        // names are distinctive so they never shadow a real column.
+        private const string AddressItem = "addr_item";
+        private const string SourceItem = "src_item";
+
+        /// <summary>Values of <paramref name="field"/> that are non-null and not blank, in list order.</summary>
+        private static string NonBlankListValues(string listColumn, string item, string field, string valueExpression = null) =>
+            $"list_transform(list_filter({listColumn}, lambda {item}: {item}.{field} IS NOT NULL AND trim(CAST({item}.{field} AS VARCHAR)) <> ''), " +
+            $"lambda {item}: {valueExpression ?? $"CAST({item}.{field} AS VARCHAR)"})";
+
+        /// <summary>
+        /// ' | '-joined non-blank values, NULL when there are none (matching
+        /// string_agg over an empty set). Distinct values keep first-seen order.
+        /// </summary>
+        private static string JoinListValues(string listColumn, string item, string field, bool distinct, string valueExpression = null)
+        {
+            string values = NonBlankListValues(listColumn, item, field, valueExpression);
+            if (distinct)
+                values = $"list_filter({values}, lambda dv_item, dv_index: list_position({values}, dv_item) = dv_index)";
+            return $"NULLIF(array_to_string({values}, ' | '), '')";
+        }
+
         private static string PrimarySourceField(string fieldName) =>
-            $"(SELECT CAST(s.{fieldName} AS VARCHAR) FROM unnest(sources) AS t(s) WHERE s.{fieldName} IS NOT NULL AND trim(CAST(s.{fieldName} AS VARCHAR)) <> '' LIMIT 1)";
+            $"{NonBlankListValues("sources", SourceItem, fieldName)}[1]";
 
         private static string BuildSourceEditUrlExpression(string datasetExpression, string recordIdExpression) =>
             $@"CASE
