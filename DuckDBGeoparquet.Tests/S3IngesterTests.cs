@@ -260,7 +260,7 @@ namespace DuckDBGeoparquet.Tests
             Assert.Contains("AS source_edit_url", query);
             Assert.Contains("AS source_contribution_url", query);
             Assert.Contains("AS source_edit_platform", query);
-            Assert.Contains("FROM unnest(sources) AS t(s)", query);
+            Assert.Contains("list_filter(sources, lambda src_item:", query);
             Assert.Contains("https://www.openstreetmap.org/edit?way=", query);
             Assert.Contains("https://livingatlas.arcgis.com/community-maps/", query);
             Assert.DoesNotContain("SELECT id, geometry, bbox, sources", query);
@@ -279,7 +279,7 @@ namespace DuckDBGeoparquet.Tests
 
             Assert.DoesNotContain("source_primary_dataset", query);
             Assert.DoesNotContain("source_edit_url", query);
-            Assert.DoesNotContain("FROM unnest(sources) AS t(s)", query);
+            Assert.DoesNotContain("list_filter(sources", query);
             Assert.DoesNotContain("SELECT id, geometry, bbox, sources", query);
         }
 
@@ -295,7 +295,7 @@ namespace DuckDBGeoparquet.Tests
                 includeSourceProvenance: true);
 
             Assert.DoesNotContain("source_primary_dataset", query);
-            Assert.DoesNotContain("FROM unnest(sources) AS t(s)", query);
+            Assert.DoesNotContain("list_filter(sources", query);
         }
 
         [Fact]
@@ -304,7 +304,8 @@ namespace DuckDBGeoparquet.Tests
             var columns = new List<string> { "id", "names", "addresses", "geometry", "bbox", "sources" };
             string query = S3Ingester.BuildLoadQuery("s3://bucket/place/*", "place", columns, extent: null);
 
-            Assert.Contains("string_agg(CAST(a.freeform AS VARCHAR), ' | ')", query);
+            Assert.Contains("list_filter(addresses, lambda addr_item:", query);
+            Assert.DoesNotContain("unnest(addresses)", query);
             Assert.Contains("AS address_freeform", query);
             Assert.Contains("AS address_locality", query);
             Assert.Contains("AS address_region", query);

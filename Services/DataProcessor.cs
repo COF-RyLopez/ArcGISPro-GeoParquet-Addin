@@ -230,12 +230,20 @@ namespace DuckDBGeoparquet.Services
                 Directory.CreateDirectory(Path.GetDirectoryName(archive));
                 using var command = _connection.CreateCommand();
                 progress?.Report($"Preserving original {type} geometry, attributes and provenance...");
+                var archiveStopwatch = Stopwatch.StartNew();
                 command.CommandText = GeoParquetSql.BuildCopyCommand(
                     $"SELECT * EXCLUDE({GeoParquetSql.InternalGeometryTypeColumn}) FROM current_table", archive, compression, geoParquetVersion);
                 await command.ExecuteNonQueryAsync(token);
+                archiveStopwatch.Stop();
+                System.Diagnostics.Debug.WriteLine(
+                    $"[perf][ingest:{type}] source-archive rows={_lastRowCount} elapsed={FormatElapsed(archiveStopwatch.Elapsed)}");
                 var displayColumns = _lastSourceColumns.Append(GeoParquetSql.InternalGeometryTypeColumn).ToList();
+                var displayStopwatch = Stopwatch.StartNew();
                 command.CommandText = S3Ingester.BuildDisplayTableCommand(type, displayColumns, displayProvenance);
                 await command.ExecuteNonQueryAsync(token);
+                displayStopwatch.Stop();
+                System.Diagnostics.Debug.WriteLine(
+                    $"[perf][ingest:{type}] display-table provenance={displayProvenance} elapsed={FormatElapsed(displayStopwatch.Elapsed)}");
                 await ParquetExporter.CreateFeatureLayersAsync(layerName, progress, theme, type,
                     stagingPath, _outputSessionSuffix, compression, geoParquetVersion, token);
                 var displayFiles = LayerManager.GetPendingLayers().Where(l => l.ActualType == type)
