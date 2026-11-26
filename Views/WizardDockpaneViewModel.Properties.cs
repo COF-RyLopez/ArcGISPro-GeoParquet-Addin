@@ -532,141 +532,24 @@ namespace DuckDBGeoparquet.Views
         // Available compression options for binding
         public List<string> CompressionOptions => new List<string> { "ZSTD", "SNAPPY", "GZIP" };
 
-        private bool _loadingAddinSettings;
-
-        private string _httpProxy = string.Empty;
-        public string HttpProxy
-        {
-            get => _httpProxy;
-            set
-            {
-                if (SetProperty(ref _httpProxy, value ?? string.Empty))
-                    PersistAddinSettings();
-            }
-        }
-
-        private string _httpProxyUsername = string.Empty;
-        public string HttpProxyUsername
-        {
-            get => _httpProxyUsername;
-            set
-            {
-                if (SetProperty(ref _httpProxyUsername, value ?? string.Empty))
-                    PersistAddinSettings();
-            }
-        }
-
-        private string _httpProxyPassword = string.Empty;
-        public string HttpProxyPassword
-        {
-            get => _httpProxyPassword;
-            set
-            {
-                if (SetProperty(ref _httpProxyPassword, value ?? string.Empty))
-                    PersistAddinSettings();
-            }
-        }
-
-        private string _memoryLimit = AddinSettings.DefaultMemoryLimit;
-        public string MemoryLimit
-        {
-            get => _memoryLimit;
-            set
-            {
-                if (SetProperty(ref _memoryLimit, value ?? AddinSettings.DefaultMemoryLimit))
-                    PersistAddinSettings();
-            }
-        }
-
-        private string _maxMemory = AddinSettings.DefaultMaxMemory;
-        public string MaxMemory
-        {
-            get => _maxMemory;
-            set
-            {
-                if (SetProperty(ref _maxMemory, value ?? AddinSettings.DefaultMaxMemory))
-                    PersistAddinSettings();
-            }
-        }
-
-        private string _detectedProxyDisplay = "Windows system proxy (auto-detect)";
-        public string DetectedProxyDisplay
-        {
-            get => _detectedProxyDisplay;
-            private set => SetProperty(ref _detectedProxyDisplay, value);
-        }
-
-        private void LoadAddinSettings()
-        {
-            _loadingAddinSettings = true;
-            try
-            {
-                var settings = AddinSettingsStore.Load();
-                HttpProxy = settings.HttpProxy ?? string.Empty;
-                HttpProxyUsername = settings.HttpProxyUsername ?? string.Empty;
-                HttpProxyPassword = settings.HttpProxyPassword ?? string.Empty;
-                MemoryLimit = settings.EffectiveMemoryLimit;
-                MaxMemory = settings.EffectiveMaxMemory;
-                RefreshDetectedProxyDisplay(settings);
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"LoadAddinSettings failed: {ex.Message}");
-            }
-            finally
-            {
-                _loadingAddinSettings = false;
-            }
-        }
-
-        private void PersistAddinSettings()
-        {
-            if (_loadingAddinSettings)
-                return;
-
-            var settings = new AddinSettings
-            {
-                HttpProxy = HttpProxy,
-                HttpProxyUsername = HttpProxyUsername,
-                HttpProxyPassword = HttpProxyPassword,
-                MemoryLimit = MemoryLimit,
-                MaxMemory = MaxMemory
-            };
-            AddinSettingsStore.Save(settings);
-            ReleaseValidator.RefreshHttpClient();
-            RefreshDetectedProxyDisplay(settings);
-
-            if (_dataProcessor != null)
-            {
-                _ = ApplyDuckDbSettingsAsync();
-            }
-        }
-
-        private async Task ApplyDuckDbSettingsAsync()
+        /// <summary>
+        /// Re-applies saved add-in settings to the live DuckDB session, if the
+        /// wizard (and thus the engine) is running. Called by the Settings
+        /// property page after a commit; a not-yet-started engine picks the
+        /// saved settings up at initialization.
+        /// </summary>
+        internal static async Task ReapplyEngineSettingsAsync()
         {
             try
             {
-                await _dataProcessor.ApplySessionSettingsAsync();
+                var dataProcessor = Instance?._dataProcessor;
+                if (dataProcessor != null)
+                    await dataProcessor.ApplySessionSettingsAsync();
+                ReleaseValidator.RefreshHttpClient();
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"ApplyDuckDbSettingsAsync failed: {ex.Message}");
-            }
-        }
-
-        private void RefreshDetectedProxyDisplay(AddinSettings settings)
-        {
-            try
-            {
-                var resolved = DuckDBManager.ResolveProxy(settings);
-                DetectedProxyDisplay = resolved.IsConfigured
-                    ? resolved.ToLogSafeDescription()
-                    : "No proxy (direct connection, or leave blank to auto-detect the Windows system proxy)";
-            }
-            catch (Exception ex)
-            {
-                DetectedProxyDisplay = "Windows system proxy (auto-detect)";
-                System.Diagnostics.Debug.WriteLine($"Proxy display refresh failed: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"ReapplyEngineSettingsAsync failed: {ex.Message}");
             }
         }
 

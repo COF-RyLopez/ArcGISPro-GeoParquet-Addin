@@ -200,7 +200,6 @@ namespace DuckDBGeoparquet.Views
         {
             System.Diagnostics.Debug.WriteLine("InitializeViewModelForRuntime executing...");
             _dataProcessor = new DataProcessor();
-            LoadAddinSettings();
 
             LoadDataCommand = new RelayCommand(async () => await LoadOvertureDataAsync(), () => !IsWorking && !_isPreviewSampling && !IsLoading && GetSelectedLeafItems().Count > 0);
             RefreshReleaseCommand = new RelayCommand(async () =>

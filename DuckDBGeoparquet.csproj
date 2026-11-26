@@ -21,6 +21,8 @@
 		<Content Include="Images\Overture32.png" />
 		<Content Include="Images\GeoParquetDownload16.png" />
 		<Content Include="Images\GeoParquetDownload32.png" />
+		<Content Include="Images\GeoParquetSettings16.png" />
+		<Content Include="Images\GeoParquetSettings32.png" />
 		<Content Include="Images\OsmProvider16.png" />
 		<Content Include="Images\OsmProvider32.png" />
 		<Content Include="Images\SourceCoopProvider16.png" />
@@ -33,6 +35,8 @@
 		<Content Include="DarkImages\Overture32.png" />
 		<Content Include="DarkImages\GeoParquetDownload16.png" />
 		<Content Include="DarkImages\GeoParquetDownload32.png" />
+		<Content Include="DarkImages\GeoParquetSettings16.png" />
+		<Content Include="DarkImages\GeoParquetSettings32.png" />
 		<Content Include="DarkImages\OsmProvider16.png" />
 		<Content Include="DarkImages\OsmProvider32.png" />
 		<Content Include="DarkImages\SourceCoopProvider16.png" />

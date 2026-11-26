@@ -26,6 +26,7 @@
 				<group id="DuckDBGeoparquet_Group2" caption="GeoParquet" appearsOnAddInTab="false" keytip="M">
 					<labelControl refID="DuckDBGeoparquet_OvertureMapDescription" />
 					<button refID="DuckDBGeoparquet_Views_WizardDockpane_ShowButton" size="large" />
+					<button refID="DuckDBGeoparquet_ShowSettingsButton" size="large" />
 				</group>
 				<group id="DuckDBGeoparquet_Group_Overture" caption="Overture Maps" appearsOnAddInTab="false" keytip="T">
 					<button refID="DuckDBGeoparquet_DownloadOvertureButton" size="large" />
@@ -92,6 +93,11 @@
                         Open the GeoParquet Data Loader focused on your saved custom sources
 						<disabledText>Unable to launch GeoParquet Data Loader at this time</disabledText></tooltip>
 				</button>
+				<button id="DuckDBGeoparquet_ShowSettingsButton" caption="Settings" className="DuckDBGeoparquet.Views.ShowSettingsButton" loadOnClick="true" smallImage="Images\GeoParquetSettings16.png" largeImage="Images\GeoParquetSettings32.png" keytip="I" extendedCaption="GeoParquet Add-in Settings">
+					<tooltip heading="GeoParquet Settings">
+                        Proxy and DuckDB memory settings for GeoParquet downloads. Changes apply when you click OK.
+						<disabledText>Unable to open GeoParquet Settings at this time</disabledText></tooltip>
+				</button>
 				<!-- Custom Extent Tool -->
 				<tool id="DuckDBGeoparquet_CustomExtentTool" className="DuckDBGeoparquet.Views.CustomExtentTool" caption="Draw Custom Extent" loadOnClick="true" smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool16.png" largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool32.png" condition="esri_mapping_mapPane" keytip="E">
 					<tooltip heading="Draw Custom Extent">
@@ -119,6 +125,14 @@
 					<content className="DuckDBGeoparquet.Views.MfcDockpaneView" />
 				</dockPane>
 			</dockPanes>
+			<propertySheets>
+				<!-- The sheet is framework-created and modal; values commit on OK. -->
+				<insertSheet id="DuckDBGeoparquet_SettingsSheet" caption="GeoParquet Settings">
+					<page id="DuckDBGeoparquet_SettingsPage" caption="Proxy and Memory" className="DuckDBGeoparquet.Views.SettingsPageViewModel">
+						<content className="DuckDBGeoparquet.Views.SettingsPageView" />
+					</page>
+				</insertSheet>
+			</propertySheets>
 		</insertModule>
 	</modules>
 	<categories>
