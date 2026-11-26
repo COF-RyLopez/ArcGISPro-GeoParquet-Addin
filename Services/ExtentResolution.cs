@@ -8,7 +8,8 @@ namespace DuckDBGeoparquet.Services
         Custom,
         Typed,
         Layer,
-        Polygon
+        Polygon,
+        SelectedFeature
     }
 
     /// <summary>
@@ -35,13 +36,15 @@ namespace DuckDBGeoparquet.Services
             bool useCustomExtent, bool hasCustomExtent,
             bool useTypedExtent = false, bool hasTypedExtent = false,
             bool useLayerExtent = false, bool hasLayerExtent = false,
-            bool usePolygonExtent = false, bool hasPolygonExtent = false)
+            bool usePolygonExtent = false, bool hasPolygonExtent = false,
+            bool useSelectedFeatureExtent = false, bool hasSelectedFeatureExtent = false)
         {
             if (useCurrentMapExtent && hasActiveMap) return ExtentSource.Map;
             if (useCustomExtent && hasCustomExtent) return ExtentSource.Custom;
             if (useTypedExtent && hasTypedExtent) return ExtentSource.Typed;
             if (useLayerExtent && hasLayerExtent) return ExtentSource.Layer;
             if (usePolygonExtent && hasPolygonExtent) return ExtentSource.Polygon;
+            if (useSelectedFeatureExtent && hasSelectedFeatureExtent) return ExtentSource.SelectedFeature;
             return ExtentSource.None;
         }
 

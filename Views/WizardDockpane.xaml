@@ -202,14 +202,23 @@
                                 <RadioButton Content="Drawn Polygon" IsChecked="{Binding UsePolygonExtent}" Margin="0,8,0,0"/>
                                 <Button Content="Draw Polygon..." HorizontalAlignment="Left" Margin="16,4,0,0" Command="{Binding DrawPolygonCommand}" Style="{DynamicResource Esri_Button}" IsEnabled="{Binding UsePolygonExtent}"
                                         ToolTip="Draw a polygon on the map (double-click to finish). Only features intersecting the polygon are downloaded."/>
-                                <CheckBox Content="Clip features to the polygon" IsChecked="{Binding ClipToAoiPolygon, Mode=TwoWay}" Margin="16,6,0,0" IsEnabled="{Binding UsePolygonExtent}"
-                                          ToolTip="Clip downloaded geometries to the drawn polygon (ST_Intersection). Applies to the snapshot's _source files and display layers. When off, whole intersecting features are kept."/>
                                 <Border BorderBrush="{DynamicResource Esri_BorderBrush}" BorderThickness="1" Padding="6" Margin="16,4,0,0" Visibility="{Binding HasAoiPolygon, Converter={StaticResource BooleanToVisibilityConverter}}">
                                     <StackPanel>
                                         <TextBlock Text="Polygon Area:" FontWeight="SemiBold" Margin="0,0,0,2" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
                                         <TextBlock Text="{Binding AoiPolygonDisplay}" TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
                                     </StackPanel>
                                 </Border>
+                                <RadioButton Content="Selected Feature(s)" IsChecked="{Binding UseSelectedFeatureExtent}" Margin="0,8,0,0"/>
+                                <Button Content="Use Selected Features" HorizontalAlignment="Left" Margin="16,4,0,0" Command="{Binding UseSelectedFeaturesCommand}" Style="{DynamicResource Esri_Button}" IsEnabled="{Binding UseSelectedFeatureExtent}"
+                                        ToolTip="Select one or more polygon features on the map first (a county, city, or parcel boundary), then click to use their combined boundary as the download area. Very detailed boundaries are lightly generalized."/>
+                                <Border BorderBrush="{DynamicResource Esri_BorderBrush}" BorderThickness="1" Padding="6" Margin="16,4,0,0" Visibility="{Binding HasSelectedFeatureAoi, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <StackPanel>
+                                        <TextBlock Text="Selected Area:" FontWeight="SemiBold" Margin="0,0,0,2" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
+                                        <TextBlock Text="{Binding SelectedFeatureAoiDisplay}" TextWrapping="Wrap" Foreground="{DynamicResource Esri_TextStyleDefaultBrush}"/>
+                                    </StackPanel>
+                                </Border>
+                                <CheckBox Content="Clip features to the area" IsChecked="{Binding ClipToAoiPolygon, Mode=TwoWay}" Margin="0,8,0,0" IsEnabled="{Binding IsPolygonAoiMode}"
+                                          ToolTip="Clip downloaded geometries to the drawn polygon or selected-feature boundary (ST_Intersection). Applies to the snapshot's _source files and display layers. When off, whole intersecting features are kept."/>
                                 <TextBlock Text="Attribute filter (optional):" Margin="0,10,0,2"/>
                                 <TextBox Text="{Binding AttributeFilter, UpdateSourceTrigger=PropertyChanged}"
                                          ToolTip="SQL WHERE condition applied to downloads and previews, e.g. subtype = 'road' AND class IN ('motorway', 'primary'). Statements, subqueries, and file-reading functions are rejected."/>

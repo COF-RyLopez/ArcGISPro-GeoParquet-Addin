@@ -308,6 +308,17 @@ namespace DuckDBGeoparquet.Services
         }
 
         /// <summary>
+        /// Backstop check before an AOI WKT is embedded in SQL. Both producers
+        /// are the add-in's own (BuildPolygonWkt, or ArcGIS's WKT exporter for
+        /// selected features), so this only has to confirm the expected shape:
+        /// a 2D POLYGON/MULTIPOLYGON keyword with a numeric body.
+        /// </summary>
+        public static bool IsValidAoiWkt(string wkt) =>
+            !string.IsNullOrWhiteSpace(wkt) &&
+            System.Text.RegularExpressions.Regex.IsMatch(
+                wkt, @"^\s*(MULTIPOLYGON|POLYGON)\s*\(\s*[-+0-9eE.,()\s]+\)\s*$");
+
+        /// <summary>
         /// Wraps an internally built AOI polygon WKT (see BuildPolygonWkt) as a
         /// DuckDB geometry expression for ST_Intersects / ST_Intersection.
         /// </summary>

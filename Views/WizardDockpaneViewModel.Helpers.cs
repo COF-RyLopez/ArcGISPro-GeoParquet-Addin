@@ -449,6 +449,107 @@ namespace DuckDBGeoparquet.Views
             }
         }
 
+        private const int SelectedFeatureMaxVertices = 4000;
+
+        /// <summary>
+        /// Captures the active map's selected polygon features as the download
+        /// area: union, project to WGS84, generalize big boundaries (a state
+        /// outline can carry 100k+ vertices and the WKT is embedded in SQL —
+        /// the envelope pushdown does the coarse filtering, so light
+        /// generalization barely changes results), then export WKT.
+        /// </summary>
+        private void CaptureSelectedFeatures()
+        {
+            UseSelectedFeatureExtent = true;
+            QueuedTask.Run(() =>
+            {
+                try
+                {
+                    var map = MapView.Active?.Map;
+                    if (map == null)
+                    {
+                        AddToLog("Unable to use selected features: no active map.");
+                        return;
+                    }
+                    SpatialReference wgs84 = SpatialReferenceBuilder.CreateSpatialReference(ExtentResolution.Wgs84Wkid);
+                    var polygons = new List<Polygon>();
+                    int featureCount = 0;
+                    foreach (var entry in map.GetSelection().ToDictionary())
+                    {
+                        if (entry.Key is not FeatureLayer featureLayer ||
+                            featureLayer.ShapeType != esriGeometryType.esriGeometryPolygon)
+                            continue;
+                        using var selection = featureLayer.GetSelection();
+                        using var cursor = selection.Search(null);
+                        while (cursor.MoveNext())
+                        {
+                            if (cursor.Current is not ArcGIS.Core.Data.Feature feature) continue;
+                            if (feature.GetShape() is not Polygon shape || shape.IsEmpty) continue;
+                            var projected = ExtentResolution.NeedsProjectionToWgs84(shape.SpatialReference?.Wkid)
+                                ? GeometryEngine.Instance.Project(shape, wgs84) as Polygon
+                                : shape;
+                            if (projected != null && !projected.IsEmpty)
+                            {
+                                polygons.Add(projected);
+                                featureCount++;
+                            }
+                        }
+                    }
+                    if (polygons.Count == 0)
+                    {
+                        AddToLog("No selected polygon features found. Select one or more polygons on the map (e.g. a county boundary), then click Use Selected Features again.");
+                        return;
+                    }
+
+                    Geometry combined = polygons.Count == 1 ? polygons[0] : GeometryEngine.Instance.Union(polygons);
+                    if (combined is not Polygon aoi || aoi.IsEmpty)
+                    {
+                        AddToLog("Could not combine the selected features into a polygon area.");
+                        return;
+                    }
+
+                    int originalVertices = aoi.PointCount;
+                    double deviation = 0.0001; // ~11 m in degrees
+                    while (aoi.PointCount > SelectedFeatureMaxVertices && deviation <= 0.01)
+                    {
+                        if (GeometryEngine.Instance.Generalize(aoi, deviation) is Polygon simpler && !simpler.IsEmpty)
+                            aoi = simpler;
+                        deviation *= 2;
+                    }
+
+                    string wkt = GeometryEngine.Instance.ExportToWKT(
+                        WktExportFlags.WktExportStripZs | WktExportFlags.WktExportStripMs, aoi);
+                    if (!GeoParquetSql.IsValidAoiWkt(wkt))
+                    {
+                        AddToLog("Could not convert the selected features to a usable polygon area.");
+                        return;
+                    }
+
+                    _selectedFeatureWkt = wkt;
+                    _selectedFeatureEnvelope = aoi.Extent;
+                    HasSelectedFeatureAoi = true;
+                    SelectedFeatureAoiDisplay =
+                        $"{featureCount} feature(s), {aoi.PointCount} vertices" +
+                        (aoi.PointCount < originalVertices ? $" (generalized from {originalVertices})" : "") +
+                        $"; extent {aoi.Extent.XMin:F4}, {aoi.Extent.YMin:F4} to {aoi.Extent.XMax:F4}, {aoi.Extent.YMax:F4}";
+                    AddToLog($"Selected-feature area set ({SelectedFeatureAoiDisplay}).");
+                }
+                catch (Exception ex)
+                {
+                    AddToLog($"Error using the selected features: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"CaptureSelectedFeatures: {ex}");
+                }
+            });
+        }
+
+        private void ClearSelectedFeatureAoi()
+        {
+            _selectedFeatureWkt = null;
+            _selectedFeatureEnvelope = null;
+            HasSelectedFeatureAoi = false;
+            SelectedFeatureAoiDisplay = "No features captured";
+        }
+
         private void ClearAoiPolygon()
         {
             _aoiPolygonWkt = null;

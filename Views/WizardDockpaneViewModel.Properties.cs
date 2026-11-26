@@ -206,7 +206,7 @@ namespace DuckDBGeoparquet.Views
         }
 
         /// <summary>
-        /// Keeps the five AOI radio options mutually exclusive. Setting a flag
+        /// Keeps the six AOI radio options mutually exclusive. Setting a flag
         /// to false never cascades (each setter only clears others on true), so
         /// this cannot recurse.
         /// </summary>
@@ -217,12 +217,14 @@ namespace DuckDBGeoparquet.Views
             if (keep != nameof(UseTypedExtent)) UseTypedExtent = false;
             if (keep != nameof(UseLayerExtent)) UseLayerExtent = false;
             if (keep != nameof(UsePolygonExtent)) UsePolygonExtent = false;
+            if (keep != nameof(UseSelectedFeatureExtent)) UseSelectedFeatureExtent = false;
         }
 
         private void RaiseExtentSourceCommandsCanExecuteChanged()
         {
             (SetCustomExtentCommand as RelayCommand)?.RaiseCanExecuteChanged();
             (DrawPolygonCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (UseSelectedFeaturesCommand as RelayCommand)?.RaiseCanExecuteChanged();
         }
 
         private string _attributeFilter = "";
@@ -347,8 +349,13 @@ namespace DuckDBGeoparquet.Views
                 SetProperty(ref _usePolygonExtent, value);
                 if (value) ClearOtherExtentSources();
                 RaiseExtentSourceCommandsCanExecuteChanged();
+                NotifyPropertyChanged(nameof(IsPolygonAoiMode));
             }
         }
+
+        /// <summary>True when the download area is an exact polygon (drawn or
+        /// from selected features) — the modes the clip checkbox applies to.</summary>
+        public bool IsPolygonAoiMode => UsePolygonExtent || UseSelectedFeatureExtent;
 
         private bool _clipToAoiPolygon;
         /// <summary>When true, downloaded geometries are clipped to the drawn
@@ -380,6 +387,42 @@ namespace DuckDBGeoparquet.Views
 
         /// <summary>WGS84 envelope of the drawn AOI polygon.</summary>
         private Envelope _aoiPolygonEnvelope;
+
+        private bool _useSelectedFeatureExtent;
+        /// <summary>Use the union of the map's selected polygon features (a
+        /// county, city, parcel...) as the download area.</summary>
+        public bool UseSelectedFeatureExtent
+        {
+            get => _useSelectedFeatureExtent;
+            set
+            {
+                SetProperty(ref _useSelectedFeatureExtent, value);
+                if (value) ClearOtherExtentSources();
+                RaiseExtentSourceCommandsCanExecuteChanged();
+                NotifyPropertyChanged(nameof(IsPolygonAoiMode));
+            }
+        }
+
+        private bool _hasSelectedFeatureAoi;
+        public bool HasSelectedFeatureAoi
+        {
+            get => _hasSelectedFeatureAoi;
+            private set => SetProperty(ref _hasSelectedFeatureAoi, value);
+        }
+
+        private string _selectedFeatureAoiDisplay = "No features captured";
+        public string SelectedFeatureAoiDisplay
+        {
+            get => _selectedFeatureAoiDisplay;
+            private set => SetProperty(ref _selectedFeatureAoiDisplay, value);
+        }
+
+        /// <summary>WGS84 WKT of the captured selected-feature area (exported
+        /// by ArcGIS from the map selection), or null when none captured.</summary>
+        private string _selectedFeatureWkt;
+
+        /// <summary>WGS84 envelope of the captured selected-feature area.</summary>
+        private Envelope _selectedFeatureEnvelope;
 
         private bool _isLoading = true;
         public bool IsLoading
