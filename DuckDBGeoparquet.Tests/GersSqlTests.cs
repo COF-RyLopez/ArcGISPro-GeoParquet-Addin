@@ -117,10 +117,11 @@ namespace DuckDBGeoparquet.Tests
                 options,
                 ["id", "names", "addresses", "geometry"]);
 
-            Assert.Contains("string_agg(CAST(a.freeform AS VARCHAR), ' | ')", sql);
-            Assert.Contains("string_agg(DISTINCT CAST(a.locality AS VARCHAR), ' | ')", sql);
-            Assert.Contains("string_agg(DISTINCT CAST(a.region AS VARCHAR), ' | ')", sql);
-            Assert.Contains("string_agg(DISTINCT left(CAST(a.postcode AS VARCHAR), 5), ' | ')", sql);
+            Assert.Contains(S3Ingester.BuildAddressListField("freeform", distinct: false), sql);
+            Assert.Contains(S3Ingester.BuildAddressListField("locality", distinct: true), sql);
+            Assert.Contains(S3Ingester.BuildAddressListField("region", distinct: true), sql);
+            Assert.Contains("left(CAST(addr_item.postcode AS VARCHAR), 5)", sql);
+            Assert.DoesNotContain("unnest(addresses)", sql);
         }
 
         [Fact]
