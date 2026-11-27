@@ -24,6 +24,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - `memory_limit` and `max_memory` are configurable in Add-in Settings (defaults remain `2GB` / `4GB`).
 
 ### Changed
+- Bumped `Esri.ArcGISPro.Extensions30` from 3.7.0.1901 to 3.8.0.4371 (published 2026-11-19; still `net10.0-windows7.0`). Compiling against the 3.8 ref assemblies stamps `ArcGIS.*` assembly version **13.8.0.0** into the add-in, which Pro 3.7 (13.7.0.0) cannot bind, so `Config.daml` `desktopVersion` is raised from 3.7 to 3.8. Esri's 3.8 API changelog is additive (OCR, VCS, layer-document bulk add, MapControl events); this add-in does not use the new APIs. Pro 3.7 users lose support.
 - When bundled `spatial` and `httpfs` extensions are present, DuckDB never attempts a network `INSTALL`.
 - Blocked or offline S3/Overture reads show "Can't reach Overture S3. Check the proxy or network." instead of a raw DuckDB error.
 - Bumped DuckDB.NET.Data.Full from 1.5.3 to 1.5.6.1 (DuckDB engine v1.5.6; stays on the 1.5 line, not 2.0). CI and `Extensions/README.txt` now fetch bundled `spatial` and `httpfs` from `https://extensions.duckdb.org/v1.5.6/...`. Patch-line notes between 1.5.3 and 1.5.6 report no breaking changes to the add-in's SQL (`ST_*` spatial functions, `read_parquet`, `SET s3_region` / httpfs settings). The test project runs the same engine.
