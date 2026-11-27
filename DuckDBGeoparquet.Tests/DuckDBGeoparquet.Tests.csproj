@@ -32,6 +32,7 @@
 		<Compile Include="..\Services\FileGeodatabaseOutput.cs" Link="Linked\FileGeodatabaseOutput.cs" />
 		<Compile Include="..\Services\FileGeodatabaseExporter.cs" Link="Linked\FileGeodatabaseExporter.cs" />
 		<Compile Include="..\Services\IGeoprocessingRunner.cs" Link="Linked\IGeoprocessingRunner.cs" />
+		<Compile Include="..\Services\NenaGdbBuilder.cs" Link="Linked\NenaGdbBuilder.cs" />
 		<Compile Include="..\Services\GeocodeFileQueryBuilder.cs" Link="Linked\GeocodeFileQueryBuilder.cs" />
 		<Compile Include="..\Services\GeocodeTextNormalizer.cs" Link="Linked\GeocodeTextNormalizer.cs" />
 		<Compile Include="..\Services\GersSql.cs" Link="Linked\GersSql.cs" />
