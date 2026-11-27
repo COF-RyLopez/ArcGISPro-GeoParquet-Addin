@@ -55,6 +55,14 @@
 		<!-- Bundled DuckDB extensions (not in source control; see Extensions/README.txt).
 		     When present they ship inside the .esriAddInX so the add-in works offline
 		     and on machines whose Application Control policy blocks runtime downloads. -->
+		<!-- NENA's NG9-1-1 GIS Data Model v3.0 file geodatabase template (Apache-2.0, Nena/LICENSE-NENA.md), copied
+		     unchanged from NENA911/NG911GISDataModel; the NENA File Geodatabase button copies it, so no download. -->
+		<Content Include="Nena\NG911_GISDataModelTemplate_v3.0.gdb.zip">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
+		<Content Include="Nena\LICENSE-NENA.md">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
 		<Content Include="Extensions\*.duckdb_extension">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</Content>

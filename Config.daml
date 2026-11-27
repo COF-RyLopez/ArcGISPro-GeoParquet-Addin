@@ -20,6 +20,7 @@
 					<group refID="DuckDBGeoparquet_Group_Osm" />
 					<group refID="DuckDBGeoparquet_Group_SourceCoop" />
 					<group refID="DuckDBGeoparquet_Group_Custom" />
+					<group refID="DuckDBGeoparquet_Group_Nena" />
 				</tab>
 			</tabs>
 			<groups>
@@ -42,6 +43,9 @@
 				<group id="DuckDBGeoparquet_Group_Custom" caption="Custom Sources" appearsOnAddInTab="false" keytip="K">
 					<button refID="DuckDBGeoparquet_DownloadCustomButton" size="large" />
 					<button refID="DuckDBGeoparquet_AddSourceButton" size="large" />
+				</group>
+				<group id="DuckDBGeoparquet_Group_Nena" caption="NG9-1-1" appearsOnAddInTab="false" keytip="Q">
+					<button refID="DuckDBGeoparquet_NenaGdbButton" size="large" />
 				</group>
 			</groups>
 			<controls>
@@ -91,6 +95,11 @@
 					<tooltip heading="Custom Sources">
                         Open the GeoParquet Data Loader focused on your saved custom sources
 						<disabledText>Unable to launch GeoParquet Data Loader at this time</disabledText></tooltip>
+				</button>
+				<button id="DuckDBGeoparquet_NenaGdbButton" caption="NENA File GDB" className="DuckDBGeoparquet.Views.NenaGdbButton" loadOnClick="true" smallImage="Images\FolderWithGISData16.png" largeImage="Images\FolderWithGISData32.png" keytip="W" extendedCaption="Build a NENA NG9-1-1 File Geodatabase from a NENA GeoPackage">
+					<tooltip heading="NENA File Geodatabase">
+                        Load a statewide NENA GeoPackage into NENA's v3.0 file geodatabase template. Fields the export report lists as empty (agency-owned or missing in the source) are allowed empty, never filled in.
+						<disabledText>A NENA file geodatabase is being built</disabledText></tooltip>
 				</button>
 				<!-- Custom Extent Tool -->
 				<tool id="DuckDBGeoparquet_CustomExtentTool" className="DuckDBGeoparquet.Views.CustomExtentTool" caption="Draw Custom Extent" loadOnClick="true" smallImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool16.png" largeImage="pack://application:,,,/ArcGIS.Desktop.Resources;component/Images/SelectTool32.png" condition="esri_mapping_mapPane" keytip="E">
